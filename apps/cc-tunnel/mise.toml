@@ -1,2 +1,10 @@
 [tools]
 go = "1.26.1"
+
+[tasks."generate"]
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+go generate ./...
+'''
