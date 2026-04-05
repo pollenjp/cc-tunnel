@@ -53,7 +53,12 @@ func (h *Server) SendInput(w http.ResponseWriter, r *http.Request, sessionId Ses
 		return
 	}
 
-	if err := h.manager.SendInput(sessionId, body.Text); err != nil {
+	if len(body.Keys) == 0 {
+		writeError(w, http.StatusBadRequest, "keys must not be empty")
+		return
+	}
+
+	if err := h.manager.SendKeys(sessionId, body.Keys); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

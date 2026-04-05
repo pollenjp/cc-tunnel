@@ -22,11 +22,11 @@ export async function listSessions(): Promise<Session[]> {
   return res.json();
 }
 
-export async function sendInput(id: string, text: string): Promise<void> {
+export async function sendKeys(id: string, keys: string[]): Promise<void> {
   const res = await fetch(`${BASE}/sessions/${id}/input`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ keys }),
   });
   if (!res.ok) throw new Error(await res.text());
 }

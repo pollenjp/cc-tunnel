@@ -2,7 +2,7 @@ openapi: "3.0.3"
 info:
   title: cc-tunnel API
   description: API for controlling Claude Code CLI sessions via tmux
-  version: 0.1.0
+  version: 0.2.0
 
 paths:
   /sessions:
@@ -61,7 +61,17 @@ paths:
     post:
       operationId: sendInput
       summary: Send input to a session
-      description: Sends keystrokes to the tmux session via send-keys.
+      description: |
+        Sends keystrokes to the tmux session via send-keys.
+        Each element in the `keys` array is passed as a separate argument to `tmux send-keys`.
+        Plain text is sent as literal characters. Special key names are interpreted by tmux.
+
+        Supported special keys include: Enter, Escape, Space, Tab, BSpace (Backspace),
+        Up, Down, Left, Right, Home, End, PageUp (PgUp), PageDown (PgDn),
+        F1-F12, IC (Insert), DC (Delete).
+
+        Modifier prefixes: C- (Ctrl), M- (Alt/Meta), S- (Shift).
+        Examples: "C-c" (Ctrl+C), "C-a" (Ctrl+A), "M-x" (Alt+X), "C-S-Up" (Ctrl+Shift+Up).
       parameters:
         - $ref: "#/components/parameters/SessionId"
       requestBody:
@@ -141,11 +151,18 @@ components:
     SendInputRequest:
       type: object
       required:
-        - text
+        - keys
       properties:
-        text:
-          type: string
-          example: "hello"
+        keys:
+          type: array
+          items:
+            type: string
+          description: |
+            Array of keys to send to the tmux session.
+            Each element is passed as a separate argument to `tmux send-keys`.
+            Plain text strings are sent as literal input.
+            Special key names (Enter, Escape, C-c, etc.) are interpreted by tmux.
+          example: ["hello", "Enter"]
 
     OutputResponse:
       type: object

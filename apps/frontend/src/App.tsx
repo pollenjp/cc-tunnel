@@ -1,7 +1,45 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Session } from './api';
-import { createSession, listSessions, sendInput, getOutput, deleteSession } from './api';
+import { createSession, listSessions, sendKeys, getOutput, deleteSession } from './api';
 import './App.css';
+
+const MODIFIER_KEYS = ['Ctrl', 'Shift', 'Alt'] as const;
+type Modifier = typeof MODIFIER_KEYS[number];
+
+const SPECIAL_KEYS = [
+  { label: 'Enter', tmux: 'Enter' },
+  { label: 'Esc', tmux: 'Escape' },
+  { label: 'Tab', tmux: 'Tab' },
+  { label: 'Space', tmux: 'Space' },
+  { label: 'BS', tmux: 'BSpace' },
+  { label: 'Del', tmux: 'DC' },
+  { label: 'Up', tmux: 'Up' },
+  { label: 'Down', tmux: 'Down' },
+  { label: 'Left', tmux: 'Left' },
+  { label: 'Right', tmux: 'Right' },
+  { label: 'Home', tmux: 'Home' },
+  { label: 'End', tmux: 'End' },
+  { label: 'PgUp', tmux: 'PageUp' },
+  { label: 'PgDn', tmux: 'PageDown' },
+] as const;
+
+const QUICK_COMBOS = [
+  { label: 'Ctrl+C', keys: ['C-c'] },
+  { label: 'Ctrl+D', keys: ['C-d'] },
+  { label: 'Ctrl+Z', keys: ['C-z'] },
+  { label: 'Ctrl+L', keys: ['C-l'] },
+  { label: 'Ctrl+A', keys: ['C-a'] },
+  { label: 'Ctrl+E', keys: ['C-e'] },
+] as const;
+
+function buildTmuxKey(tmuxKeyName: string, modifiers: Set<Modifier>): string {
+  let key = tmuxKeyName;
+  // tmux modifier prefix order: C- M- S-
+  if (modifiers.has('Shift')) key = `S-${key}`;
+  if (modifiers.has('Alt')) key = `M-${key}`;
+  if (modifiers.has('Ctrl')) key = `C-${key}`;
+  return key;
+}
 
 function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -9,6 +47,7 @@ function App() {
   const [output, setOutput] = useState('');
   const [input, setInput] = useState('');
   const [polling, setPolling] = useState(false);
+  const [activeModifiers, setActiveModifiers] = useState<Set<Modifier>>(new Set());
   const outputRef = useRef<HTMLPreElement>(null);
   const intervalRef = useRef<number | null>(null);
 
@@ -50,6 +89,15 @@ function App() {
     };
   }, [activeId, polling, pollOutput]);
 
+  const doSendKeys = async (keys: string[]) => {
+    if (!activeId) return;
+    try {
+      await sendKeys(activeId, keys);
+    } catch (e) {
+      alert(`Failed to send keys: ${e}`);
+    }
+  };
+
   const handleCreate = async () => {
     try {
       const session = await createSession();
@@ -82,21 +130,40 @@ function App() {
     }
   };
 
-  const handleSend = async () => {
+  const handleSendText = async () => {
     if (!activeId || !input.trim()) return;
-    try {
-      await sendInput(activeId, input);
-      setInput('');
-    } catch (e) {
-      alert(`Failed to send input: ${e}`);
-    }
+    await doSendKeys([input, 'Enter']);
+    setInput('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      handleSendText();
     }
+  };
+
+  const toggleModifier = (mod: Modifier) => {
+    setActiveModifiers((prev) => {
+      const next = new Set(prev);
+      if (next.has(mod)) {
+        next.delete(mod);
+      } else {
+        next.add(mod);
+      }
+      return next;
+    });
+  };
+
+  const handleSpecialKey = async (tmuxKeyName: string) => {
+    const key = buildTmuxKey(tmuxKeyName, activeModifiers);
+    await doSendKeys([key]);
+    setActiveModifiers(new Set());
+  };
+
+  const handleQuickCombo = async (keys: readonly string[]) => {
+    await doSendKeys([...keys]);
+    setActiveModifiers(new Set());
   };
 
   return (
@@ -147,9 +214,57 @@ function App() {
                   Refresh
                 </button>
               </div>
+
               <pre className="output" ref={outputRef}>
                 {output || 'Waiting for output...'}
               </pre>
+
+              <div className="keys-panel">
+                <div className="keys-row">
+                  <span className="keys-label">Modifiers</span>
+                  {MODIFIER_KEYS.map((mod) => (
+                    <button
+                      key={mod}
+                      className={`key-btn modifier ${activeModifiers.has(mod) ? 'active' : ''}`}
+                      onClick={() => toggleModifier(mod)}
+                    >
+                      {mod}
+                    </button>
+                  ))}
+                  {activeModifiers.size > 0 && (
+                    <span className="modifier-indicator">
+                      {[...activeModifiers].join('+')}+
+                    </span>
+                  )}
+                </div>
+
+                <div className="keys-row">
+                  <span className="keys-label">Keys</span>
+                  {SPECIAL_KEYS.map((k) => (
+                    <button
+                      key={k.tmux}
+                      className="key-btn"
+                      onClick={() => handleSpecialKey(k.tmux)}
+                    >
+                      {k.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="keys-row">
+                  <span className="keys-label">Quick</span>
+                  {QUICK_COMBOS.map((c) => (
+                    <button
+                      key={c.label}
+                      className="key-btn combo"
+                      onClick={() => handleQuickCombo(c.keys)}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="input-bar">
                 <input
                   type="text"
@@ -157,9 +272,9 @@ function App() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Type a message and press Enter..."
+                  placeholder="Type text and press Enter to send with Enter key..."
                 />
-                <button className="btn btn-primary" onClick={handleSend}>
+                <button className="btn btn-primary" onClick={handleSendText}>
                   Send
                 </button>
               </div>

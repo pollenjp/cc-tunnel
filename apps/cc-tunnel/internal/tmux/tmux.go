@@ -16,8 +16,11 @@ func NewSession(name string, command string) error {
 }
 
 // SendKeys sends keystrokes to a tmux session.
-func SendKeys(name string, keys string) error {
-	return exec.Command("tmux", "send-keys", "-t", name, keys, "Enter").Run()
+// Each key is passed as a separate argument to tmux send-keys.
+// Special key names (Enter, Escape, C-c, etc.) are interpreted by tmux.
+func SendKeys(name string, keys []string) error {
+	args := append([]string{"send-keys", "-t", name}, keys...)
+	return exec.Command("tmux", args...).Run()
 }
 
 // CapturePaneOutput captures the visible content of a tmux pane.

@@ -32,7 +32,11 @@ type OutputResponse struct {
 
 // SendInputRequest defines model for SendInputRequest.
 type SendInputRequest struct {
-	Text string `json:"text"`
+	// Keys Array of keys to send to the tmux session.
+	// Each element is passed as a separate argument to `tmux send-keys`.
+	// Plain text strings are sent as literal input.
+	// Special key names (Enter, Escape, C-c, etc.) are interpreted by tmux.
+	Keys []string `json:"keys"`
 }
 
 // Session defines model for Session.
@@ -316,21 +320,27 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/8xWW0/jOBT+K5Z3H9Om3HZXfWPZFaoGadDwiBAyyUlriC/YJx0qlP8+8nHStE2GgpgL",
-	"L1Vjn+PP5/vOxc88M8oaDRo9nz5zK5xQgODo6wq8l0bP8vAhNZ9yK3DBE66FAj7lfr2fcAePlXSQ8ym6",
-	"ChLuswUoERxxZckYndRzXtd1u0kY/ztnHEE7Y8GhBFqGdnnXexPpujG7SVozc3cPGfI64Z8rtBV+AW+N",
-	"9tAHMLS/H6GxG4K4Ap3PNKE8VuCxD4LwRKvwJJQtg/cCytLwZA8o+Q1DEuN9pMyBQMhvBeEVxqnwj+cC",
-	"YYRSQR8y4TLfvps4uDvMjvJjOCn+mv+9+GfIB1X1dBvl33TNSlHlMNp/wk6gMqROd2ayGcdg/Ciw8t9X",
-	"1dP+9t3Mw95rNG59xGAodWHCiTn4zEmLxD8/vZyxwjiWGY3OlKXUc3ZGLLAzE34uZqypD8+WUrAQZbiI",
-	"xMhYNsJKayjZ6eWMJ3wJLirLJ+OD8SQEayxoYSWf8qPxZHzEEyo/ii5tjw4fcyDRAw8Cm3rlF9LjVWsU",
-	"oo2UkcPhZEI5YzSCJl9hbSkz8k7vfUywroIlgiLHPx0UfMr/SLuukTa1nLapWa9JFM6JVeRwm7twN2aK",
-	"NT+kh6+UEm7Vbouy3NhPuDWxwLZPOqN08UwwDV+J4taJCZ0zj8Kh7+kiNZMawYkM5RKYMjmMebJDYDy6",
-	"jarH4MGbGHwVcX2imi3WVEXg4eSN2r2EHHvvAO4ssKNFUMAtwTFoDDdVivw0zG8y7NfxJF2eps/rYVFH",
-	"GUtA6Av6SZalZ7iAvpgOlFmCZxJZ4YxiSmgxBwUa++L9R8d34m3OtethUjqTtJt79c07S+dF4beb2Qv6",
-	"R7ZI/+PJ8c/Xv8XVBllhKp3vaB/pZWK/1qnUzZgdLuAwQz17gJVHZx7AMzR99UP79KDzUbDri72ew+8W",
-	"msb4vyZf/cDi3nkj1NuzJzyW6t+aY3S7QC/G9Pol7WUpShkqmjhhd4Hxj5LbQTFGWRty8TUp3j0lm0m8",
-	"M6OExcpB7GpZ5RxojPlthQbWRNtP63PA+Ij9qP1r54k9wPVlCLCh56Poew64bizt1eq6/hYAAP//+hFY",
-	"hwoNAAA=",
+	"H4sIAAAAAAAC/8xX328bNwz+VwhtDzYq20naboPfUiftjDVYUC/AgLpolTvaVnMnqRIvTVD4fx/IO/+I",
+	"z21atNvykvgkkRK/j/pIfVKZL4N36Cip4ScVTDQlEkb5mmBK1rtxzh/WqaEKhhZKK2dKVEOV1vNaRfxQ",
+	"2Yi5GlKsUKuULbA0bEi3QRZTtG6ulsvlalL2OI3RR9k6+oCRLMowroZ3rbd3et0se6NXy/zle8xILbX6",
+	"s6JQ0StMwbuE7Q28zN+/Q7Nu3xYTdPnYyS4fKkzU3uQKb+V/jimLNpD1DOJxjOYW/Ax4GshDQpfzf1og",
+	"UFndQANsf+pOTbYALLBER2ATBJMS5mASGEjIdBGCifNKFpCHd40Dl/fY/bv+1J0XxjogvCGog0xgIvIa",
+	"YkeFJYymAMuh9KduEjCzpuDTAROdoHPqCKOG05SZgBpGvUwDUtbviiPLsyEiYQ6XtxJBf+qUVnhjylAg",
+	"w7jAovBKK/HEaFrCMu2Bf42zYZRadAii+8kQyNocZBENYf7WCD8zH0v+pXJD2CNbotLtI1jJ+PXxlTm8",
+	"PMoe50/w6eyX+a+L3/bZcNhv64uxbZoVpsqxd7+HnUAtX6qNT70dx974yVCVPp/vSebvns1f3XuMxqy9",
+	"Iy+0bub3pPf5GGY+QuYdRV8U1s1hJCjAyPOfl+NVgie4tkYShg9iqUYs61HlHBZwfD5WWl1jrJlVB/2j",
+	"/gEH6wM6E6waqsf9g/5jpUWYJLrByjV/zFFIZxwMNUqmXtpEk9UijraGTAyODg4kZ7wjdGJrQihsJtaD",
+	"96lOsI22rbP454gzNVQ/DTZ6OmhUbrBKzXZuL/UOdnw2VoZ1EKKWVVmaeLuaNkWxNa9V8LX03PU0knRh",
+	"mXD48Y6qgHE5JDKRUosX6+rbbDKy1wilz7Gv9A6AtetVVC0ED78Jwa8Crg1UMwXNrWAcnn4jd1/aua5K",
+	"e/YdMzrOMAPxGiNgs3CbpRqfBvlthNM6Hr3J08GndRld1jQWSNgm9A9bFKlVIoTMiKW/xgSWYBZ9CaVx",
+	"Zi4lo03eibjfkLdd8V/vB2WzZLDpCJZvvvPqfJH4u2L2Bf5rtIT/JwdP/n3+V/s6TzDzlct3uK/hleJ8",
+	"D9cDqbci1HsvMHcXSVoEiv4K074GQeRzXetb7YITg3fSB4Bozg9oIWxqdQ7ZwrBiYEx9aHcPn28Rpm5S",
+	"heAjj6aNXQLrsqLKcQg7jcckmAw1/GUuNTyTD+g8M9lV4p9dPXUXQcOJ/+g0vMQZaXhl5wvS8LsvUcOp",
+	"yzWcmzleBOiczy9Ct/5kAx44cezi+WHv+eGRhvEIOmOXMFJXw8kIOjW1XTn3mc/tzGKEEHFmbzANYdSD",
+	"zohi0dVw1oPOcUGDMyTT1TDpQWeysDNi29O6+qYhTNWol01VbfVo1NUyYtYjxzJy1rvhkeOCHv3dLJn0",
+	"LsJ6lTh+dBG6dct197KvO9TvvujS4D7z+e0PFPed7nl5t/fgZ8Tyf9UYOZ0key0v/0l5uTaFZUUXTOCS",
+	"EX8o2saM1a8EVomvkbjNI6vpxHZ6FBOoilhXtayKUQSIxScYh9BE265hL5Dq591DrV87j889WJ9zgA08",
+	"D4XfF0jrwrI62nK5/CcAAP//IBfzsyQQAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

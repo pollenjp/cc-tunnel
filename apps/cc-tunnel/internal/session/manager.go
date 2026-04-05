@@ -36,7 +36,7 @@ func (m *Manager) Create() (*Session, error) {
 	}
 
 	// Start claude code in the tmux session
-	if err := tmux.SendKeys(tmuxName, "claude"); err != nil {
+	if err := tmux.SendKeys(tmuxName, []string{"claude", "Enter"}); err != nil {
 		_ = tmux.KillSession(tmuxName)
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
@@ -71,12 +71,12 @@ func (m *Manager) List() []*Session {
 	return result
 }
 
-func (m *Manager) SendInput(id string, text string) error {
+func (m *Manager) SendKeys(id string, keys []string) error {
 	s, ok := m.Get(id)
 	if !ok {
 		return fmt.Errorf("session not found: %s", id)
 	}
-	return tmux.SendKeys(s.TmuxName, text)
+	return tmux.SendKeys(s.TmuxName, keys)
 }
 
 func (m *Manager) GetOutput(id string) (string, error) {
