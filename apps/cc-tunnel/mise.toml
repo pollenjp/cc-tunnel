@@ -1,10 +1,5 @@
 [tools]
 go = "1.26.1"
 
-[tasks."generate"]
-run = '''
-#!/usr/bin/env bash
-set -euo pipefail
-
-go generate ./...
-'''
+[tasks."dev:up"]
+run = 'go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090'

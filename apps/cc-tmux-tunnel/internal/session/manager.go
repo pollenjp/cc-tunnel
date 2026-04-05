@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/tmux"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tmux-tunnel/internal/tmux"
 )
 
 type Session struct {
