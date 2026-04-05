@@ -28,7 +28,7 @@ func NewManager() *Manager {
 }
 
 const (
-	DefaultWidth  = 200
+	DefaultWidth  = 100
 	DefaultHeight = 50
 )
 
