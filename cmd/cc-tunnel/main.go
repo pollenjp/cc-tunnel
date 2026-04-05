@@ -18,7 +18,7 @@ func main() {
 	handler := api.NewHandler(mgr)
 
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	api.HandlerFromMux(handler, mux)
 
 	fmt.Printf("cc-tunnel listening on %s\n", *addr)
 	if err := http.ListenAndServe(*addr, mux); err != nil {

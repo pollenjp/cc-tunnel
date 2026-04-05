@@ -106,20 +106,41 @@ DELETE /sessions/{id}
 ## 技術選定
 
 - **言語**: Go
-- **HTTP**: 標準ライブラリ `net/http` (Go 1.22+ のルーティングパターン使用)
+- **API 定義**: OpenAPI 3.0 (`api/openapi.yaml`)
+- **コード生成**: `oapi-codegen` で `ServerInterface` + モデル型を生成
+- **HTTP**: 標準ライブラリ `net/http` (生成されたルーティングを使用)
 - **tmux 操作**: `os/exec` で tmux コマンドを直接呼び出し
 - **セッション管理**: インメモリ (`sync.RWMutex` + `map`)
+
+### コード生成フロー
+
+```
+api/openapi.yaml  ──(oapi-codegen)──►  internal/api/gen.go
+                                          ├── ServerInterface (インターフェース)
+                                          ├── モデル型 (Session, Error, etc.)
+                                          └── HandlerFromMux (ルーティング登録)
+
+internal/api/handler.go  ──(implements)──►  ServerInterface
+```
+
+再生成コマンド: `go generate ./internal/api/`
 
 ## プロジェクト構成
 
 ```
 cc-tunnel/
+├── api/
+│   ├── openapi.yaml               # OpenAPI 定義 (Single Source of Truth)
+│   └── oapi-codegen.yaml          # コード生成設定
 ├── cmd/cc-tunnel/main.go          # エントリーポイント
 ├── design/                        # 設計ドキュメント
 ├── internal/
-│   ├── api/handler.go             # HTTP ハンドラ
+│   ├── api/
+│   │   ├── gen.go                 # 生成コード (DO NOT EDIT)
+│   │   └── handler.go             # ServerInterface の実装
 │   ├── session/manager.go         # セッション管理
 │   └── tmux/tmux.go               # tmux コマンドラッパー
+├── tools.go                       # ツール依存 (oapi-codegen)
 ├── go.mod
 └── README.md
 ```
