@@ -1,0 +1,5 @@
+[tools]
+go = "1.26.1"
+
+[tasks."dev:up"]
+run = 'go run ./cmd/cc-tmux-tunnel/main.go -addr :9090'
