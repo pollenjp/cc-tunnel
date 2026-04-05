@@ -1,9 +1,0 @@
-# Configuration for oapi-codegen
-# Usage: oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
-# Or via go generate: go generate ./internal/api/
-package: api
-output: ../internal/api/gen.go
-generate:
-  std-http-server: true
-  models: true
-  embedded-spec: true

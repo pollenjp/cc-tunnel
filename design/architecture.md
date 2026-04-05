@@ -115,32 +115,34 @@ DELETE /sessions/{id}
 ### コード生成フロー
 
 ```
-api/openapi.yaml  ──(oapi-codegen)──►  internal/api/gen.go
-                                          ├── ServerInterface (インターフェース)
-                                          ├── モデル型 (Session, Error, etc.)
-                                          └── HandlerFromMux (ルーティング登録)
+apps/openapi/openapi.yaml  ──(oapi-codegen)──►  apps/cc-tunnel/internal/api/gen.go
+                                                    ├── ServerInterface (インターフェース)
+                                                    ├── モデル型 (Session, Error, etc.)
+                                                    └── HandlerFromMux (ルーティング登録)
 
-internal/api/handler.go  ──(implements)──►  ServerInterface
+apps/cc-tunnel/internal/api/handler.go  ──(implements)──►  ServerInterface
 ```
 
-再生成コマンド: `go generate ./internal/api/`
+再生成コマンド: `cd apps/cc-tunnel && go generate ./internal/api/`
 
 ## プロジェクト構成
 
 ```
 cc-tunnel/
-├── api/
-│   ├── openapi.yaml               # OpenAPI 定義 (Single Source of Truth)
-│   └── oapi-codegen.yaml          # コード生成設定
-├── cmd/cc-tunnel/main.go          # エントリーポイント
-├── design/                        # 設計ドキュメント
-├── internal/
-│   ├── api/
-│   │   ├── gen.go                 # 生成コード (DO NOT EDIT)
-│   │   └── handler.go             # ServerInterface の実装
-│   ├── session/manager.go         # セッション管理
-│   └── tmux/tmux.go               # tmux コマンドラッパー
-├── tools.go                       # ツール依存 (oapi-codegen)
-├── go.mod
+├── apps/
+│   ├── cc-tunnel/                     # Go アプリケーション
+│   │   ├── cmd/cc-tunnel/main.go      # エントリーポイント
+│   │   ├── internal/
+│   │   │   ├── api/
+│   │   │   │   ├── gen.go             # 生成コード (DO NOT EDIT)
+│   │   │   │   └── handler.go         # ServerInterface の実装
+│   │   │   ├── session/manager.go     # セッション管理
+│   │   │   └── tmux/tmux.go           # tmux コマンドラッパー
+│   │   ├── go.mod
+│   │   └── go.sum
+│   └── openapi/                       # API 定義
+│       ├── openapi.yaml               # OpenAPI 定義 (Single Source of Truth)
+│       └── oapi-codegen.yaml          # コード生成設定
+├── design/                            # 設計ドキュメント
 └── README.md
 ```

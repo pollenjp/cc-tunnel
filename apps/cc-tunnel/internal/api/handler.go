@@ -1,6 +1,6 @@
 package api
 
-//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen -package api -generate std-http-server,models,spec -o gen.go ../../api/openapi.yaml
+//go:generate oapi-codegen -package api -generate std-http-server,models,spec -o gen.go ../../../openapi/openapi.yaml
 
 import (
 	"encoding/json"
