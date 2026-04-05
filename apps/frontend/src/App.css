@@ -270,6 +270,16 @@
   font-size: 12px;
 }
 
+/* Sidebar buttons */
+.sidebar-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.sidebar-buttons .btn {
+  flex: 1;
+}
+
 /* Size controls */
 .size-controls {
   display: flex;

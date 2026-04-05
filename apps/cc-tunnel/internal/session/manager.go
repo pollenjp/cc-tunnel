@@ -90,6 +90,14 @@ func (m *Manager) List() []*Session {
 	return result
 }
 
+func (m *Manager) Resize(id string, width, height int) error {
+	s, ok := m.Get(id)
+	if !ok {
+		return fmt.Errorf("session not found: %s", id)
+	}
+	return tmux.ResizeWindow(s.TmuxName, width, height)
+}
+
 func (m *Manager) SendKeys(id string, keys []string) error {
 	s, ok := m.Get(id)
 	if !ok {

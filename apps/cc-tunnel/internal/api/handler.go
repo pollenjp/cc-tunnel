@@ -62,6 +62,21 @@ func (h *Server) ListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (h *Server) ResizeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
+	var body ResizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.manager.Resize(sessionId, body.Width, body.Height); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, StatusResponse{Status: "ok"})
+}
+
 func (h *Server) SendInput(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
 	var body SendInputRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

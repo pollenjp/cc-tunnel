@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Session } from './api';
-import { createSession, listSessions, sendKeys, getOutput, deleteSession } from './api';
+import { createSession, listSessions, sendKeys, getOutput, deleteSession, resizeSession } from './api';
 
 import './App.css';
 
@@ -116,6 +116,15 @@ function App() {
     }
   };
 
+  const handleResize = async () => {
+    if (!activeId) return;
+    try {
+      await resizeSession(activeId, tmuxWidth, tmuxHeight);
+    } catch (e) {
+      alert(`Failed to resize session: ${e}`);
+    }
+  };
+
   const handleSelect = (id: string) => {
     setActiveId(id);
     setOutput('');
@@ -204,9 +213,16 @@ function App() {
               />
             </label>
           </div>
-          <button className="btn btn-primary" onClick={handleCreate}>
-            + New Session
-          </button>
+          <div className="sidebar-buttons">
+            <button className="btn btn-primary" onClick={handleCreate}>
+              + New Session
+            </button>
+            {activeId && (
+              <button className="btn" onClick={handleResize}>
+                Resize
+              </button>
+            )}
+          </div>
           <ul className="session-list">
             {sessions.map((s) => (
               <li

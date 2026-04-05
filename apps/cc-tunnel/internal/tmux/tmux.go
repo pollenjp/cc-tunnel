@@ -24,6 +24,14 @@ func NewSession(name string, width, height int, command string) error {
 	return cmd.Run()
 }
 
+// ResizeWindow resizes the window of a running tmux session.
+func ResizeWindow(name string, width, height int) error {
+	return exec.Command("tmux", "resize-window", "-t", name,
+		"-x", fmt.Sprintf("%d", width),
+		"-y", fmt.Sprintf("%d", height),
+	).Run()
+}
+
 // SendKeys sends keystrokes to a tmux session.
 // Each key is passed as a separate argument to tmux send-keys.
 // Special key names (Enter, Escape, C-c, etc.) are interpreted by tmux.

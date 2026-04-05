@@ -40,6 +40,15 @@ export async function sendKeys(id: string, keys: string[]): Promise<void> {
   if (!res.ok) throw new Error(await res.text());
 }
 
+export async function resizeSession(id: string, width: number, height: number): Promise<void> {
+  const res = await fetch(`${BASE}/sessions/${id}/resize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ width, height }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
 export async function getOutput(id: string): Promise<string> {
   const res = await fetch(`${BASE}/sessions/${id}/output`);
   if (!res.ok) throw new Error(await res.text());
