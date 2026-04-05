@@ -76,6 +76,7 @@ function App() {
   const [activePaneIndex, setActivePaneIndex] = useState(0);
   const [discovered, setDiscovered] = useState<DiscoveredSession[]>([]);
   const [showDiscover, setShowDiscover] = useState(false);
+  const [creating, setCreating] = useState(false);
   const outputRef = useRef<HTMLPreElement>(null);
   const intervalRef = useRef<number | null>(null);
 
@@ -141,6 +142,7 @@ function App() {
 
   const handleCreate = async () => {
     try {
+      setCreating(true);
       const opts: Parameters<typeof createSession>[0] = { type: newSessionType };
       if (newSessionType === 'claude_code') {
         opts.width = tmuxWidth;
@@ -161,11 +163,14 @@ function App() {
       }
     } catch (e) {
       alert(`Failed to create session: ${e}`);
+    } finally {
+      setCreating(false);
     }
   };
 
   const handleAdopt = async (d: DiscoveredSession) => {
     try {
+      setCreating(true);
       const opts: Parameters<typeof createSession>[0] = { type: d.type };
       if (d.type === 'claude_code') {
         opts.tmux_name = d.tmux_names[0];
@@ -188,6 +193,8 @@ function App() {
       }
     } catch (e) {
       alert(`Failed to adopt session: ${e}`);
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -344,10 +351,10 @@ function App() {
           )}
 
           <div className="sidebar-buttons">
-            <button className="btn btn-primary" onClick={handleCreate}>
-              + New
+            <button className="btn btn-primary" onClick={handleCreate} disabled={creating}>
+              {creating ? 'Starting...' : '+ New'}
             </button>
-            <button className="btn" onClick={handleDiscover}>
+            <button className="btn" onClick={handleDiscover} disabled={creating}>
               Discover
             </button>
             {activeId && activeSession?.type === 'claude_code' && (
@@ -408,7 +415,24 @@ function App() {
         </aside>
 
         <main className="main">
-          {activeId && activeSession ? (
+          {creating && (
+            <div className="loading-overlay">
+              <div className="loading-content">
+                <div className="spinner" />
+                <div className="loading-text">
+                  {newSessionType === 'multi_agent_shogun'
+                    ? 'Starting Multi-Agent Shogun...'
+                    : 'Creating session...'}
+                </div>
+                <div className="loading-sub">
+                  {newSessionType === 'multi_agent_shogun'
+                    ? 'Running startup script and waiting for tmux sessions'
+                    : 'Setting up tmux session'}
+                </div>
+              </div>
+            </div>
+          )}
+          {!creating && activeId && activeSession ? (
             <>
               <div className="toolbar">
                 <span className="session-label">
@@ -592,11 +616,11 @@ function App() {
                 </div>
               )}
             </>
-          ) : (
+          ) : !creating ? (
             <div className="empty-state">
               Select a session or create a new one.
             </div>
-          )}
+          ) : null}
         </main>
       </div>
     </div>
