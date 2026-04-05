@@ -1,10 +1,11 @@
 package api
 
-//go:generate oapi-codegen -package api -generate std-http-server,models,spec -o gen.go ../../../openapi/openapi.yaml
+//go:generate go tool oapi-codegen -package api -generate std-http-server,models,spec -o gen.go ../../../openapi/openapi.yaml
 
 import (
 	"encoding/json"
 	"net/http"
+
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/session"
 )
 
