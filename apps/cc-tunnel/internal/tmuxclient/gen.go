@@ -17,13 +17,48 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for SessionType.
+const (
+	ClaudeCode       SessionType = "claude_code"
+	MultiAgentShogun SessionType = "multi_agent_shogun"
+)
+
+// Valid indicates whether the value is a known member of the SessionType enum.
+func (e SessionType) Valid() bool {
+	switch e {
+	case ClaudeCode:
+		return true
+	case MultiAgentShogun:
+		return true
+	default:
+		return false
+	}
+}
+
+// AllOutputsResponse defines model for AllOutputsResponse.
+type AllOutputsResponse struct {
+	// Panes Map of pane index (as string key) to output content
+	Panes map[string]string `json:"panes"`
+}
+
 // CreateSessionRequest defines model for CreateSessionRequest.
 type CreateSessionRequest struct {
 	// Height tmux window height in rows
 	Height *int `json:"height,omitempty"`
 
+	// TmuxName Existing tmux session name to adopt (for claude_code type)
+	TmuxName *string      `json:"tmux_name,omitempty"`
+	Type     *SessionType `json:"type,omitempty"`
+
 	// Width tmux window width in columns
 	Width *int `json:"width,omitempty"`
+}
+
+// DiscoveredSession defines model for DiscoveredSession.
+type DiscoveredSession struct {
+	// TmuxNames Tmux session names (1 for claude_code, 2 for multi_agent_shogun)
+	TmuxNames []string    `json:"tmux_names"`
+	Type      SessionType `json:"type"`
 }
 
 // Error defines model for Error.
@@ -58,16 +93,40 @@ type SendInputRequest struct {
 type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 	Id        string    `json:"id"`
-	TmuxName  string    `json:"tmux_name"`
+
+	// PaneCount Number of panes (1 for claude_code, 10 for multi_agent_shogun)
+	PaneCount int         `json:"pane_count"`
+	TmuxName  string      `json:"tmux_name"`
+	Type      SessionType `json:"type"`
 }
+
+// SessionType defines model for SessionType.
+type SessionType string
 
 // StatusResponse defines model for StatusResponse.
 type StatusResponse struct {
 	Status string `json:"status"`
 }
 
+// PaneIndex defines model for PaneIndex.
+type PaneIndex = int
+
 // SessionId defines model for SessionId.
 type SessionId = string
+
+// SendInputParams defines parameters for SendInput.
+type SendInputParams struct {
+	// PaneIndex Pane index to target. For claude_code sessions, only 0 is valid.
+	// For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
+	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
+}
+
+// GetOutputParams defines parameters for GetOutput.
+type GetOutputParams struct {
+	// PaneIndex Pane index to target. For claude_code sessions, only 0 is valid.
+	// For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
+	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
+}
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
@@ -159,16 +218,22 @@ type ClientInterface interface {
 
 	CreateSession(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DiscoverSessions request
+	DiscoverSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteSession request
 	DeleteSession(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SendInputWithBody request with any body
-	SendInputWithBody(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SendInputWithBody(ctx context.Context, sessionId SessionId, params *SendInputParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	SendInput(ctx context.Context, sessionId SessionId, body SendInputJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SendInput(ctx context.Context, sessionId SessionId, params *SendInputParams, body SendInputJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetOutput request
-	GetOutput(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetOutput(ctx context.Context, sessionId SessionId, params *GetOutputParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAllOutputs request
+	GetAllOutputs(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ResizeSessionWithBody request with any body
 	ResizeSessionWithBody(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -212,6 +277,18 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 	return c.Client.Do(req)
 }
 
+func (c *Client) DiscoverSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDiscoverSessionsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) DeleteSession(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteSessionRequest(c.Server, sessionId)
 	if err != nil {
@@ -224,8 +301,8 @@ func (c *Client) DeleteSession(ctx context.Context, sessionId SessionId, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) SendInputWithBody(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSendInputRequestWithBody(c.Server, sessionId, contentType, body)
+func (c *Client) SendInputWithBody(ctx context.Context, sessionId SessionId, params *SendInputParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSendInputRequestWithBody(c.Server, sessionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -236,8 +313,8 @@ func (c *Client) SendInputWithBody(ctx context.Context, sessionId SessionId, con
 	return c.Client.Do(req)
 }
 
-func (c *Client) SendInput(ctx context.Context, sessionId SessionId, body SendInputJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSendInputRequest(c.Server, sessionId, body)
+func (c *Client) SendInput(ctx context.Context, sessionId SessionId, params *SendInputParams, body SendInputJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSendInputRequest(c.Server, sessionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -248,8 +325,20 @@ func (c *Client) SendInput(ctx context.Context, sessionId SessionId, body SendIn
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetOutput(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetOutputRequest(c.Server, sessionId)
+func (c *Client) GetOutput(ctx context.Context, sessionId SessionId, params *GetOutputParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOutputRequest(c.Server, sessionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetAllOutputs(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAllOutputsRequest(c.Server, sessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -351,6 +440,33 @@ func NewCreateSessionRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewDiscoverSessionsRequest generates requests for DiscoverSessions
+func NewDiscoverSessionsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/sessions/discover")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeleteSessionRequest generates requests for DeleteSession
 func NewDeleteSessionRequest(server string, sessionId SessionId) (*http.Request, error) {
 	var err error
@@ -386,18 +502,18 @@ func NewDeleteSessionRequest(server string, sessionId SessionId) (*http.Request,
 }
 
 // NewSendInputRequest calls the generic SendInput builder with application/json body
-func NewSendInputRequest(server string, sessionId SessionId, body SendInputJSONRequestBody) (*http.Request, error) {
+func NewSendInputRequest(server string, sessionId SessionId, params *SendInputParams, body SendInputJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewSendInputRequestWithBody(server, sessionId, "application/json", bodyReader)
+	return NewSendInputRequestWithBody(server, sessionId, params, "application/json", bodyReader)
 }
 
 // NewSendInputRequestWithBody generates requests for SendInput with any type of body
-func NewSendInputRequestWithBody(server string, sessionId SessionId, contentType string, body io.Reader) (*http.Request, error) {
+func NewSendInputRequestWithBody(server string, sessionId SessionId, params *SendInputParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -422,6 +538,33 @@ func NewSendInputRequestWithBody(server string, sessionId SessionId, contentType
 		return nil, err
 	}
 
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.PaneIndex != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "paneIndex", *params.PaneIndex, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
@@ -433,7 +576,7 @@ func NewSendInputRequestWithBody(server string, sessionId SessionId, contentType
 }
 
 // NewGetOutputRequest generates requests for GetOutput
-func NewGetOutputRequest(server string, sessionId SessionId) (*http.Request, error) {
+func NewGetOutputRequest(server string, sessionId SessionId, params *GetOutputParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -449,6 +592,67 @@ func NewGetOutputRequest(server string, sessionId SessionId) (*http.Request, err
 	}
 
 	operationPath := fmt.Sprintf("/sessions/%s/output", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.PaneIndex != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "paneIndex", *params.PaneIndex, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAllOutputsRequest generates requests for GetAllOutputs
+func NewGetAllOutputsRequest(server string, sessionId SessionId) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sessionId", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/sessions/%s/outputs", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -564,16 +768,22 @@ type ClientWithResponsesInterface interface {
 
 	CreateSessionWithResponse(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
 
+	// DiscoverSessionsWithResponse request
+	DiscoverSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DiscoverSessionsResponse, error)
+
 	// DeleteSessionWithResponse request
 	DeleteSessionWithResponse(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*DeleteSessionResponse, error)
 
 	// SendInputWithBodyWithResponse request with any body
-	SendInputWithBodyWithResponse(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendInputResponse, error)
+	SendInputWithBodyWithResponse(ctx context.Context, sessionId SessionId, params *SendInputParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendInputResponse, error)
 
-	SendInputWithResponse(ctx context.Context, sessionId SessionId, body SendInputJSONRequestBody, reqEditors ...RequestEditorFn) (*SendInputResponse, error)
+	SendInputWithResponse(ctx context.Context, sessionId SessionId, params *SendInputParams, body SendInputJSONRequestBody, reqEditors ...RequestEditorFn) (*SendInputResponse, error)
 
 	// GetOutputWithResponse request
-	GetOutputWithResponse(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*GetOutputResponse, error)
+	GetOutputWithResponse(ctx context.Context, sessionId SessionId, params *GetOutputParams, reqEditors ...RequestEditorFn) (*GetOutputResponse, error)
+
+	// GetAllOutputsWithResponse request
+	GetAllOutputsWithResponse(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*GetAllOutputsResponse, error)
 
 	// ResizeSessionWithBodyWithResponse request with any body
 	ResizeSessionWithBodyWithResponse(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error)
@@ -620,6 +830,29 @@ func (r CreateSessionResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DiscoverSessionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]DiscoveredSession
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DiscoverSessionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DiscoverSessionsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -696,6 +929,29 @@ func (r GetOutputResponse) StatusCode() int {
 	return 0
 }
 
+type GetAllOutputsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AllOutputsResponse
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAllOutputsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAllOutputsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ResizeSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -746,6 +1002,15 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 	return ParseCreateSessionResponse(rsp)
 }
 
+// DiscoverSessionsWithResponse request returning *DiscoverSessionsResponse
+func (c *ClientWithResponses) DiscoverSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DiscoverSessionsResponse, error) {
+	rsp, err := c.DiscoverSessions(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDiscoverSessionsResponse(rsp)
+}
+
 // DeleteSessionWithResponse request returning *DeleteSessionResponse
 func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*DeleteSessionResponse, error) {
 	rsp, err := c.DeleteSession(ctx, sessionId, reqEditors...)
@@ -756,16 +1021,16 @@ func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, ses
 }
 
 // SendInputWithBodyWithResponse request with arbitrary body returning *SendInputResponse
-func (c *ClientWithResponses) SendInputWithBodyWithResponse(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendInputResponse, error) {
-	rsp, err := c.SendInputWithBody(ctx, sessionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) SendInputWithBodyWithResponse(ctx context.Context, sessionId SessionId, params *SendInputParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendInputResponse, error) {
+	rsp, err := c.SendInputWithBody(ctx, sessionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseSendInputResponse(rsp)
 }
 
-func (c *ClientWithResponses) SendInputWithResponse(ctx context.Context, sessionId SessionId, body SendInputJSONRequestBody, reqEditors ...RequestEditorFn) (*SendInputResponse, error) {
-	rsp, err := c.SendInput(ctx, sessionId, body, reqEditors...)
+func (c *ClientWithResponses) SendInputWithResponse(ctx context.Context, sessionId SessionId, params *SendInputParams, body SendInputJSONRequestBody, reqEditors ...RequestEditorFn) (*SendInputResponse, error) {
+	rsp, err := c.SendInput(ctx, sessionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -773,12 +1038,21 @@ func (c *ClientWithResponses) SendInputWithResponse(ctx context.Context, session
 }
 
 // GetOutputWithResponse request returning *GetOutputResponse
-func (c *ClientWithResponses) GetOutputWithResponse(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*GetOutputResponse, error) {
-	rsp, err := c.GetOutput(ctx, sessionId, reqEditors...)
+func (c *ClientWithResponses) GetOutputWithResponse(ctx context.Context, sessionId SessionId, params *GetOutputParams, reqEditors ...RequestEditorFn) (*GetOutputResponse, error) {
+	rsp, err := c.GetOutput(ctx, sessionId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseGetOutputResponse(rsp)
+}
+
+// GetAllOutputsWithResponse request returning *GetAllOutputsResponse
+func (c *ClientWithResponses) GetAllOutputsWithResponse(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*GetAllOutputsResponse, error) {
+	rsp, err := c.GetAllOutputs(ctx, sessionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAllOutputsResponse(rsp)
 }
 
 // ResizeSessionWithBodyWithResponse request with arbitrary body returning *ResizeSessionResponse
@@ -844,6 +1118,39 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDiscoverSessionsResponse parses an HTTP response from a DiscoverSessionsWithResponse call
+func ParseDiscoverSessionsResponse(rsp *http.Response) (*DiscoverSessionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DiscoverSessionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []DiscoveredSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -946,6 +1253,39 @@ func ParseGetOutputResponse(rsp *http.Response) (*GetOutputResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest OutputResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAllOutputsResponse parses an HTTP response from a GetAllOutputsWithResponse call
+func ParseGetAllOutputsResponse(rsp *http.Response) (*GetAllOutputsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAllOutputsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AllOutputsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

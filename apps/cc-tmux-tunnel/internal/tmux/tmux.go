@@ -49,6 +49,45 @@ func CapturePaneOutput(name string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
+// SendKeysToPane sends keystrokes to a specific pane in a tmux session.
+func SendKeysToPane(sessionName string, paneIndex int, keys []string) error {
+	target := fmt.Sprintf("%s:0.%d", sessionName, paneIndex)
+	args := append([]string{"send-keys", "-t", target}, keys...)
+	return exec.Command("tmux", args...).Run()
+}
+
+// CapturePaneOutputByPane captures the content of a specific pane in a tmux session.
+func CapturePaneOutputByPane(sessionName string, paneIndex int) (string, error) {
+	target := fmt.Sprintf("%s:0.%d", sessionName, paneIndex)
+	out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-").Output()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s: %w", target, err)
+	}
+	return strings.TrimRight(string(out), "\n"), nil
+}
+
+// ListPanes returns the number of panes in a tmux session's first window.
+func ListPanes(sessionName string) (int, error) {
+	out, err := exec.Command("tmux", "list-panes", "-t", sessionName, "-F", "#{pane_index}").Output()
+	if err != nil {
+		return 0, fmt.Errorf("list-panes %s: %w", sessionName, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return 0, nil
+	}
+	return len(lines), nil
+}
+
+// RunScript executes a shell script and waits for it to complete.
+func RunScript(scriptPath string) error {
+	cmd := exec.Command("bash", scriptPath)
+	if home, err := os.UserHomeDir(); err == nil {
+		cmd.Dir = home
+	}
+	return cmd.Run()
+}
+
 // KillSession kills a tmux session.
 func KillSession(name string) error {
 	return exec.Command("tmux", "kill-session", "-t", name).Run()

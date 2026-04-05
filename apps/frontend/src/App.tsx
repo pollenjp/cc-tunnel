@@ -1,6 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Session } from './api';
-import { createSession, listSessions, sendKeys, getOutput, deleteSession, resizeSession } from './api';
+import type { Session, SessionType, DiscoveredSession } from './api';
+import {
+  createSession,
+  listSessions,
+  discoverSessions,
+  sendKeys,
+  getOutput,
+  getAllOutputs,
+  deleteSession,
+  resizeSession,
+} from './api';
 
 import './App.css';
 
@@ -33,27 +42,45 @@ const QUICK_COMBOS = [
   { label: 'Ctrl+E', keys: ['C-e'] },
 ] as const;
 
+type ViewMode = 'single' | 'grid';
+
 function buildTmuxKey(tmuxKeyName: string, modifiers: Set<Modifier>): string {
   let key = tmuxKeyName;
-  // tmux modifier prefix order: C- M- S-
   if (modifiers.has('Shift')) key = `S-${key}`;
   if (modifiers.has('Alt')) key = `M-${key}`;
   if (modifiers.has('Ctrl')) key = `C-${key}`;
   return key;
 }
 
+function getPaneName(paneIndex: number, sessionType: SessionType): string {
+  if (sessionType === 'multi_agent_shogun') {
+    if (paneIndex === 0) return 'Shogun';
+    return `Agent ${paneIndex}`;
+  }
+  return 'Main';
+}
+
 function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [output, setOutput] = useState('');
+  const [allPaneOutputs, setAllPaneOutputs] = useState<Record<string, string>>({});
   const [input, setInput] = useState('');
   const [polling, setPolling] = useState(false);
   const [activeModifiers, setActiveModifiers] = useState<Set<Modifier>>(new Set());
   const [tmuxWidth, setTmuxWidth] = useState(200);
   const [tmuxHeight, setTmuxHeight] = useState(50);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [newSessionType, setNewSessionType] = useState<SessionType>('claude_code');
+  const [viewMode, setViewMode] = useState<ViewMode>('single');
+  const [activePaneIndex, setActivePaneIndex] = useState(0);
+  const [discovered, setDiscovered] = useState<DiscoveredSession[]>([]);
+  const [showDiscover, setShowDiscover] = useState(false);
   const outputRef = useRef<HTMLPreElement>(null);
   const intervalRef = useRef<number | null>(null);
+
+  const activeSession = sessions.find((s) => s.id === activeId);
+  const isMultiAgent = activeSession?.type === 'multi_agent_shogun';
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -68,17 +95,26 @@ function App() {
     refreshSessions();
   }, [refreshSessions]);
 
-  const pollOutput = useCallback(async (id: string) => {
-    try {
-      const text = await getOutput(id);
-      setOutput(text);
-      if (outputRef.current) {
-        outputRef.current.scrollTop = outputRef.current.scrollHeight;
+  const pollOutput = useCallback(
+    async (id: string) => {
+      try {
+        const session = sessions.find((s) => s.id === id);
+        if (session && session.type === 'multi_agent_shogun' && viewMode === 'grid') {
+          const outputs = await getAllOutputs(id);
+          setAllPaneOutputs(outputs);
+        } else {
+          const text = await getOutput(id, activePaneIndex > 0 ? activePaneIndex : undefined);
+          setOutput(text);
+          if (outputRef.current) {
+            outputRef.current.scrollTop = outputRef.current.scrollHeight;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to get output:', e);
       }
-    } catch (e) {
-      console.error('Failed to get output:', e);
-    }
-  }, []);
+    },
+    [sessions, viewMode, activePaneIndex],
+  );
 
   useEffect(() => {
     if (activeId && polling) {
@@ -96,7 +132,7 @@ function App() {
   const doSendKeys = async (keys: string[]) => {
     if (!activeId) return;
     try {
-      await sendKeys(activeId, keys);
+      await sendKeys(activeId, keys, activePaneIndex > 0 ? activePaneIndex : undefined);
       setCommandHistory((prev) => [...prev, keys.join(' ')]);
     } catch (e) {
       alert(`Failed to send keys: ${e}`);
@@ -105,14 +141,63 @@ function App() {
 
   const handleCreate = async () => {
     try {
-      const session = await createSession({ width: tmuxWidth, height: tmuxHeight });
+      const opts: Parameters<typeof createSession>[0] = { type: newSessionType };
+      if (newSessionType === 'claude_code') {
+        opts.width = tmuxWidth;
+        opts.height = tmuxHeight;
+      }
+      const session = await createSession(opts);
       await refreshSessions();
       setActiveId(session.id);
       setOutput('');
+      setAllPaneOutputs({});
       setPolling(true);
       setCommandHistory([]);
+      setActivePaneIndex(0);
+      if (session.type === 'multi_agent_shogun') {
+        setViewMode('grid');
+      } else {
+        setViewMode('single');
+      }
     } catch (e) {
       alert(`Failed to create session: ${e}`);
+    }
+  };
+
+  const handleAdopt = async (d: DiscoveredSession) => {
+    try {
+      const opts: Parameters<typeof createSession>[0] = { type: d.type };
+      if (d.type === 'claude_code') {
+        opts.tmux_name = d.tmux_names[0];
+        opts.width = tmuxWidth;
+        opts.height = tmuxHeight;
+      }
+      const session = await createSession(opts);
+      await refreshSessions();
+      setActiveId(session.id);
+      setOutput('');
+      setAllPaneOutputs({});
+      setPolling(true);
+      setCommandHistory([]);
+      setActivePaneIndex(0);
+      setShowDiscover(false);
+      if (session.type === 'multi_agent_shogun') {
+        setViewMode('grid');
+      } else {
+        setViewMode('single');
+      }
+    } catch (e) {
+      alert(`Failed to adopt session: ${e}`);
+    }
+  };
+
+  const handleDiscover = async () => {
+    try {
+      const list = await discoverSessions();
+      setDiscovered(list);
+      setShowDiscover(true);
+    } catch (e) {
+      alert(`Failed to discover sessions: ${e}`);
     }
   };
 
@@ -126,9 +211,17 @@ function App() {
   };
 
   const handleSelect = (id: string) => {
+    const session = sessions.find((s) => s.id === id);
     setActiveId(id);
     setOutput('');
+    setAllPaneOutputs({});
     setPolling(true);
+    setActivePaneIndex(0);
+    if (session?.type === 'multi_agent_shogun') {
+      setViewMode('grid');
+    } else {
+      setViewMode('single');
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -137,6 +230,7 @@ function App() {
       if (activeId === id) {
         setActiveId(null);
         setOutput('');
+        setAllPaneOutputs({});
         setPolling(false);
       }
       await refreshSessions();
@@ -181,6 +275,15 @@ function App() {
     setActiveModifiers(new Set());
   };
 
+  const handleGridPaneClick = (paneIndex: number) => {
+    setActivePaneIndex(paneIndex);
+    setViewMode('single');
+    setOutput('');
+  };
+
+  const sessionTypeLabel = (type: SessionType) =>
+    type === 'claude_code' ? 'CC' : 'Shogun';
+
   return (
     <div className="app">
       <header className="header">
@@ -189,40 +292,100 @@ function App() {
 
       <div className="layout">
         <aside className="sidebar">
-          <div className="size-controls">
-            <label className="size-label">
-              Width
+          {/* Session type selector */}
+          <div className="type-selector">
+            <label className="type-option">
               <input
-                type="number"
-                className="size-input"
-                value={tmuxWidth}
-                onChange={(e) => setTmuxWidth(Number(e.target.value))}
-                min={40}
-                max={500}
+                type="radio"
+                name="sessionType"
+                value="claude_code"
+                checked={newSessionType === 'claude_code'}
+                onChange={() => setNewSessionType('claude_code')}
               />
+              Claude Code
             </label>
-            <label className="size-label">
-              Height
+            <label className="type-option">
               <input
-                type="number"
-                className="size-input"
-                value={tmuxHeight}
-                onChange={(e) => setTmuxHeight(Number(e.target.value))}
-                min={10}
-                max={200}
+                type="radio"
+                name="sessionType"
+                value="multi_agent_shogun"
+                checked={newSessionType === 'multi_agent_shogun'}
+                onChange={() => setNewSessionType('multi_agent_shogun')}
               />
+              Multi-Agent Shogun
             </label>
           </div>
+
+          {newSessionType === 'claude_code' && (
+            <div className="size-controls">
+              <label className="size-label">
+                Width
+                <input
+                  type="number"
+                  className="size-input"
+                  value={tmuxWidth}
+                  onChange={(e) => setTmuxWidth(Number(e.target.value))}
+                  min={40}
+                  max={500}
+                />
+              </label>
+              <label className="size-label">
+                Height
+                <input
+                  type="number"
+                  className="size-input"
+                  value={tmuxHeight}
+                  onChange={(e) => setTmuxHeight(Number(e.target.value))}
+                  min={10}
+                  max={200}
+                />
+              </label>
+            </div>
+          )}
+
           <div className="sidebar-buttons">
             <button className="btn btn-primary" onClick={handleCreate}>
-              + New Session
+              + New
             </button>
-            {activeId && (
+            <button className="btn" onClick={handleDiscover}>
+              Discover
+            </button>
+            {activeId && activeSession?.type === 'claude_code' && (
               <button className="btn" onClick={handleResize}>
                 Resize
               </button>
             )}
           </div>
+
+          {/* Discover panel */}
+          {showDiscover && (
+            <div className="discover-panel">
+              <div className="discover-header">
+                <span className="discover-title">Discovered Sessions</span>
+                <button className="btn btn-sm" onClick={() => setShowDiscover(false)}>
+                  Close
+                </button>
+              </div>
+              {discovered.length === 0 ? (
+                <div className="discover-empty">No unmanaged sessions found</div>
+              ) : (
+                <ul className="discover-list">
+                  {discovered.map((d, i) => (
+                    <li key={i} className="discover-item">
+                      <span className="discover-info">
+                        <span className={`type-badge ${d.type}`}>{sessionTypeLabel(d.type)}</span>
+                        {d.tmux_names.join(', ')}
+                      </span>
+                      <button className="btn btn-sm btn-primary" onClick={() => handleAdopt(d)}>
+                        Attach
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           <ul className="session-list">
             {sessions.map((s) => (
               <li
@@ -230,6 +393,7 @@ function App() {
                 className={`session-item ${s.id === activeId ? 'active' : ''}`}
               >
                 <span className="session-name" onClick={() => handleSelect(s.id)}>
+                  <span className={`type-badge ${s.type}`}>{sessionTypeLabel(s.type)}</span>
                   {s.tmux_name}
                 </span>
                 <button
@@ -244,10 +408,35 @@ function App() {
         </aside>
 
         <main className="main">
-          {activeId ? (
+          {activeId && activeSession ? (
             <>
               <div className="toolbar">
-                <span className="session-label">Session: {activeId}</span>
+                <span className="session-label">
+                  {activeSession.tmux_name}
+                  {isMultiAgent && (
+                    <span className="pane-label">
+                      {' '}/ {getPaneName(activePaneIndex, activeSession.type)}
+                    </span>
+                  )}
+                </span>
+
+                {isMultiAgent && (
+                  <div className="view-toggle">
+                    <button
+                      className={`btn btn-sm ${viewMode === 'single' ? 'btn-active' : ''}`}
+                      onClick={() => setViewMode('single')}
+                    >
+                      Single
+                    </button>
+                    <button
+                      className={`btn btn-sm ${viewMode === 'grid' ? 'btn-active' : ''}`}
+                      onClick={() => setViewMode('grid')}
+                    >
+                      Grid
+                    </button>
+                  </div>
+                )}
+
                 <label className="polling-toggle">
                   <input
                     type="checkbox"
@@ -261,9 +450,61 @@ function App() {
                 </button>
               </div>
 
-              <pre className="output" ref={outputRef}>
-                {output || 'Waiting for output...'}
-              </pre>
+              {/* Pane selector tabs for multi-agent in single view */}
+              {isMultiAgent && viewMode === 'single' && (
+                <div className="pane-tabs">
+                  {Array.from({ length: activeSession.pane_count }, (_, i) => (
+                    <button
+                      key={i}
+                      className={`pane-tab ${activePaneIndex === i ? 'active' : ''}`}
+                      onClick={() => {
+                        setActivePaneIndex(i);
+                        setOutput('');
+                      }}
+                    >
+                      {getPaneName(i, activeSession.type)}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Single pane view */}
+              {viewMode === 'single' && (
+                <pre className="output" ref={outputRef}>
+                  {output || 'Waiting for output...'}
+                </pre>
+              )}
+
+              {/* Grid view for multi-agent */}
+              {viewMode === 'grid' && isMultiAgent && (
+                <div className="grid-container">
+                  {/* Shogun pane banner */}
+                  <div
+                    className="grid-shogun"
+                    onClick={() => handleGridPaneClick(0)}
+                  >
+                    <div className="grid-pane-header">Shogun</div>
+                    <pre className="grid-pane-output">
+                      {allPaneOutputs['0'] || 'Waiting...'}
+                    </pre>
+                  </div>
+                  {/* 3x3 grid of agent panes */}
+                  <div className="grid-agents">
+                    {Array.from({ length: 9 }, (_, i) => (
+                      <div
+                        key={i + 1}
+                        className="grid-pane"
+                        onClick={() => handleGridPaneClick(i + 1)}
+                      >
+                        <div className="grid-pane-header">Agent {i + 1}</div>
+                        <pre className="grid-pane-output">
+                          {allPaneOutputs[String(i + 1)] || 'Waiting...'}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="keys-panel">
                 <div className="keys-row">
@@ -318,7 +559,11 @@ function App() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Type text and press Enter to send with Enter key..."
+                  placeholder={
+                    isMultiAgent
+                      ? `Send to ${getPaneName(activePaneIndex, activeSession.type)}...`
+                      : 'Type text and press Enter to send with Enter key...'
+                  }
                 />
                 <button className="btn btn-primary" onClick={handleSendText}>
                   Send

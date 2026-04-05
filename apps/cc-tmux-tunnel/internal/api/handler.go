@@ -4,6 +4,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tmux-tunnel/internal/session"
@@ -30,6 +31,12 @@ func (h *Server) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := session.CreateOptions{}
+	if body.Type != nil {
+		opts.Type = string(*body.Type)
+	}
+	if body.TmuxName != nil {
+		opts.TmuxName = *body.TmuxName
+	}
 	if body.Width != nil {
 		opts.Width = *body.Width
 	}
@@ -44,7 +51,9 @@ func (h *Server) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, Session{
 		Id:        s.ID,
+		Type:      SessionType(s.Type),
 		TmuxName:  s.TmuxName,
+		PaneCount: s.PaneCount,
 		CreatedAt: s.CreatedAt,
 	})
 }
@@ -55,8 +64,26 @@ func (h *Server) ListSessions(w http.ResponseWriter, r *http.Request) {
 	for _, s := range list {
 		result = append(result, Session{
 			Id:        s.ID,
+			Type:      SessionType(s.Type),
 			TmuxName:  s.TmuxName,
+			PaneCount: s.PaneCount,
 			CreatedAt: s.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Server) DiscoverSessions(w http.ResponseWriter, r *http.Request) {
+	discovered, err := h.manager.DiscoverSessions()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result := make([]DiscoveredSession, 0, len(discovered))
+	for _, d := range discovered {
+		result = append(result, DiscoveredSession{
+			Type:      SessionType(d.Type),
+			TmuxNames: d.TmuxNames,
 		})
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -77,7 +104,7 @@ func (h *Server) ResizeSession(w http.ResponseWriter, r *http.Request, sessionId
 	writeJSON(w, http.StatusOK, StatusResponse{Status: "ok"})
 }
 
-func (h *Server) SendInput(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
+func (h *Server) SendInput(w http.ResponseWriter, r *http.Request, sessionId SessionId, params SendInputParams) {
 	var body SendInputRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -89,7 +116,12 @@ func (h *Server) SendInput(w http.ResponseWriter, r *http.Request, sessionId Ses
 		return
 	}
 
-	if err := h.manager.SendKeys(sessionId, body.Keys); err != nil {
+	paneIndex := 0
+	if params.PaneIndex != nil {
+		paneIndex = *params.PaneIndex
+	}
+
+	if err := h.manager.SendKeysToPane(sessionId, paneIndex, body.Keys); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -97,14 +129,34 @@ func (h *Server) SendInput(w http.ResponseWriter, r *http.Request, sessionId Ses
 	writeJSON(w, http.StatusOK, StatusResponse{Status: "ok"})
 }
 
-func (h *Server) GetOutput(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
-	output, err := h.manager.GetOutput(sessionId)
+func (h *Server) GetOutput(w http.ResponseWriter, r *http.Request, sessionId SessionId, params GetOutputParams) {
+	paneIndex := 0
+	if params.PaneIndex != nil {
+		paneIndex = *params.PaneIndex
+	}
+
+	output, err := h.manager.GetPaneOutput(sessionId, paneIndex)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, OutputResponse{Output: output})
+}
+
+func (h *Server) GetAllOutputs(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
+	outputs, err := h.manager.GetAllPaneOutputs(sessionId)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	panes := make(map[string]string, len(outputs))
+	for idx, output := range outputs {
+		panes[fmt.Sprintf("%d", idx)] = output
+	}
+
+	writeJSON(w, http.StatusOK, AllOutputsResponse{Panes: panes})
 }
 
 func (h *Server) DeleteSession(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
