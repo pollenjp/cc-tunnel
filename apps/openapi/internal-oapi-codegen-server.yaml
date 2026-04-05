@@ -2,7 +2,6 @@
 # Usage: oapi-codegen -config apps/openapi/internal-oapi-codegen-server.yaml apps/openapi/internal-openapi.yaml
 # Or via go generate: go generate ./apps/cc-tmux-tunnel/internal/api/
 package: api
-output: ../cc-tmux-tunnel/internal/api/gen.go
 generate:
   std-http-server: true
   models: true

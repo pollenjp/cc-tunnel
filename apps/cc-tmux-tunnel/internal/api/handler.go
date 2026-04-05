@@ -1,6 +1,6 @@
 package api
 
-//go:generate go tool oapi-codegen -package api -generate std-http-server,models,spec -o gen.go ../../../openapi/internal-openapi.yaml
+//go:generate go tool oapi-codegen -config ../../../openapi/internal-oapi-codegen-server.yaml -o gen.go ../../../openapi/internal-openapi.yaml
 
 import (
 	"encoding/json"

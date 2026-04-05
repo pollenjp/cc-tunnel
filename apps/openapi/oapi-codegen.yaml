@@ -2,7 +2,6 @@
 # Usage: oapi-codegen -config apps/openapi/oapi-codegen.yaml apps/openapi/openapi.yaml
 # Or via go generate: go generate ./apps/cc-tunnel/internal/api/
 package: api
-output: ../cc-tunnel/internal/api/gen.go
 generate:
   std-http-server: true
   models: true
