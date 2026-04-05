@@ -1,0 +1,111 @@
+package session
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/pollenjp/cc-tunnel/internal/tmux"
+)
+
+type Session struct {
+	ID        string    `json:"id"`
+	TmuxName  string    `json:"tmux_name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Manager struct {
+	mu       sync.RWMutex
+	sessions map[string]*Session
+}
+
+func NewManager() *Manager {
+	return &Manager{
+		sessions: make(map[string]*Session),
+	}
+}
+
+func (m *Manager) Create() (*Session, error) {
+	id := generateID()
+	tmuxName := "claude-" + id
+
+	if err := tmux.NewSession(tmuxName, ""); err != nil {
+		return nil, fmt.Errorf("create tmux session: %w", err)
+	}
+
+	// Start claude code in the tmux session
+	if err := tmux.SendKeys(tmuxName, "claude"); err != nil {
+		_ = tmux.KillSession(tmuxName)
+		return nil, fmt.Errorf("start claude: %w", err)
+	}
+
+	s := &Session{
+		ID:        id,
+		TmuxName:  tmuxName,
+		CreatedAt: time.Now(),
+	}
+
+	m.mu.Lock()
+	m.sessions[id] = s
+	m.mu.Unlock()
+
+	return s, nil
+}
+
+func (m *Manager) Get(id string) (*Session, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s, ok := m.sessions[id]
+	return s, ok
+}
+
+func (m *Manager) List() []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		result = append(result, s)
+	}
+	return result
+}
+
+func (m *Manager) SendInput(id string, text string) error {
+	s, ok := m.Get(id)
+	if !ok {
+		return fmt.Errorf("session not found: %s", id)
+	}
+	return tmux.SendKeys(s.TmuxName, text)
+}
+
+func (m *Manager) GetOutput(id string) (string, error) {
+	s, ok := m.Get(id)
+	if !ok {
+		return "", fmt.Errorf("session not found: %s", id)
+	}
+	return tmux.CapturePaneOutput(s.TmuxName)
+}
+
+func (m *Manager) Delete(id string) error {
+	s, ok := m.Get(id)
+	if !ok {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	if err := tmux.KillSession(s.TmuxName); err != nil {
+		return fmt.Errorf("kill tmux session: %w", err)
+	}
+
+	m.mu.Lock()
+	delete(m.sessions, id)
+	m.mu.Unlock()
+
+	return nil
+}
+
+func generateID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
