@@ -5,7 +5,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"github.com/pollenjp/cc-tunnel/internal/session"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/session"
 )
 
 // Server implements the generated ServerInterface.

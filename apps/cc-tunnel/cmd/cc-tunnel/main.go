@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/pollenjp/cc-tunnel/internal/api"
-	"github.com/pollenjp/cc-tunnel/internal/session"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/session"
 )
 
 func main() {

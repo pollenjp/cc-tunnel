@@ -1,4 +1,4 @@
-module github.com/pollenjp/cc-tunnel
+module github.com/pollenjp/cc-tunnel/apps/cc-tunnel
 
 go 1.24.7
 
