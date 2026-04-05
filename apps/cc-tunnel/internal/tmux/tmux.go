@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -16,7 +17,11 @@ func NewSession(name string, width, height int, command string) error {
 	if command != "" {
 		args = append(args, command)
 	}
-	return exec.Command("tmux", args...).Run()
+	cmd := exec.Command("tmux", args...)
+	if home, err := os.UserHomeDir(); err == nil {
+		cmd.Dir = home
+	}
+	return cmd.Run()
 }
 
 // SendKeys sends keystrokes to a tmux session.
