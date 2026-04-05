@@ -6,9 +6,13 @@ import (
 	"strings"
 )
 
-// NewSession creates a new detached tmux session and runs a command in it.
-func NewSession(name string, command string) error {
-	args := []string{"new-session", "-d", "-s", name, "-x", "200", "-y", "50"}
+// NewSession creates a new detached tmux session with the given window size.
+func NewSession(name string, width, height int, command string) error {
+	args := []string{
+		"new-session", "-d", "-s", name,
+		"-x", fmt.Sprintf("%d", width),
+		"-y", fmt.Sprintf("%d", height),
+	}
 	if command != "" {
 		args = append(args, command)
 	}

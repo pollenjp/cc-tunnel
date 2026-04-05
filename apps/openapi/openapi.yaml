@@ -10,6 +10,12 @@ paths:
       operationId: createSession
       summary: Create a new Claude Code session
       description: Creates a new tmux session and starts Claude Code CLI in interactive mode.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
       responses:
         "201":
           description: Session created
@@ -131,6 +137,24 @@ components:
         type: string
 
   schemas:
+    CreateSessionRequest:
+      type: object
+      properties:
+        width:
+          type: integer
+          description: tmux window width in columns
+          default: 200
+          minimum: 40
+          maximum: 500
+          example: 200
+        height:
+          type: integer
+          description: tmux window height in rows
+          default: 50
+          minimum: 10
+          maximum: 200
+          example: 50
+
     Session:
       type: object
       required:

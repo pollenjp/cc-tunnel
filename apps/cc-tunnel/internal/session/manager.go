@@ -27,11 +27,30 @@ func NewManager() *Manager {
 	}
 }
 
-func (m *Manager) Create() (*Session, error) {
+const (
+	DefaultWidth  = 200
+	DefaultHeight = 50
+)
+
+type CreateOptions struct {
+	Width  int
+	Height int
+}
+
+func (m *Manager) Create(opts CreateOptions) (*Session, error) {
 	id := generateID()
 	tmuxName := "claude-" + id
 
-	if err := tmux.NewSession(tmuxName, ""); err != nil {
+	width := opts.Width
+	if width <= 0 {
+		width = DefaultWidth
+	}
+	height := opts.Height
+	if height <= 0 {
+		height = DefaultHeight
+	}
+
+	if err := tmux.NewSession(tmuxName, width, height, ""); err != nil {
 		return nil, fmt.Errorf("create tmux session: %w", err)
 	}
 

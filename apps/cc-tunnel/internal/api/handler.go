@@ -21,7 +21,23 @@ func NewHandler(m *session.Manager) *Server {
 }
 
 func (h *Server) CreateSession(w http.ResponseWriter, r *http.Request) {
-	s, err := h.manager.Create()
+	var body CreateSessionRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+
+	opts := session.CreateOptions{}
+	if body.Width != nil {
+		opts.Width = *body.Width
+	}
+	if body.Height != nil {
+		opts.Height = *body.Height
+	}
+
+	s, err := h.manager.Create(opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

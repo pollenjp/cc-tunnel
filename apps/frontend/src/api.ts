@@ -10,8 +10,17 @@ export interface OutputResponse {
 
 const BASE = '';
 
-export async function createSession(): Promise<Session> {
-  const res = await fetch(`${BASE}/sessions`, { method: 'POST' });
+export interface CreateSessionOptions {
+  width?: number;
+  height?: number;
+}
+
+export async function createSession(opts?: CreateSessionOptions): Promise<Session> {
+  const res = await fetch(`${BASE}/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts ?? {}),
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

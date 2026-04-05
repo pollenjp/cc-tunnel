@@ -269,3 +269,91 @@
   padding: 4px 10px;
   font-size: 12px;
 }
+
+/* Size controls */
+.size-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.size-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text);
+  flex: 1;
+}
+
+.size-input {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-bright);
+  font-family: var(--mono);
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.size-input:focus {
+  border-color: var(--accent);
+}
+
+/* Command history */
+.history-panel {
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+}
+
+.history-title {
+  font-size: 11px;
+  color: var(--text);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.history-list {
+  list-style: none;
+  padding: 4px 16px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.history-index {
+  color: var(--text);
+  font-family: var(--mono);
+  min-width: 24px;
+  text-align: right;
+  opacity: 0.5;
+}
+
+.history-cmd {
+  font-family: var(--mono);
+  color: var(--text-bright);
+  font-size: 12px;
+  background: none;
+  padding: 0;
+}

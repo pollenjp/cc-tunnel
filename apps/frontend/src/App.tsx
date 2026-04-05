@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Session } from './api';
 import { createSession, listSessions, sendKeys, getOutput, deleteSession } from './api';
+
 import './App.css';
 
 const MODIFIER_KEYS = ['Ctrl', 'Shift', 'Alt'] as const;
@@ -48,6 +49,9 @@ function App() {
   const [input, setInput] = useState('');
   const [polling, setPolling] = useState(false);
   const [activeModifiers, setActiveModifiers] = useState<Set<Modifier>>(new Set());
+  const [tmuxWidth, setTmuxWidth] = useState(200);
+  const [tmuxHeight, setTmuxHeight] = useState(50);
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const outputRef = useRef<HTMLPreElement>(null);
   const intervalRef = useRef<number | null>(null);
 
@@ -93,6 +97,7 @@ function App() {
     if (!activeId) return;
     try {
       await sendKeys(activeId, keys);
+      setCommandHistory((prev) => [...prev, keys.join(' ')]);
     } catch (e) {
       alert(`Failed to send keys: ${e}`);
     }
@@ -100,11 +105,12 @@ function App() {
 
   const handleCreate = async () => {
     try {
-      const session = await createSession();
+      const session = await createSession({ width: tmuxWidth, height: tmuxHeight });
       await refreshSessions();
       setActiveId(session.id);
       setOutput('');
       setPolling(true);
+      setCommandHistory([]);
     } catch (e) {
       alert(`Failed to create session: ${e}`);
     }
@@ -174,6 +180,30 @@ function App() {
 
       <div className="layout">
         <aside className="sidebar">
+          <div className="size-controls">
+            <label className="size-label">
+              Width
+              <input
+                type="number"
+                className="size-input"
+                value={tmuxWidth}
+                onChange={(e) => setTmuxWidth(Number(e.target.value))}
+                min={40}
+                max={500}
+              />
+            </label>
+            <label className="size-label">
+              Height
+              <input
+                type="number"
+                className="size-input"
+                value={tmuxHeight}
+                onChange={(e) => setTmuxHeight(Number(e.target.value))}
+                min={10}
+                max={200}
+              />
+            </label>
+          </div>
           <button className="btn btn-primary" onClick={handleCreate}>
             + New Session
           </button>
@@ -278,6 +308,28 @@ function App() {
                   Send
                 </button>
               </div>
+
+              {commandHistory.length > 0 && (
+                <div className="history-panel">
+                  <div className="history-header">
+                    <span className="history-title">Command History</span>
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => setCommandHistory([])}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <ul className="history-list">
+                    {[...commandHistory].reverse().map((cmd, i) => (
+                      <li key={commandHistory.length - 1 - i} className="history-item">
+                        <span className="history-index">{commandHistory.length - i}</span>
+                        <code className="history-cmd">{cmd}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </>
           ) : (
             <div className="empty-state">
