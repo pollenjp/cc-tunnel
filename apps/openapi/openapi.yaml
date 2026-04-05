@@ -2,14 +2,16 @@ openapi: "3.0.3"
 info:
   title: cc-tunnel API
   description: API for controlling Claude Code CLI sessions via tmux
-  version: 0.2.0
+  version: 0.3.0
 
 paths:
   /sessions:
     post:
       operationId: createSession
-      summary: Create a new Claude Code session
-      description: Creates a new tmux session and starts Claude Code CLI in interactive mode.
+      summary: Create a new session
+      description: |
+        Creates a new session. For claude_code type, creates a new tmux session and starts Claude Code CLI.
+        For multi_agent_shogun type, starts the shogun startup script or adopts existing sessions.
       requestBody:
         required: false
         content:
@@ -42,11 +44,34 @@ paths:
                 items:
                   $ref: "#/components/schemas/Session"
 
+  /sessions/discover:
+    get:
+      operationId: discoverSessions
+      summary: Discover existing unmanaged tmux sessions
+      description: |
+        Lists tmux sessions that exist but are not currently managed.
+        Returns claude-* sessions and shogun/multiagent session pairs.
+      responses:
+        "200":
+          description: List of discoverable sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DiscoveredSession"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /sessions/{sessionId}:
     delete:
       operationId: deleteSession
       summary: Delete a session
-      description: Kills the tmux session and removes it from management.
+      description: Kills the tmux session(s) and removes it from management.
       parameters:
         - $ref: "#/components/parameters/SessionId"
       responses:
@@ -113,6 +138,7 @@ paths:
         Examples: "C-c" (Ctrl+C), "C-a" (Ctrl+A), "M-x" (Alt+X), "C-S-Up" (Ctrl+Shift+Up).
       parameters:
         - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/PaneIndex"
       requestBody:
         required: true
         content:
@@ -146,6 +172,7 @@ paths:
       description: Captures the current tmux pane content.
       parameters:
         - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/PaneIndex"
       responses:
         "200":
           description: Pane output
@@ -153,6 +180,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OutputResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /sessions/{sessionId}/outputs:
+    get:
+      operationId: getAllOutputs
+      summary: Get all pane outputs
+      description: Captures the content of all panes in the session.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: All pane outputs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AllOutputsResponse"
         "404":
           description: Session not found
           content:
@@ -169,10 +217,35 @@ components:
       schema:
         type: string
 
+    PaneIndex:
+      name: paneIndex
+      in: query
+      required: false
+      description: |
+        Pane index to target. For claude_code sessions, only 0 is valid.
+        For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 9
+        default: 0
+
   schemas:
+    SessionType:
+      type: string
+      enum:
+        - claude_code
+        - multi_agent_shogun
+
     CreateSessionRequest:
       type: object
       properties:
+        type:
+          $ref: "#/components/schemas/SessionType"
+          default: claude_code
+        tmux_name:
+          type: string
+          description: Existing tmux session name to adopt (for claude_code type)
         width:
           type: integer
           description: tmux window width in columns
@@ -192,18 +265,40 @@ components:
       type: object
       required:
         - id
+        - type
         - tmux_name
+        - pane_count
         - created_at
       properties:
         id:
           type: string
           example: "a1b2c3d4e5f6g7h8"
+        type:
+          $ref: "#/components/schemas/SessionType"
         tmux_name:
           type: string
           example: "claude-a1b2c3d4e5f6g7h8"
+        pane_count:
+          type: integer
+          description: Number of panes (1 for claude_code, 10 for multi_agent_shogun)
+          example: 1
         created_at:
           type: string
           format: date-time
+
+    DiscoveredSession:
+      type: object
+      required:
+        - type
+        - tmux_names
+      properties:
+        type:
+          $ref: "#/components/schemas/SessionType"
+        tmux_names:
+          type: array
+          items:
+            type: string
+          description: Tmux session names (1 for claude_code, 2 for multi_agent_shogun)
 
     ResizeRequest:
       type: object
@@ -247,6 +342,17 @@ components:
       properties:
         output:
           type: string
+
+    AllOutputsResponse:
+      type: object
+      required:
+        - panes
+      properties:
+        panes:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of pane index (as string key) to output content
 
     StatusResponse:
       type: object

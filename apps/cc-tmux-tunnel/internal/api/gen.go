@@ -20,13 +20,48 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for SessionType.
+const (
+	ClaudeCode       SessionType = "claude_code"
+	MultiAgentShogun SessionType = "multi_agent_shogun"
+)
+
+// Valid indicates whether the value is a known member of the SessionType enum.
+func (e SessionType) Valid() bool {
+	switch e {
+	case ClaudeCode:
+		return true
+	case MultiAgentShogun:
+		return true
+	default:
+		return false
+	}
+}
+
+// AllOutputsResponse defines model for AllOutputsResponse.
+type AllOutputsResponse struct {
+	// Panes Map of pane index (as string key) to output content
+	Panes map[string]string `json:"panes"`
+}
+
 // CreateSessionRequest defines model for CreateSessionRequest.
 type CreateSessionRequest struct {
 	// Height tmux window height in rows
 	Height *int `json:"height,omitempty"`
 
+	// TmuxName Existing tmux session name to adopt (for claude_code type)
+	TmuxName *string      `json:"tmux_name,omitempty"`
+	Type     *SessionType `json:"type,omitempty"`
+
 	// Width tmux window width in columns
 	Width *int `json:"width,omitempty"`
+}
+
+// DiscoveredSession defines model for DiscoveredSession.
+type DiscoveredSession struct {
+	// TmuxNames Tmux session names (1 for claude_code, 2 for multi_agent_shogun)
+	TmuxNames []string    `json:"tmux_names"`
+	Type      SessionType `json:"type"`
 }
 
 // Error defines model for Error.
@@ -61,16 +96,40 @@ type SendInputRequest struct {
 type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 	Id        string    `json:"id"`
-	TmuxName  string    `json:"tmux_name"`
+
+	// PaneCount Number of panes (1 for claude_code, 10 for multi_agent_shogun)
+	PaneCount int         `json:"pane_count"`
+	TmuxName  string      `json:"tmux_name"`
+	Type      SessionType `json:"type"`
 }
+
+// SessionType defines model for SessionType.
+type SessionType string
 
 // StatusResponse defines model for StatusResponse.
 type StatusResponse struct {
 	Status string `json:"status"`
 }
 
+// PaneIndex defines model for PaneIndex.
+type PaneIndex = int
+
 // SessionId defines model for SessionId.
 type SessionId = string
+
+// SendInputParams defines parameters for SendInput.
+type SendInputParams struct {
+	// PaneIndex Pane index to target. For claude_code sessions, only 0 is valid.
+	// For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
+	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
+}
+
+// GetOutputParams defines parameters for GetOutput.
+type GetOutputParams struct {
+	// PaneIndex Pane index to target. For claude_code sessions, only 0 is valid.
+	// For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
+	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
+}
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
@@ -86,18 +145,24 @@ type ServerInterface interface {
 	// List all sessions
 	// (GET /sessions)
 	ListSessions(w http.ResponseWriter, r *http.Request)
-	// Create a new Claude Code session
+	// Create a new session
 	// (POST /sessions)
 	CreateSession(w http.ResponseWriter, r *http.Request)
+	// Discover existing unmanaged tmux sessions
+	// (GET /sessions/discover)
+	DiscoverSessions(w http.ResponseWriter, r *http.Request)
 	// Delete a session
 	// (DELETE /sessions/{sessionId})
 	DeleteSession(w http.ResponseWriter, r *http.Request, sessionId SessionId)
 	// Send input to a session
 	// (POST /sessions/{sessionId}/input)
-	SendInput(w http.ResponseWriter, r *http.Request, sessionId SessionId)
+	SendInput(w http.ResponseWriter, r *http.Request, sessionId SessionId, params SendInputParams)
 	// Get session output
 	// (GET /sessions/{sessionId}/output)
-	GetOutput(w http.ResponseWriter, r *http.Request, sessionId SessionId)
+	GetOutput(w http.ResponseWriter, r *http.Request, sessionId SessionId, params GetOutputParams)
+	// Get all pane outputs
+	// (GET /sessions/{sessionId}/outputs)
+	GetAllOutputs(w http.ResponseWriter, r *http.Request, sessionId SessionId)
 	// Resize the tmux window
 	// (POST /sessions/{sessionId}/resize)
 	ResizeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId)
@@ -131,6 +196,20 @@ func (siw *ServerInterfaceWrapper) CreateSession(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateSession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DiscoverSessions operation middleware
+func (siw *ServerInterfaceWrapper) DiscoverSessions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DiscoverSessions(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -179,8 +258,19 @@ func (siw *ServerInterfaceWrapper) SendInput(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SendInputParams
+
+	// ------------- Optional query parameter "paneIndex" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "paneIndex", r.URL.Query(), &params.PaneIndex, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "paneIndex", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SendInput(w, r, sessionId)
+		siw.Handler.SendInput(w, r, sessionId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -204,8 +294,44 @@ func (siw *ServerInterfaceWrapper) GetOutput(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOutputParams
+
+	// ------------- Optional query parameter "paneIndex" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "paneIndex", r.URL.Query(), &params.PaneIndex, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "paneIndex", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetOutput(w, r, sessionId)
+		siw.Handler.GetOutput(w, r, sessionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAllOutputs operation middleware
+func (siw *ServerInterfaceWrapper) GetAllOutputs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "sessionId" -------------
+	var sessionId SessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", r.PathValue("sessionId"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAllOutputs(w, r, sessionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -362,9 +488,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions", wrapper.ListSessions)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sessions", wrapper.CreateSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions/discover", wrapper.DiscoverSessions)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/sessions/{sessionId}", wrapper.DeleteSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sessions/{sessionId}/input", wrapper.SendInput)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions/{sessionId}/output", wrapper.GetOutput)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions/{sessionId}/outputs", wrapper.GetAllOutputs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sessions/{sessionId}/resize", wrapper.ResizeSession)
 
 	return m
@@ -373,30 +501,39 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"H4sIAAAAAAAC/+xZW28buxH+KwO2D1JD3Zyk7RFwHhzFOTUat4YVAwWiA4feHUk83iU3JNe2Gui/F7zs",
+	"fX1J4+P6oW9aXoff981whvpGIplmUqAwmsy/kYwplqJB5b5OmcBjEeOt/YhRR4pnhktB5q4LuO0DI8Ew",
+	"tUEzhg9SQZSwPMaLSMYIGrXmUmgKUiQ7mALXcM0SHo9Xwo5N88TwC7ZBYS70Vm5yUU6ZwxR+htCYMYEU",
+	"ZqOf4Gc/x01xzXq8EoQSbo36mqPaEUoES5HMSVaaT4mOtpgyf441yxND5lNKUnbL0zwl858oSbnwv6eU",
+	"mF1mF+DC4AYV2e8pWXq7jmO7htstY2ZbbabLfkoUfs25wpjMjcqxvnlYWBvFxYbs7cK+0+F9mCT/zE2W",
+	"G32GOpNCo+NEyQyV4RgYEv4Hi2NuyWDJaWNAawvaIu6EZSDXDrrA34Bp8KPhCndDy6d0VkAkhUFhSAmI",
+	"vPwNI+PwqM74Odj0a2cYJQuFzGDA7gy/5qhN90xb5JutaZDzdto23KT5LdxwEcsb8BOAC1DyRhNK8Jal",
+	"WYJ+XsnqwXRa43XWQyx1y154DtsaP7rl2lhY3NaBYLBjLUYslpmBwbolebvDsEKsosE3fCN/VLgmc/KH",
+	"SeV5k6CBSQDqkx26p+SGx2bbgMWd6G5c3AQLSySTPBUNZDwYBTRvG9C86dd8h873XEfyGhXGwdIulyWe",
+	"ugvopzaOGgYzaCFI4cA1dWODhZUbTPtlHhqYUmz3X+HdErWbT+vn6RP4kVJSdVHAornt8M09/LC+dX0c",
+	"uDsMeA99eIcwrm+LM9T83/gop3wGP6xp/ZnUXYfJ706LQ/fBtUQRHwtHyh2IXeGuR/SHVpA25NpuGzg0",
+	"ithdmltsRJbxShyxaAuYYGpvN64hY1pjDEwDA432cjYITG1yN8BI+BIWEPHILv9lvBKnCeMCDN6aENU1",
+	"MGWvYmHsQgk3qFgC3B5lvBLLDCPOEmtd4ZJHwqCicKQjliGFxSiigCYaD91CFkKVKTQYw+XOncBfwSUX",
+	"n8kWk0QSStxKFs3Hum2LFodoPxl3hJ/IXTjxBXP8rKVK7S8SM4Mjw1Psi8zc3eml+YTNLg+i1/EbfLv+",
+	"8+Yv27/2zbFX3kUkc9HjIf/I00tUxS3bH+Nm03uCXGnK7MEbq7LaLz96jPE/Ghp5XKxat6YBCq0zcQ+D",
+	"n4IpKKynfiY1kAglXXhqa1XnWRpm8ntyJu36m3DJqy4yrWOGaV3r7UAu1rJL/bEVvGAJHJ4ee9KlMEom",
+	"STuN0CCFiwALd2A4y4VABe6o1jBuPKnRyM4aGdudQH15Qsk1Ku8FZDo+GE8tFDJDwTJO5uT1eDp+7Ugx",
+	"W3f2SbG1/digE65FiZmQ15KPXJtlMchi4QF1Ew6mU+dfISW0CWiWJTxysye/ae+MVaZbevwjRNYTBzp5",
+	"q7XNulR5CJc752nK1K7oZklS66ckk7rHPX1OakOqwJsy+HZqF2sQhagxuJEIMhGDNkwZXZC4sPMWH4/v",
+	"rm78omGWpb+oemxLnoG3E6Ty6aUGLHLQ4lw+1jZ5a2TZof5Abd7JePddnN1HVW8mv997n2noZPZke5by",
+	"6MohdAV+Ysv22+9U6H07+7SuZ9/SAzWqa1SAYWBdix6qpr7ckNIDJ3FIpGuu2JW7bkUMs2XGCwIuc+Mu",
+	"YyENRLlSKEyyg5QJtkFbXJ+hyZXQQdCjP1WLONU60U1qlXSh6Yxx1SuxIvN/1vDQLTe+I1AUELPLBBtR",
+	"4cXopDhe5eS5CBQ2mW+J51v51rD3wknQ9JSvf+dJojtZ5kAPnQYUpvIaNXADayXToB2bV4675LsdqvhS",
+	"fyX63A9QNWRSvZzsf/1B1dwbLJpJwD0xwwPmYsab6ZvfXwvFvtZZ1zIXcVsHzh6X4vfFihrdE5e1uwSn",
+	"92qzNYp2hYZR8gp1X5kB15xVFUOn6PBZyRdXTYBzsicoRLju1B/RlikWWYGMoVuD3F1orMQyzzKpbKuu",
+	"5mngIkryGOfQKl+WGYuQwid2SeGd+4DBOxZdaftzSFfiPKPwXt4ICh9xbSic2RKQwt9kihSOREzhlG3w",
+	"PIPB6eY8G/pPO8E2vBd2iQ+z0YfZAYXjBQyOhUZlhhTeL2DgqR06u09kzNccFWQK1/wW9RwWIxgsjEqG",
+	"FE5GMDhMzOQEDRtSWI5gsNzytbFzj3zWquewIotRtCJ+1qvFkLoWVrYcupaT0a1tOUzMq3+FIcvReVaO",
+	"cgu/Os+GfZG+rHN/xNHpg4Ort2UfFZ4+Y+kU7Ptmgm9Ujvv/aUBy1jnP8LHoWe4l9/4OAXC4tIi/lEBo",
+	"GfMPE+6B9RHxsHoG682iFiwzuUJ/C4Y8yQdD9/4dTtu98H5B4x/gntcHfichtt4Se4hx/+YELF+KGH7B",
+	"Ki0tTHtAB/qRQvDnskmirRj9I024+IpysE8S1d8zLzUH6vkDqQf5w3BoKFB7SZSzjnF3kq7cA/bd2ZB/",
+	"4K6lwOEd2fIOKheiVld3Cfeznyrpffrrrfl8/+LutoJrT1L8/wtuV2qqLUj3jPKfAAAA///TGUh0ih8A",
+	"AA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
