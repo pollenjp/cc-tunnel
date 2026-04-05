@@ -1,0 +1,9 @@
+[tools]
+node = "24.14.1"
+
+[tasks."install"]
+run = 'npm install'
+
+[tasks."dev:up"]
+depends = ["install"]
+run = 'npm run dev'
