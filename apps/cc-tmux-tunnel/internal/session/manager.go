@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -129,6 +130,20 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Unlock()
 
 	return nil
+}
+
+// Close kills all managed tmux sessions and clears the session map.
+func (m *Manager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var errs []error
+	for id, s := range m.sessions {
+		if err := tmux.KillSession(s.TmuxName); err != nil {
+			errs = append(errs, fmt.Errorf("kill session %s: %w", id, err))
+		}
+	}
+	m.sessions = make(map[string]*Session)
+	return errors.Join(errs...)
 }
 
 func generateID() string {
