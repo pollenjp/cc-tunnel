@@ -1,5 +1,12 @@
 [tools]
 go = "1.26.1"
+"golangci-lint" = "2.11.4"
 
-[tasks."dev:up"]
+[tasks."cc-tunnel:dev:up"]
 run = 'go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090'
+
+[tasks."cc-tunnel:test"]
+run = 'go test ./...'
+
+[tasks."cc-tunnel:lint"]
+run = 'golangci-lint run ./...'

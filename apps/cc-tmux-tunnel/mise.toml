@@ -1,5 +1,12 @@
 [tools]
 go = "1.26.1"
+"golangci-lint" = "2.11.4"
 
-[tasks."dev:up"]
+[tasks."cc-tmux-tunnel:dev:up"]
 run = 'go run ./cmd/cc-tmux-tunnel/main.go -addr :9090'
+
+[tasks."cc-tmux-tunnel:test"]
+run = 'go test ./...'
+
+[tasks."cc-tmux-tunnel:lint"]
+run = 'golangci-lint run ./...'
