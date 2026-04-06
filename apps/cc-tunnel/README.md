@@ -4,7 +4,7 @@ Server B: 外部向け API サーバー。外部クライアントからの HTTP
 
 ## 前提条件
 
-- Go 1.22+
+- Go 1.26+
 - Server A (`cc-tmux-tunnel`) が起動済みであること
 
 ## 起動

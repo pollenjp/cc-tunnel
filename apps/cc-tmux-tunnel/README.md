@@ -7,7 +7,7 @@ Server A: Claude Runner。tmux セッションを直接管理し、内部 REST A
 
 ## 前提条件
 
-- Go 1.22+
+- Go 1.26+
 - tmux 3.0+
 
 ## 起動

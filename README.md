@@ -17,7 +17,7 @@ cc-tunnel/
 
 ## 前提条件
 
-- Go 1.22+
+- Go 1.26+
 - Node.js 18+
 - tmux 3.0+
 - [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) (コード生成時のみ)
