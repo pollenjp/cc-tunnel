@@ -1,64 +1,54 @@
 # apps/cc-tunnel
 
-cc-tunnel の Go バックエンド。HTTP API サーバーとして動作し、ローカルの tmux セッションを制御する。
+Server B: 外部向け API サーバー。外部クライアントからの HTTP リクエストを受け取り、Server A (`cc-tmux-tunnel`) の内部 API に転送するプロキシとして機能する。
 
 ## 前提条件
 
-- Go 1.22+
-- tmux 3.0+
+- Go 1.26+
+- Server A (`cc-tmux-tunnel`) が起動済みであること
 
 ## 起動
 
 ```bash
-go run ./cmd/cc-tunnel --addr :8080
+go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090
 ```
 
-`--addr` でリッスンアドレスを指定 (デフォルト: `:8080`)。
+| フラグ | デフォルト | 説明 |
+|--------|-----------|------|
+| `-addr` | `:8080` | リッスンアドレス |
+| `-runner-url` | `http://localhost:9090` | cc-tmux-tunnel の URL |
 
 ## ビルド
 
 ```bash
 go build -o cc-tunnel ./cmd/cc-tunnel
-./cc-tunnel --addr :8080
+./cc-tunnel -addr :8080 -runner-url http://localhost:9090
 ```
 
 ## コード生成
 
-API ハンドラのインターフェースとモデル型は OpenAPI 定義 (`apps/openapi/openapi.yaml`) から `oapi-codegen` で生成する。
-
-### 前提
+外部 API のサーバーインターフェースと内部 API のクライアントは OpenAPI 定義から `oapi-codegen` で生成する。
 
 ```bash
-go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
-```
-
-### 生成コマンド
-
-```bash
+# 外部 API サーバーコード
 go generate ./internal/api/
+
+# 内部 API クライアントコード
+go generate ./internal/tmuxclient/
 ```
-
-これにより `internal/api/gen.go` が再生成される。このファイルは自動生成なので手動で編集しない。
-
-### 生成されるもの
-
-- `ServerInterface` - 各エンドポイントのハンドラインターフェース
-- モデル型 (`Session`, `SendInputRequest`, `OutputResponse`, `StatusResponse`, `Error`)
-- `HandlerFromMux` - `http.ServeMux` へのルーティング登録
-
-`internal/api/handler.go` が `ServerInterface` を実装する。
 
 ## ディレクトリ構成
 
 ```
 apps/cc-tunnel/
-├── cmd/cc-tunnel/main.go       # エントリーポイント
+├── cmd/cc-tunnel/main.go           # エントリーポイント (--runner-url フラグ)
 ├── internal/
 │   ├── api/
-│   │   ├── gen.go              # 生成コード (DO NOT EDIT)
-│   │   └── handler.go          # ServerInterface の実装
-│   ├── session/manager.go      # セッション管理 (インメモリ)
-│   └── tmux/tmux.go            # tmux コマンドラッパー
+│   │   ├── gen.go                  # 生成コード: 外部 API (DO NOT EDIT)
+│   │   └── handler.go              # ServerInterface の実装 (tmuxclient 使用)
+│   └── tmuxclient/
+│       ├── generate.go             # go generate ディレクティブ
+│       └── gen.go                  # 生成コード: 内部 API クライアント (DO NOT EDIT)
 ├── go.mod
 └── go.sum
 ```

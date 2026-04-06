@@ -51,16 +51,27 @@ REST + OpenAPI を採用。
 
 内部 API 定義: `apps/openapi/internal-openapi.yaml`
 
+## セッションタイプ
+
+| タイプ | ペイン数 | 説明 |
+|--------|---------|------|
+| `claude_code` | 1 | 単一 tmux セッション (`claude-<id>`) で Claude Code CLI を起動 |
+| `multi_agent_shogun` | 10 | shogun (1 ペイン) + multiagent (9 ペイン) の 2 セッション構成 |
+
+`multi_agent_shogun` では `paneIndex` クエリパラメータで操作対象ペインを指定する (0 = shogun, 1-9 = multiagent)。
+
 ## API 設計
 
 ### 外部 API (Server B: cc-tunnel)
 
 | メソッド | パス | 説明 |
 |---------|------|------|
-| `POST` | `/sessions` | tmux セッション作成 + `claude` 起動 |
+| `POST` | `/sessions` | セッション作成 (type: `claude_code` / `multi_agent_shogun`) |
 | `GET` | `/sessions` | セッション一覧取得 |
-| `POST` | `/sessions/{id}/input` | テキスト入力送信 (`tmux send-keys`) |
-| `GET` | `/sessions/{id}/output` | 画面出力取得 (`tmux capture-pane`) |
+| `GET` | `/sessions/discover` | 未管理 tmux セッションの検出 |
+| `POST` | `/sessions/{id}/input?paneIndex=N` | 入力送信 (`tmux send-keys`、ペイン指定可) |
+| `GET` | `/sessions/{id}/output?paneIndex=N` | ペイン出力取得 (`tmux capture-pane`) |
+| `GET` | `/sessions/{id}/outputs` | 全ペイン出力の一括取得 |
 | `POST` | `/sessions/{id}/resize` | ウィンドウリサイズ |
 | `DELETE` | `/sessions/{id}` | セッション終了 (`tmux kill-session`) |
 
@@ -74,10 +85,13 @@ REST + OpenAPI を採用。
 
 ```
 POST /sessions
+{"type": "claude_code"}
 → 201 Created
 {
   "id": "a1b2c3d4e5f6g7h8",
+  "type": "claude_code",
   "tmux_name": "claude-a1b2c3d4e5f6g7h8",
+  "pane_count": 1,
   "created_at": "2026-04-05T12:00:00Z"
 }
 ```
@@ -85,8 +99,8 @@ POST /sessions
 #### 入力送信
 
 ```
-POST /sessions/{id}/input
-{"text": "hello"}
+POST /sessions/{id}/input?paneIndex=0
+{"keys": ["hello", "Enter"]}
 → 200 OK
 {"status": "ok"}
 ```
@@ -94,9 +108,25 @@ POST /sessions/{id}/input
 #### 出力取得
 
 ```
-GET /sessions/{id}/output
+GET /sessions/{id}/output?paneIndex=0
 → 200 OK
 {"output": "...tmux pane content..."}
+```
+
+#### 全ペイン出力取得
+
+```
+GET /sessions/{id}/outputs
+→ 200 OK
+{"panes": {"0": "...shogun output...", "1": "...agent1 output...", ...}}
+```
+
+#### 未管理セッション検出
+
+```
+GET /sessions/discover
+→ 200 OK
+[{"type": "claude_code", "tmux_names": ["claude-abc123"]}, ...]
 ```
 
 #### セッション削除
@@ -115,6 +145,7 @@ DELETE /sessions/{id}
 - **HTTP**: 標準ライブラリ `net/http` (生成されたルーティングを使用)
 - **tmux 操作**: `os/exec` で tmux コマンドを直接呼び出し (Server A のみ)
 - **セッション管理**: インメモリ (`sync.RWMutex` + `map`) (Server A のみ)
+- **グレースフルシャットダウン**: SIGINT/SIGTERM 受信時に管理中の tmux セッションをクリーンアップ (Server A)
 
 ### コード生成フロー
 

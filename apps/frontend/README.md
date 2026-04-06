@@ -18,13 +18,16 @@ npm install
 npm run dev
 ```
 
-http://localhost:5173 で起動する。`/sessions` へのリクエストは `localhost:8080` (バックエンド) にプロキシされる。
+http://localhost:5173 で起動する。`/sessions` へのリクエストは `localhost:8080` (Server B) にプロキシされる。
 
-バックエンドを先に起動しておくこと:
+Server A・Server B を先に起動しておくこと:
 
 ```bash
-cd ../cc-tunnel
-go run ./cmd/cc-tunnel --addr :8080
+# Server A
+cd ../cc-tmux-tunnel && go run ./cmd/cc-tmux-tunnel/ -addr :9090
+
+# Server B
+cd ../cc-tunnel && go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090
 ```
 
 ## ビルド
@@ -38,9 +41,13 @@ npm run build
 ## 機能
 
 - セッションの作成・一覧・削除 (サイドバー)
-- tmux ペインの出力表示 (ターミナル風ビュー、2秒ポーリング)
+- セッションタイプの選択 (`claude_code` / `multi_agent_shogun`)
+- tmux ペインの出力表示 (ターミナル風ビュー、2 秒ポーリング)
+- multi_agent_shogun の 3x3 グリッドビュー + 個別ペインタブ切り替え
 - テキスト入力の送信 (Enter キーまたは Send ボタン)
 - Auto-refresh のオン/オフ切り替え
+- 未管理 tmux セッションの検出とアタッチ (Discover)
+- セッション作成時のローディングインジケーター
 
 ## ディレクトリ構成
 
