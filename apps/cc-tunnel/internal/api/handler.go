@@ -197,13 +197,13 @@ func (h *Server) DeleteSession(w http.ResponseWriter, r *http.Request, sessionId
 func proxyErrorResponse(w http.ResponseWriter, statusCode int, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	w.Write(body)
+	_, _ = w.Write(body)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
