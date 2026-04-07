@@ -60,6 +60,8 @@ function getPaneName(paneIndex: number, sessionType: SessionType): string {
   return 'Main';
 }
 
+const HANDLE_SIZE = 6;
+
 function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -79,6 +81,15 @@ function App() {
   const [creating, setCreating] = useState(false);
   const outputRef = useRef<HTMLPreElement>(null);
   const intervalRef = useRef<number | null>(null);
+
+  // Grid resize state
+  const [shogunHeight, setShogunHeight] = useState(0);
+  const [colWidths, setColWidths] = useState<[number, number, number]>([0, 0, 0]);
+  const [rowHeights, setRowHeights] = useState<[number, number, number]>([0, 0, 0]);
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  const gridOutputRefs = useRef<(HTMLPreElement | null)[]>([]);
+  const userResizedRef = useRef(false);
+  const prevContainerSize = useRef<{ w: number; h: number } | null>(null);
 
   const activeSession = sessions.find((s) => s.id === activeId);
   const isMultiAgent = activeSession?.type === 'multi_agent_shogun';
@@ -129,6 +140,114 @@ function App() {
       }
     };
   }, [activeId, polling, pollOutput]);
+
+  // ResizeObserver for grid container - initializes and scales pane sizes
+  useEffect(() => {
+    const el = gridContainerRef.current;
+    if (!el || viewMode !== 'grid') return;
+
+    const observer = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      const padding = 0; // padding is outside contentRect
+
+      if (userResizedRef.current && prevContainerSize.current) {
+        // Scale proportionally from user's ratios
+        const scaleX = width / prevContainerSize.current.w;
+        const scaleY = height / prevContainerSize.current.h;
+        setShogunHeight((prev) => Math.max(40, prev * scaleY));
+        setColWidths((prev) => prev.map((w) => Math.max(60, w * scaleX)) as [number, number, number]);
+        setRowHeights((prev) => prev.map((h) => Math.max(40, h * scaleY)) as [number, number, number]);
+      } else {
+        // Initialize proportionally
+        const shogunH = Math.max(40, height * 0.15);
+        const agentsH = height - shogunH - HANDLE_SIZE - padding;
+        const rowH = (agentsH - 2 * HANDLE_SIZE) / 3;
+        const colW = (width - 2 * HANDLE_SIZE) / 3;
+        setShogunHeight(shogunH);
+        setRowHeights([rowH, rowH, rowH]);
+        setColWidths([colW, colW, colW]);
+      }
+      prevContainerSize.current = { w: width, h: height };
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [viewMode]);
+
+  // Auto-scroll grid panes when outputs update
+  useEffect(() => {
+    if (viewMode !== 'grid') return;
+    requestAnimationFrame(() => {
+      gridOutputRefs.current.forEach((el) => {
+        if (!el) return;
+        const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+        if (isNearBottom) {
+          el.scrollTop = el.scrollHeight;
+        }
+      });
+    });
+  }, [allPaneOutputs, viewMode]);
+
+  // Drag handler for resize handles
+  const handleDragStart = useCallback(
+    (type: 'shogun' | 'col' | 'row', index: number, startEvent: React.MouseEvent) => {
+      startEvent.preventDefault();
+      startEvent.stopPropagation();
+
+      const startPos = type === 'col' ? startEvent.clientX : startEvent.clientY;
+      const target = startEvent.currentTarget as HTMLElement;
+      target.classList.add('active');
+
+      const startShogunHeight = shogunHeight;
+      const startColWidths = [...colWidths] as [number, number, number];
+      const startRowHeights = [...rowHeights] as [number, number, number];
+
+      const onMouseMove = (e: MouseEvent) => {
+        const delta = (type === 'col' ? e.clientX : e.clientY) - startPos;
+
+        if (type === 'shogun') {
+          const newShogun = Math.max(40, startShogunHeight + delta);
+          const newFirstRow = Math.max(40, startRowHeights[0] - delta);
+          setShogunHeight(newShogun);
+          setRowHeights((prev) => [newFirstRow, prev[1], prev[2]]);
+        } else if (type === 'col') {
+          const newLeft = Math.max(60, startColWidths[index] + delta);
+          const newRight = Math.max(60, startColWidths[index + 1] - delta);
+          setColWidths((prev) => {
+            const next = [...prev] as [number, number, number];
+            next[index] = newLeft;
+            next[index + 1] = newRight;
+            return next;
+          });
+        } else if (type === 'row') {
+          const newTop = Math.max(40, startRowHeights[index] + delta);
+          const newBottom = Math.max(40, startRowHeights[index + 1] - delta);
+          setRowHeights((prev) => {
+            const next = [...prev] as [number, number, number];
+            next[index] = newTop;
+            next[index + 1] = newBottom;
+            return next;
+          });
+        }
+
+        userResizedRef.current = true;
+      };
+
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        target.classList.remove('active');
+      };
+
+      document.body.style.cursor = type === 'col' ? 'col-resize' : 'row-resize';
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    [shogunHeight, colWidths, rowHeights],
+  );
 
   const doSendKeys = async (keys: string[]) => {
     if (!activeId) return;
@@ -501,30 +620,79 @@ function App() {
 
               {/* Grid view for multi-agent */}
               {viewMode === 'grid' && isMultiAgent && (
-                <div className="grid-container">
+                <div className="grid-container" ref={gridContainerRef}>
                   {/* Shogun pane banner */}
                   <div
                     className="grid-shogun"
+                    style={{ height: shogunHeight }}
                     onClick={() => handleGridPaneClick(0)}
                   >
                     <div className="grid-pane-header">Shogun</div>
-                    <pre className="grid-pane-output">
+                    <pre
+                      className="grid-pane-output"
+                      ref={(el) => { gridOutputRefs.current[0] = el; }}
+                    >
                       {allPaneOutputs['0'] || 'Waiting...'}
                     </pre>
                   </div>
+
+                  {/* Resize handle: Shogun <-> Agents */}
+                  <div
+                    className="resize-handle-h"
+                    onMouseDown={(e) => handleDragStart('shogun', 0, e)}
+                  />
+
                   {/* 3x3 grid of agent panes */}
-                  <div className="grid-agents">
-                    {Array.from({ length: 9 }, (_, i) => (
+                  <div
+                    className="grid-agents"
+                    style={{
+                      gridTemplateColumns: `${colWidths[0]}px ${HANDLE_SIZE}px ${colWidths[1]}px ${HANDLE_SIZE}px ${colWidths[2]}px`,
+                      gridTemplateRows: `${rowHeights[0]}px ${HANDLE_SIZE}px ${rowHeights[1]}px ${HANDLE_SIZE}px ${rowHeights[2]}px`,
+                    }}
+                  >
+                    {/* Agent panes placed explicitly */}
+                    {Array.from({ length: 9 }, (_, i) => {
+                      const row = Math.floor(i / 3);
+                      const col = i % 3;
+                      return (
+                        <div
+                          key={i + 1}
+                          className="grid-pane"
+                          style={{
+                            gridRow: row * 2 + 1,
+                            gridColumn: col * 2 + 1,
+                          }}
+                          onClick={() => handleGridPaneClick(i + 1)}
+                        >
+                          <div className="grid-pane-header">Agent {i + 1}</div>
+                          <pre
+                            className="grid-pane-output"
+                            ref={(el) => { gridOutputRefs.current[i + 1] = el; }}
+                          >
+                            {allPaneOutputs[String(i + 1)] || 'Waiting...'}
+                          </pre>
+                        </div>
+                      );
+                    })}
+
+                    {/* Column resize handles */}
+                    {[0, 1].map((ci) => (
                       <div
-                        key={i + 1}
-                        className="grid-pane"
-                        onClick={() => handleGridPaneClick(i + 1)}
-                      >
-                        <div className="grid-pane-header">Agent {i + 1}</div>
-                        <pre className="grid-pane-output">
-                          {allPaneOutputs[String(i + 1)] || 'Waiting...'}
-                        </pre>
-                      </div>
+                        key={`col-handle-${ci}`}
+                        className="resize-handle-v"
+                        style={{ gridColumn: (ci + 1) * 2, gridRow: '1 / -1' }}
+                        onMouseDown={(e) => handleDragStart('col', ci, e)}
+                      />
+                    ))}
+
+                    {/* Row resize handles */}
+                    {[0, 1].map((ri) => (
+                      <div
+                        key={`row-handle-${ri}`}
+                        className="resize-handle-row"
+                        style={{ gridRow: (ri + 1) * 2, gridColumn: '1 / -1' }}
+                        onMouseDown={(e) => handleDragStart('row', ri, e)}
+                      />
                     ))}
                   </div>
                 </div>
