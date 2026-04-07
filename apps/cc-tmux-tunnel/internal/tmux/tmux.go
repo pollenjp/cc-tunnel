@@ -42,7 +42,7 @@ func SendKeys(name string, keys []string) error {
 
 // CapturePaneOutput captures the visible content of a tmux pane.
 func CapturePaneOutput(name string) (string, error) {
-	out, err := exec.Command("tmux", "capture-pane", "-t", name, "-p", "-S", "-").Output()
+	out, err := exec.Command("tmux", "capture-pane", "-t", name, "-p", "-J", "-S", "-").Output()
 	if err != nil {
 		return "", fmt.Errorf("capture-pane: %w", err)
 	}
@@ -59,7 +59,7 @@ func SendKeysToPane(sessionName string, paneIndex int, keys []string) error {
 // CapturePaneOutputByPane captures the content of a specific pane in a tmux session.
 func CapturePaneOutputByPane(sessionName string, paneIndex int) (string, error) {
 	target := fmt.Sprintf("%s:0.%d", sessionName, paneIndex)
-	out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-").Output()
+	out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-").Output()
 	if err != nil {
 		return "", fmt.Errorf("capture-pane %s: %w", target, err)
 	}
