@@ -358,6 +358,25 @@
   border-color: var(--accent);
 }
 
+.size-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auto-resize-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text);
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.auto-resize-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 /* Session type selector */
 .type-selector {
   display: flex;

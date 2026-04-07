@@ -62,6 +62,25 @@ function getPaneName(paneIndex: number, sessionType: SessionType): string {
 
 const HANDLE_SIZE = 6;
 
+const OUTPUT_FONT_FAMILY = "'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace";
+const OUTPUT_FONT_SIZE = '13px';
+const OUTPUT_LINE_HEIGHT = 1.6;
+
+function measureCharSize(): { charWidth: number; lineHeight: number } {
+  const span = document.createElement('span');
+  span.style.fontFamily = OUTPUT_FONT_FAMILY;
+  span.style.fontSize = OUTPUT_FONT_SIZE;
+  span.style.lineHeight = String(OUTPUT_LINE_HEIGHT);
+  span.style.position = 'absolute';
+  span.style.visibility = 'hidden';
+  span.style.whiteSpace = 'pre';
+  span.textContent = 'M';
+  document.body.appendChild(span);
+  const rect = span.getBoundingClientRect();
+  document.body.removeChild(span);
+  return { charWidth: rect.width, lineHeight: rect.height };
+}
+
 function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -79,8 +98,11 @@ function App() {
   const [discovered, setDiscovered] = useState<DiscoveredSession[]>([]);
   const [showDiscover, setShowDiscover] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [autoResize, setAutoResize] = useState(true);
   const outputRef = useRef<HTMLPreElement>(null);
   const intervalRef = useRef<number | null>(null);
+  const resizeTimeoutRef = useRef<number | null>(null);
+  const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
   // Grid resize state
   const [shogunHeight, setShogunHeight] = useState(0);
@@ -187,6 +209,61 @@ function App() {
       });
     });
   }, [allPaneOutputs, viewMode]);
+
+  // Auto-resize tmux pane to match frontend output element dimensions
+  useEffect(() => {
+    if (viewMode !== 'single' || !autoResize || !activeId) return;
+    const session = sessions.find((s) => s.id === activeId);
+    if (!session || session.type !== 'claude_code') return;
+
+    const el = outputRef.current;
+    if (!el) return;
+
+    const currentActiveId = activeId;
+
+    const observer = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      const { charWidth, lineHeight } = measureCharSize();
+
+      if (charWidth === 0 || lineHeight === 0) return;
+
+      const cols = Math.max(40, Math.floor(width / charWidth));
+      const rows = Math.max(10, Math.floor(height / lineHeight));
+
+      // Skip if unchanged
+      if (
+        lastResizeRef.current &&
+        lastResizeRef.current.cols === cols &&
+        lastResizeRef.current.rows === rows
+      ) {
+        return;
+      }
+
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
+
+      resizeTimeoutRef.current = window.setTimeout(async () => {
+        lastResizeRef.current = { cols, rows };
+        setTmuxWidth(cols);
+        setTmuxHeight(rows);
+        try {
+          await resizeSession(currentActiveId, cols, rows);
+        } catch (e) {
+          console.error('Auto-resize failed:', e);
+        }
+      }, 500);
+    });
+
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+        resizeTimeoutRef.current = null;
+      }
+    };
+  }, [viewMode, autoResize, activeId, sessions]);
 
   // Drag handler for resize handles
   const handleDragStart = useCallback(
@@ -444,6 +521,14 @@ function App() {
 
           {newSessionType === 'claude_code' && (
             <div className="size-controls">
+              <label className="auto-resize-toggle">
+                <input
+                  type="checkbox"
+                  checked={autoResize}
+                  onChange={(e) => setAutoResize(e.target.checked)}
+                />
+                Auto-resize
+              </label>
               <label className="size-label">
                 Width
                 <input
@@ -453,6 +538,7 @@ function App() {
                   onChange={(e) => setTmuxWidth(Number(e.target.value))}
                   min={40}
                   max={500}
+                  disabled={autoResize}
                 />
               </label>
               <label className="size-label">
@@ -464,6 +550,7 @@ function App() {
                   onChange={(e) => setTmuxHeight(Number(e.target.value))}
                   min={10}
                   max={200}
+                  disabled={autoResize}
                 />
               </label>
             </div>
@@ -476,7 +563,7 @@ function App() {
             <button className="btn" onClick={handleDiscover} disabled={creating}>
               Discover
             </button>
-            {activeId && activeSession?.type === 'claude_code' && (
+            {activeId && activeSession?.type === 'claude_code' && !autoResize && (
               <button className="btn" onClick={handleResize}>
                 Resize
               </button>
