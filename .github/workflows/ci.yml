@@ -4,8 +4,8 @@ on:
   pull_request:
 
 jobs:
-  test-and-lint-cc-tunnel:
-    name: "cc-tunnel: test & lint"
+  test-cc-tunnel:
+    name: "cc-tunnel: test"
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -20,14 +20,24 @@ jobs:
       - name: Test
         run: go test ./...
 
+  lint-cc-tunnel:
+    name: "cc-tunnel: lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cc-tunnel/go.mod
+
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
           working-directory: apps/cc-tunnel
 
-  test-and-lint-cc-tmux-tunnel:
-    name: "cc-tmux-tunnel: test & lint"
+  test-cc-tmux-tunnel:
+    name: "cc-tmux-tunnel: test"
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,14 +52,45 @@ jobs:
       - name: Test
         run: go test ./...
 
+  lint-cc-tmux-tunnel:
+    name: "cc-tmux-tunnel: lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cc-tmux-tunnel/go.mod
+
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
           working-directory: apps/cc-tmux-tunnel
 
-  test-and-lint-frontend:
-    name: "frontend: test & lint"
+  test-frontend:
+    name: "frontend: test"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm run test
+
+  lint-frontend:
+    name: "frontend: lint"
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -71,6 +112,3 @@ jobs:
 
       - name: Typecheck
         run: npx tsc --noEmit
-
-      - name: Test
-        run: npm run test
