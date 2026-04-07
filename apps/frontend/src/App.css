@@ -515,9 +515,9 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
   padding: 8px;
-  gap: 8px;
+  gap: 0;
   background: var(--bg);
 }
 
@@ -527,7 +527,9 @@
   overflow: hidden;
   cursor: pointer;
   transition: border-color 0.15s;
-  max-height: 200px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
 }
 
 .grid-shogun:hover {
@@ -536,8 +538,7 @@
 
 .grid-agents {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  overflow: hidden;
   flex: 1;
 }
 
@@ -549,7 +550,6 @@
   transition: border-color 0.15s;
   display: flex;
   flex-direction: column;
-  min-height: 120px;
 }
 
 .grid-pane:hover {
@@ -565,6 +565,7 @@
   border-bottom: 1px solid var(--border);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  flex-shrink: 0;
 }
 
 .grid-pane-output {
@@ -577,8 +578,49 @@
   background: var(--bg);
   white-space: pre-wrap;
   word-break: break-all;
-  overflow: hidden;
+  overflow: auto;
   margin: 0;
+  min-height: 0;
+}
+
+/* Resize handles */
+.resize-handle-h {
+  height: 6px;
+  cursor: row-resize;
+  flex-shrink: 0;
+  background: transparent;
+  position: relative;
+}
+
+.resize-handle-h:hover,
+.resize-handle-h.active {
+  background: var(--accent);
+  opacity: 0.3;
+  border-radius: 3px;
+}
+
+.resize-handle-v {
+  cursor: col-resize;
+  background: transparent;
+  border-radius: 3px;
+}
+
+.resize-handle-v:hover,
+.resize-handle-v.active {
+  background: var(--accent);
+  opacity: 0.3;
+}
+
+.resize-handle-row {
+  cursor: row-resize;
+  background: transparent;
+  border-radius: 3px;
+}
+
+.resize-handle-row:hover,
+.resize-handle-row.active {
+  background: var(--accent);
+  opacity: 0.3;
 }
 
 /* Command history */
