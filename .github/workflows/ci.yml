@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  test-and-lint-cc-tunnel:
+    name: "cc-tunnel: test & lint"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/cc-tunnel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cc-tunnel/go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
+          working-directory: apps/cc-tunnel
+
+  test-and-lint-cc-tmux-tunnel:
+    name: "cc-tmux-tunnel: test & lint"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/cc-tmux-tunnel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cc-tmux-tunnel/go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
+          working-directory: apps/cc-tmux-tunnel
+
+  test-and-lint-frontend:
+    name: "frontend: test & lint"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm run test
