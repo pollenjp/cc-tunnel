@@ -739,8 +739,8 @@ function App() {
                   >
                     {/* Agent panes placed explicitly */}
                     {Array.from({ length: 9 }, (_, i) => {
-                      const row = Math.floor(i / 3);
-                      const col = i % 3;
+                      const col = Math.floor(i / 3);
+                      const row = i % 3;
                       return (
                         <div
                           key={i + 1}
