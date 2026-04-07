@@ -1,9 +1,21 @@
 [tools]
 node = "24.14.1"
 
-[tasks."install"]
+[tasks."frontend:install"]
 run = 'npm install'
 
-[tasks."dev:up"]
-depends = ["install"]
+[tasks."frontend:dev:up"]
+depends = ["frontend:install"]
 run = 'npm run dev'
+
+[tasks."frontend:lint"]
+depends = ["frontend:install"]
+run = 'npm run lint'
+
+[tasks."frontend:typecheck"]
+depends = ["frontend:install"]
+run = 'npx tsc --noEmit'
+
+[tasks."frontend:test"]
+depends = ["frontend:install"]
+run = 'npx vitest run'
