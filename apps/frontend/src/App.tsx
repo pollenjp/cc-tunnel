@@ -103,6 +103,7 @@ function App() {
   const intervalRef = useRef<number | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
   const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Grid resize state
   const [shogunHeight, setShogunHeight] = useState(0);
@@ -444,15 +445,32 @@ function App() {
 
   const handleSendText = async () => {
     if (!activeId || !input.trim()) return;
-    await doSendKeys([input, 'Enter']);
+    const lines = input.split('\n');
+    const keys: string[] = [];
+    for (const line of lines) {
+      keys.push(line, 'Enter');
+    }
+    await doSendKeys(keys);
     setInput('');
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSendText();
     }
+  };
+
+  const autoResizeTextarea = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
   };
 
   const toggleModifier = (mod: Modifier) => {
@@ -832,16 +850,20 @@ function App() {
               </div>
 
               <div className="input-bar">
-                <input
-                  type="text"
+                <textarea
+                  ref={textareaRef}
                   className="input-field"
+                  rows={1}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    autoResizeTextarea();
+                  }}
                   onKeyDown={handleKeyDown}
                   placeholder={
                     isMultiAgent
-                      ? `Send to ${getPaneName(activePaneIndex, activeSession.type)}...`
-                      : 'Type text and press Enter to send with Enter key...'
+                      ? `Send to ${getPaneName(activePaneIndex, activeSession.type)}... (Ctrl+Enter to send)`
+                      : 'Type text... (Ctrl+Enter to send)'
                   }
                 />
                 <button className="btn btn-primary" onClick={handleSendText}>

@@ -190,6 +190,7 @@
 
 .input-bar {
   display: flex;
+  align-items: flex-start;
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
@@ -207,6 +208,10 @@
   font-size: 13px;
   outline: none;
   transition: border-color 0.15s;
+  resize: none;
+  overflow-y: auto;
+  line-height: 1.4;
+  max-height: 200px;
 }
 
 .input-field:focus {
