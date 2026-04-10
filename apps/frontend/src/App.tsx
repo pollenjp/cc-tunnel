@@ -455,10 +455,18 @@ function App() {
     setInput('');
   };
 
+  const handleSendEnter = async () => {
+    if (!activeId) return;
+    await doSendKeys(['Enter']);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSendText();
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      handleSendEnter();
     }
   };
 
@@ -851,9 +859,14 @@ function App() {
                       : 'Type text... (Enter for newline, Ctrl+Enter to send)'
                   }
                 />
-                <button className="btn btn-primary" onClick={handleSendText}>
-                  Send
-                </button>
+                <div className="input-buttons">
+                  <button className="btn btn-primary" onClick={handleSendText}>
+                    Send (Ctrl+Enter)
+                  </button>
+                  <button className="btn btn-secondary" onClick={handleSendEnter}>
+                    Enter (Shift+Enter)
+                  </button>
+                </div>
               </div>
 
               {commandHistory.length > 0 && (

@@ -303,6 +303,21 @@
   background: var(--accent-hover);
 }
 
+.btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  background: var(--border);
+}
+
+.input-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .btn-danger {
   background: transparent;
   color: var(--danger);
