@@ -444,12 +444,19 @@ function App() {
 
   const handleSendText = async () => {
     if (!activeId || !input.trim()) return;
-    await doSendKeys([input, 'Enter']);
+    const lines = input.split('\n');
+    const keys: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0) keys.push('Enter');
+      keys.push(lines[i]);
+    }
+    keys.push('Enter');
+    await doSendKeys(keys);
     setInput('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSendText();
     }
@@ -832,16 +839,16 @@ function App() {
               </div>
 
               <div className="input-bar">
-                <input
-                  type="text"
+                <textarea
                   className="input-field"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
+                  rows={3}
                   placeholder={
                     isMultiAgent
-                      ? `Send to ${getPaneName(activePaneIndex, activeSession.type)}...`
-                      : 'Type text and press Enter to send with Enter key...'
+                      ? `Send to ${getPaneName(activePaneIndex, activeSession.type)}... (Ctrl+Enter to send)`
+                      : 'Type text... (Enter for newline, Ctrl+Enter to send)'
                   }
                 />
                 <button className="btn btn-primary" onClick={handleSendText}>
