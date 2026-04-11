@@ -1,0 +1,30 @@
+services:
+  cc-tmux-tunnel:
+    build:
+      context: ./cc-tmux-tunnel
+    environment:
+      PORT: "9090"
+    ports:
+      - "9090:9090"
+
+  cc-tunnel:
+    build:
+      context: ./cc-tunnel
+    environment:
+      PORT: "8080"
+    command: ["-runner-url", "http://cc-tmux-tunnel:9090"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      - cc-tmux-tunnel
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      PORT: "8080"
+      BACKEND_URL: "http://localhost:8080"
+    ports:
+      - "3000:8080"
+    depends_on:
+      - cc-tunnel

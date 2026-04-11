@@ -5,13 +5,18 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/tmuxclient"
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	defaultAddr := ":8080"
+	if p := os.Getenv("PORT"); p != "" {
+		defaultAddr = ":" + p
+	}
+	addr := flag.String("addr", defaultAddr, "listen address")
 	runnerURL := flag.String("runner-url", "http://localhost:9090", "cc-tmux-tunnel runner URL")
 	flag.Parse()
 

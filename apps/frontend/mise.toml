@@ -4,8 +4,12 @@ node = "24.14.1"
 [tasks."frontend:install"]
 run = 'npm install'
 
-[tasks."frontend:dev:up"]
+[tasks."frontend:generate"]
 depends = ["frontend:install"]
+run = 'npm run generate'
+
+[tasks."frontend:dev:up"]
+depends = ["frontend:install", "frontend:generate"]
 run = 'npm run dev'
 
 [tasks."frontend:lint"]
