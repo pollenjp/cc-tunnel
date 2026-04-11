@@ -30,3 +30,17 @@ depends = ["lint:*"]
 
 [tasks."check"]
 depends = ["test", "lint"]
+
+[tasks."docker:up"]
+description = "Start all services with docker compose"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+docker compose up --build -d
+echo 'Access to http://localhost:3000 (if default configuration is used) to see the frontend.'
+'''
+
+[tasks."docker:down"]
+description = "Stop all services with docker compose"
+run = 'docker compose down'
