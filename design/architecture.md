@@ -44,7 +44,7 @@ REST + OpenAPI を採用。
 
 | 選定理由 |
 |---------|
-| 操作は6つの単純な CRUD エンドポイント、ストリーミング不要 |
+| 操作は8つの単純な CRUD エンドポイント、ストリーミング不要 |
 | 既存の oapi-codegen パイプラインをサーバー側・クライアント側の両方で再利用 |
 | gRPC は protobuf ツールチェーンの追加コストに見合わない |
 | curl でデバッグ可能 |
@@ -213,10 +213,23 @@ cc-tunnel/
 
 ## 起動方法
 
+### 個別起動
+
 ```bash
 # Server A (Claude Runner) を起動
 cd apps/cc-tmux-tunnel && go run ./cmd/cc-tmux-tunnel/ -addr :9090
 
 # Server B (API Server) を起動
 cd apps/cc-tunnel && go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090
+
+# フロントエンドを起動
+cd apps/frontend && npm install && npm run dev
 ```
+
+### Docker Compose
+
+```bash
+cd apps && docker compose up --build -d
+```
+
+http://localhost:3000 でフロントエンドにアクセスできる。
