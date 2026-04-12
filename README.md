@@ -11,14 +11,17 @@ cc-tunnel/
 │   ├── cc-tunnel/         # Server B: API Server (外部向けプロキシ)
 │   ├── cc-tmux-tunnel/    # Server A: Claude Runner (tmux + claude 管理)
 │   ├── frontend/          # React フロントエンド (Web UI)
-│   └── openapi/           # OpenAPI 定義 (外部 API + 内部 API)
-└── design/                # 設計ドキュメント
+│   ├── openapi/           # OpenAPI 定義 (外部 API + 内部 API)
+│   ├── compose.yaml       # Docker Compose 設定
+│   └── mise.toml          # タスクランナー設定
+├── design/                # 設計ドキュメント
+└── .github/workflows/     # CI (GitHub Actions)
 ```
 
 ## 前提条件
 
 - Go 1.26+
-- Node.js 18+
+- Node.js 24+
 - tmux 3.0+
 - [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) (コード生成時のみ)
 
@@ -75,11 +78,33 @@ curl 'localhost:8080/sessions/<id>/output?paneIndex=0'
 # 全ペイン出力を一括取得
 curl localhost:8080/sessions/<id>/outputs
 
+# ウィンドウリサイズ
+curl -X POST 'localhost:8080/sessions/<id>/resize' \
+  -H 'Content-Type: application/json' \
+  -d '{"width": 200, "height": 50}'
+
 # 未管理セッションの検出
 curl localhost:8080/sessions/discover
 
 # セッション削除
 curl -X DELETE localhost:8080/sessions/<id>
+```
+
+## Docker Compose で一括起動
+
+```bash
+cd apps
+docker compose up --build -d
+```
+
+ブラウザで http://localhost:3000 を開く。停止は `docker compose down`。
+
+[mise](https://mise.jdx.dev/) を使っている場合は `apps/` ディレクトリで以下も利用可能:
+
+```bash
+mise run docker:up    # 起動
+mise run docker:down  # 停止
+mise run check        # 全テスト + lint
 ```
 
 ## API 定義
