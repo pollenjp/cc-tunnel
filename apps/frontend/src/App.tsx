@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Session, SessionType, DiscoveredSession } from './api';
+import type { Session, SessionType, DiscoveredSession } from './api/client';
 import {
   createSession,
   listSessions,
@@ -9,7 +9,7 @@ import {
   getAllOutputs,
   deleteSession,
   resizeSession,
-} from './api';
+} from './api/client';
 
 import './App.css';
 

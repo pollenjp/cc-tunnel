@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -15,7 +16,11 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":9090", "listen address")
+	defaultAddr := ":9090"
+	if p := os.Getenv("PORT"); p != "" {
+		defaultAddr = ":" + p
+	}
+	addr := flag.String("addr", defaultAddr, "listen address")
 	flag.Parse()
 
 	mgr := session.NewManager()

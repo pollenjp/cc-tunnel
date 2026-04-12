@@ -1,0 +1,32 @@
+services:
+  cc-tmux-tunnel:
+    build:
+      context: ./cc-tmux-tunnel
+    environment:
+      PORT: "${CC_TMUX_TUNNEL_ENV_PORT:-9090}"
+    ports:
+      - "${CC_TMUX_TUNNEL_EXPORT_PORT:-9090}:${CC_TMUX_TUNNEL_ENV_PORT:-9090}"
+
+  cc-tunnel:
+    build:
+      context: ./cc-tunnel
+    command:
+      - -runner-url
+      - http://cc-tmux-tunnel:${CC_TMUX_TUNNEL_EXPORT_PORT:-9090}
+    environment:
+      PORT: ${CC_TUNNEL_ENV_PORT:-8080}
+    ports:
+      - "${CC_TUNNEL_EXPORT_PORT:-8080}:${CC_TUNNEL_ENV_PORT:-8080}"
+    depends_on:
+      - cc-tmux-tunnel
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      PORT: "${FRONTEND_ENV_PORT:-8080}"
+      BACKEND_URL: "http://localhost:${CC_TUNNEL_EXPORT_PORT:-8080}"
+    ports:
+      - "3000:${FRONTEND_ENV_PORT:-8080}"
+    depends_on:
+      - cc-tunnel
