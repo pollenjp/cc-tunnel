@@ -30,6 +30,8 @@ cd ../cc-tmux-tunnel && go run ./cmd/cc-tmux-tunnel/ -addr :9090
 cd ../cc-tunnel && go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090
 ```
 
+Docker Compose では frontend コンテナが `/api` を `cc-tunnel` にリバースプロキシするため、ホストへ公開するのは frontend のみ。
+
 ## ビルド
 
 ```bash
