@@ -1,4 +1,4 @@
-FROM mirror.gcr.io/library/golang:1.24-bookworm AS builder
+FROM mirror.gcr.io/library/golang:1.26.2-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -10,6 +10,4 @@ FROM gcr.io/distroless/static-debian12
 
 COPY --from=builder /cc-tunnel /usr/local/bin/cc-tunnel
 
-EXPOSE 8080
 ENTRYPOINT ["cc-tunnel"]
-CMD ["-addr", ":8080"]

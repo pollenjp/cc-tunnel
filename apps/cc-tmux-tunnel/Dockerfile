@@ -1,4 +1,4 @@
-FROM mirror.gcr.io/library/golang:1.24-bookworm AS builder
+FROM mirror.gcr.io/library/golang:1.26.2-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -14,6 +14,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /cc-tmux-tunnel /usr/local/bin/cc-tmux-tunnel
 
-EXPOSE 9090
 ENTRYPOINT ["cc-tmux-tunnel"]
-CMD ["-addr", ":9090"]
