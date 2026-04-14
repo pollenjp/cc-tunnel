@@ -113,8 +113,27 @@ function App() {
   const userResizedRef = useRef(false);
   const prevContainerSize = useRef<{ w: number; h: number } | null>(null);
 
+  // Auto-scroll tracking per pane: 0-9 = grid panes, 10 = single view
+  const SINGLE_VIEW_SCROLL_INDEX = 10;
+  const autoScrollRef = useRef<boolean[]>(Array(11).fill(true));
+  const isProgrammaticScrollRef = useRef(false);
+
   const activeSession = sessions.find((s) => s.id === activeId);
   const isMultiAgent = activeSession?.type === 'multi_agent_shogun';
+
+  const scrollToBottom = useCallback((el: HTMLElement) => {
+    isProgrammaticScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      isProgrammaticScrollRef.current = false;
+    });
+  }, []);
+
+  const handlePaneScroll = useCallback((paneIndex: number, el: HTMLElement) => {
+    if (isProgrammaticScrollRef.current) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    autoScrollRef.current[paneIndex] = distanceFromBottom < 30;
+  }, []);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -139,15 +158,15 @@ function App() {
         } else {
           const text = await getOutput(id, activePaneIndex > 0 ? activePaneIndex : undefined);
           setOutput(text);
-          if (outputRef.current) {
-            outputRef.current.scrollTop = outputRef.current.scrollHeight;
+          if (outputRef.current && autoScrollRef.current[SINGLE_VIEW_SCROLL_INDEX]) {
+            scrollToBottom(outputRef.current);
           }
         }
       } catch (e) {
         console.error('Failed to get output:', e);
       }
     },
-    [sessions, viewMode, activePaneIndex],
+    [sessions, viewMode, activePaneIndex, scrollToBottom],
   );
 
   useEffect(() => {
@@ -196,19 +215,46 @@ function App() {
     return () => observer.disconnect();
   }, [viewMode]);
 
-  // Auto-scroll grid panes when outputs update
+  // Auto-scroll grid panes when outputs update (only if auto-scroll enabled per pane)
   useEffect(() => {
     if (viewMode !== 'grid') return;
     requestAnimationFrame(() => {
-      gridOutputRefs.current.forEach((el) => {
+      gridOutputRefs.current.forEach((el, i) => {
         if (!el) return;
-        const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-        if (isNearBottom) {
-          el.scrollTop = el.scrollHeight;
+        if (autoScrollRef.current[i]) {
+          scrollToBottom(el);
         }
       });
     });
-  }, [allPaneOutputs, viewMode]);
+  }, [allPaneOutputs, viewMode, scrollToBottom]);
+
+  // Attach scroll listeners to grid panes
+  useEffect(() => {
+    if (viewMode !== 'grid') return;
+    const cleanups: (() => void)[] = [];
+    gridOutputRefs.current.forEach((el, i) => {
+      if (!el) return;
+      const handler = () => handlePaneScroll(i, el);
+      el.addEventListener('scroll', handler, { passive: true });
+      cleanups.push(() => el.removeEventListener('scroll', handler));
+    });
+    return () => cleanups.forEach((fn) => fn());
+  }, [viewMode, allPaneOutputs, handlePaneScroll]);
+
+  // Attach scroll listener to single-view pane
+  useEffect(() => {
+    if (viewMode !== 'single') return;
+    const el = outputRef.current;
+    if (!el) return;
+    const handler = () => handlePaneScroll(SINGLE_VIEW_SCROLL_INDEX, el);
+    el.addEventListener('scroll', handler, { passive: true });
+    return () => el.removeEventListener('scroll', handler);
+  }, [viewMode, output, handlePaneScroll]);
+
+  // Reset auto-scroll flags when view mode, session, or pane tab changes
+  useEffect(() => {
+    autoScrollRef.current = Array(11).fill(true);
+  }, [viewMode, activeId, activePaneIndex]);
 
   // Auto-resize tmux pane to match frontend output element dimensions
   useEffect(() => {
