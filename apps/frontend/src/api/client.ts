@@ -54,10 +54,23 @@ export async function sendKeys(id: string, keys: string[], paneIndex?: number): 
   throwOnError(result);
 }
 
-export async function resizeSession(id: string, width: number, height: number): Promise<void> {
+export async function resizeSession(
+  id: string,
+  width: number,
+  height: number,
+  opts?: { paneIndex?: number; colWidths?: number[]; rowHeights?: number[] },
+): Promise<void> {
   const result = await client.POST('/sessions/{sessionId}/resize', {
-    params: { path: { sessionId: id } },
-    body: { width, height },
+    params: {
+      path: { sessionId: id },
+      query: opts?.paneIndex != null ? { paneIndex: opts.paneIndex } : undefined,
+    },
+    body: {
+      width,
+      height,
+      ...(opts?.colWidths ? { col_widths: opts.colWidths } : {}),
+      ...(opts?.rowHeights ? { row_heights: opts.rowHeights } : {}),
+    },
   });
   throwOnError(result);
 }

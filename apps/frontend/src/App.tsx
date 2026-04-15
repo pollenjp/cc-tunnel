@@ -67,11 +67,33 @@ const OUTPUT_FONT_FAMILY = "'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, m
 const OUTPUT_FONT_SIZE = '13px';
 const OUTPUT_LINE_HEIGHT = 1.6;
 
-function measureCharSize(): { charWidth: number; lineHeight: number } {
+// Grid-view pane font — must match `.grid-pane-output` in App.css.
+const GRID_OUTPUT_FONT_SIZE = '9px';
+const GRID_OUTPUT_LINE_HEIGHT = 1.3;
+
+// Pixel overhead that sits inside each `.grid-pane` cell but outside the
+// actual character area, and therefore must be subtracted from
+// `colWidths[i]` / `rowHeights[i]` before converting to tmux cells.
+// Values mirror App.css `.grid-pane`, `.grid-pane-header`, `.grid-pane-output`.
+//
+//   horizontal : 1px border * 2 sides + 6px output padding * 2 sides + 15px vertical scrollbar
+//   vertical   : 1px border * 2 sides + ~22px header (padding 3+3 + font 10*~1.3 + border 1) + 4px output padding * 2 sides
+const GRID_PANE_BORDER = 2;
+const GRID_PANE_OUTPUT_PADDING_X = 12;
+const GRID_PANE_OUTPUT_PADDING_Y = 8;
+const GRID_PANE_SCROLLBAR_W = 15;
+const GRID_PANE_HEADER_H = 22;
+const GRID_PANE_OVERHEAD_X = GRID_PANE_BORDER + GRID_PANE_OUTPUT_PADDING_X + GRID_PANE_SCROLLBAR_W;
+const GRID_PANE_OVERHEAD_Y = GRID_PANE_BORDER + GRID_PANE_HEADER_H + GRID_PANE_OUTPUT_PADDING_Y;
+
+function measureCharSize(
+  fontSize: string = OUTPUT_FONT_SIZE,
+  lineHeight: number = OUTPUT_LINE_HEIGHT,
+): { charWidth: number; lineHeight: number } {
   const span = document.createElement('span');
   span.style.fontFamily = OUTPUT_FONT_FAMILY;
-  span.style.fontSize = OUTPUT_FONT_SIZE;
-  span.style.lineHeight = String(OUTPUT_LINE_HEIGHT);
+  span.style.fontSize = fontSize;
+  span.style.lineHeight = String(lineHeight);
   span.style.position = 'absolute';
   span.style.visibility = 'hidden';
   span.style.whiteSpace = 'pre';
@@ -104,6 +126,7 @@ function App() {
   const intervalRef = useRef<number | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
   const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const lastGridResizeSigRef = useRef<string | null>(null);
 
   // Grid resize state
   const [shogunHeight, setShogunHeight] = useState(0);
@@ -292,16 +315,31 @@ function App() {
     setAutoScrollState(Array(11).fill(true));
   }, [viewMode, activeId, activePaneIndex]);
 
-  // Auto-resize tmux pane to match frontend output element dimensions
+  // Auto-resize tmux pane to match frontend output element dimensions.
+  //
+  // Runs for:
+  //   - claude_code sessions (single pane 0), or
+  //   - multi_agent_shogun sessions in single view showing the shogun
+  //     pane (activePaneIndex === 0). In that case only the shogun tmux
+  //     session is resized via the `paneIndex` query param, leaving the
+  //     multiagent grid layout untouched.
   useEffect(() => {
     if (viewMode !== 'single' || !autoResize || !activeId) return;
     const session = sessions.find((s) => s.id === activeId);
-    if (!session || session.type !== 'claude_code') return;
+    if (!session) return;
+
+    const isClaudeCode = session.type === 'claude_code';
+    const isShogunSolo =
+      session.type === 'multi_agent_shogun' && activePaneIndex === 0;
+    if (!isClaudeCode && !isShogunSolo) return;
 
     const el = outputRef.current;
     if (!el) return;
 
     const currentActiveId = activeId;
+    // For multi_agent_shogun the shogun pane is pane 0. Passing it as
+    // paneIndex tells the backend to resize only the shogun tmux session.
+    const paneIndex = isShogunSolo ? 0 : undefined;
 
     const observer = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect;
@@ -330,7 +368,7 @@ function App() {
         setTmuxWidth(cols);
         setTmuxHeight(rows);
         try {
-          await resizeSession(currentActiveId, cols, rows);
+          await resizeSession(currentActiveId, cols, rows, paneIndex != null ? { paneIndex } : undefined);
         } catch (e) {
           console.error('Auto-resize failed:', e);
         }
@@ -345,7 +383,80 @@ function App() {
         resizeTimeoutRef.current = null;
       }
     };
-  }, [viewMode, autoResize, activeId, sessions]);
+  }, [viewMode, autoResize, activeId, sessions, activePaneIndex]);
+
+  // Auto-resize the multiagent tmux window to match the 3x3 grid pane sizes
+  // so each agent pane's terminal content fills its visible cell width
+  // instead of staying at the narrow default set by the startup script.
+  useEffect(() => {
+    if (viewMode !== 'grid' || !autoResize || !activeId) return;
+    const session = sessions.find((s) => s.id === activeId);
+    if (!session || session.type !== 'multi_agent_shogun') return;
+
+    // Wait until ResizeObserver has initialized the pane sizes.
+    if (colWidths[0] <= 0 || rowHeights[0] <= 0) return;
+
+    const { charWidth, lineHeight } = measureCharSize(
+      GRID_OUTPUT_FONT_SIZE,
+      GRID_OUTPUT_LINE_HEIGHT,
+    );
+    if (charWidth === 0 || lineHeight === 0) return;
+
+    // Each tmux pane column / row gets a size proportional to the matching
+    // frontend cell, so unequal drag-resized columns are reflected in the
+    // multiagent tmux layout instead of all 3 columns staying equal.
+    // The overall window size is the sum of the per-column / per-row sizes.
+    //
+    // Subtract the per-cell visual overhead (cell border, output padding,
+    // scrollbar, header) from each pane's pixel size before converting to
+    // tmux cells — otherwise the right edge of every tmux pane's content
+    // is cropped behind the scrollbar / padding on the frontend.
+    const paneCols = colWidths.map((w) =>
+      Math.max(20, Math.floor((w - GRID_PANE_OVERHEAD_X) / charWidth)),
+    ) as [number, number, number];
+    const paneRows = rowHeights.map((h) =>
+      Math.max(8, Math.floor((h - GRID_PANE_OVERHEAD_Y) / lineHeight)),
+    ) as [number, number, number];
+
+    const cols = Math.max(40, paneCols[0] + paneCols[1] + paneCols[2]);
+    const rows = Math.max(10, paneRows[0] + paneRows[1] + paneRows[2]);
+
+    const sig = `${paneCols.join(',')}|${paneRows.join(',')}`;
+    if (lastGridResizeSigRef.current === sig) {
+      return;
+    }
+
+    if (resizeTimeoutRef.current) {
+      clearTimeout(resizeTimeoutRef.current);
+    }
+
+    const currentActiveId = activeId;
+    resizeTimeoutRef.current = window.setTimeout(async () => {
+      lastGridResizeSigRef.current = sig;
+      lastResizeRef.current = { cols, rows };
+      setTmuxWidth(cols);
+      setTmuxHeight(rows);
+      try {
+        // paneIndex 1 (any multiagent pane) targets only the multiagent
+        // tmux session; shogun is managed by the single-view effect when
+        // the user switches to it.
+        await resizeSession(currentActiveId, cols, rows, {
+          paneIndex: 1,
+          colWidths: paneCols,
+          rowHeights: paneRows,
+        });
+      } catch (e) {
+        console.error('Grid auto-resize failed:', e);
+      }
+    }, 500);
+
+    return () => {
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+        resizeTimeoutRef.current = null;
+      }
+    };
+  }, [viewMode, autoResize, activeId, sessions, colWidths, rowHeights]);
 
   // Drag handler for resize handles
   const handleDragStart = useCallback(

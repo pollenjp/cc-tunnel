@@ -79,6 +79,14 @@ export interface paths {
         /**
          * Resize the tmux window
          * @description Resizes the tmux window of a running session.
+         *
+         *     For `multi_agent_shogun` sessions:
+         *     - If `paneIndex` is not supplied (or omitted) the shogun and
+         *       multiagent tmux sessions are both resized, and the optional
+         *       `col_widths` / `row_heights` are applied to the multiagent grid.
+         *     - If `paneIndex` is `0` only the shogun tmux session is resized.
+         *     - If `paneIndex` is `1`–`9` only the multiagent tmux session is
+         *       resized; `col_widths` / `row_heights` still apply.
          */
         post: operations["resizeSession"];
         delete?: never;
@@ -210,6 +218,18 @@ export interface components {
              * @example 50
              */
             height: number;
+            /**
+             * @description Per-column pane widths in cells. Only used for `multi_agent_shogun`
+             *     sessions and must contain exactly 3 entries corresponding to the
+             *     three columns of the 3x3 multiagent grid (left to right).
+             */
+            col_widths?: number[];
+            /**
+             * @description Per-row pane heights in cells. Only used for `multi_agent_shogun`
+             *     sessions and must contain exactly 3 entries corresponding to the
+             *     three rows of the 3x3 multiagent grid (top to bottom).
+             */
+            row_heights?: number[];
         };
         SendInputRequest: {
             /**
@@ -371,7 +391,13 @@ export interface operations {
     };
     resizeSession: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Pane index to target. For claude_code sessions, only 0 is valid.
+                 *     For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
+                 */
+                paneIndex?: components["parameters"]["PaneIndex"];
+            };
             header?: never;
             path: {
                 sessionId: components["parameters"]["SessionId"];

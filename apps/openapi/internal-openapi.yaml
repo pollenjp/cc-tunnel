@@ -92,9 +92,19 @@ paths:
     post:
       operationId: resizeSession
       summary: Resize the tmux window
-      description: Resizes the tmux window of a running session.
+      description: |
+        Resizes the tmux window of a running session.
+
+        For `multi_agent_shogun` sessions:
+        - If `paneIndex` is not supplied (or omitted) the shogun and
+          multiagent tmux sessions are both resized, and the optional
+          `col_widths` / `row_heights` are applied to the multiagent grid.
+        - If `paneIndex` is `0` only the shogun tmux session is resized.
+        - If `paneIndex` is `1`–`9` only the multiagent tmux session is
+          resized; `col_widths` / `row_heights` still apply.
       parameters:
         - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/PaneIndex"
       requestBody:
         required: true
         content:
@@ -318,6 +328,30 @@ components:
           minimum: 10
           maximum: 200
           example: 50
+        col_widths:
+          type: array
+          description: |
+            Per-column pane widths in cells. Only used for `multi_agent_shogun`
+            sessions and must contain exactly 3 entries corresponding to the
+            three columns of the 3x3 multiagent grid (left to right).
+          minItems: 3
+          maxItems: 3
+          items:
+            type: integer
+            minimum: 20
+            maximum: 500
+        row_heights:
+          type: array
+          description: |
+            Per-row pane heights in cells. Only used for `multi_agent_shogun`
+            sessions and must contain exactly 3 entries corresponding to the
+            three rows of the 3x3 multiagent grid (top to bottom).
+          minItems: 3
+          maxItems: 3
+          items:
+            type: integer
+            minimum: 8
+            maximum: 200
 
     SendInputRequest:
       type: object

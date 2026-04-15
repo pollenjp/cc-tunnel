@@ -194,12 +194,83 @@ func (m *Manager) List() []*Session {
 	return result
 }
 
-func (m *Manager) Resize(id string, width, height int) error {
+// Resize updates the tmux window size.
+//
+// For multi_agent_shogun sessions the target is chosen by paneIndex:
+//
+//   - paneIndex == nil  → resize both the shogun and multiagent tmux
+//     sessions, and apply colWidths/rowHeights to the multiagent grid.
+//   - paneIndex == 0    → resize only the shogun tmux session; the
+//     multiagent session is left untouched so that switching the frontend
+//     to single-view shogun doesn't disrupt the agent grid layout.
+//   - paneIndex 1–9     → resize only the multiagent tmux session;
+//     colWidths/rowHeights still apply when provided.
+//
+// colWidths/rowHeights (each exactly 3 entries when set) drive per-column /
+// per-row pane sizes of the multiagent 3x3 grid.
+func (m *Manager) Resize(id string, width, height int, paneIndex *int, colWidths, rowHeights []int) error {
 	s, ok := m.Get(id)
 	if !ok {
 		return fmt.Errorf("session not found: %s", id)
 	}
-	return tmux.ResizeWindow(s.TmuxName, width, height)
+
+	// For non-multiagent sessions paneIndex is a no-op.
+	if s.Type != SessionTypeMultiAgentShogun {
+		return tmux.ResizeWindow(s.TmuxName, width, height)
+	}
+
+	resizeShogun := paneIndex == nil || *paneIndex == 0
+	resizeMultiagent := paneIndex == nil || (*paneIndex >= 1 && *paneIndex <= MultiagentPaneCount)
+
+	if resizeShogun {
+		if err := tmux.ResizeWindow(s.TmuxName, width, height); err != nil {
+			return fmt.Errorf("resize %s: %w", s.TmuxName, err)
+		}
+	}
+	if resizeMultiagent && s.MultiagentTmuxName != "" {
+		if err := tmux.ResizeWindow(s.MultiagentTmuxName, width, height); err != nil {
+			return fmt.Errorf("resize %s: %w", s.MultiagentTmuxName, err)
+		}
+		if err := resizeMultiagentGrid(s.MultiagentTmuxName, colWidths, rowHeights); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resizeMultiagentGrid applies per-column and per-row pane sizes to the
+// multiagent session. Pane layout (column-major, 0-based):
+//
+//	col 0 -> panes 0, 1, 2
+//	col 1 -> panes 3, 4, 5
+//	col 2 -> panes 6, 7, 8
+//
+// Only one pane per column/row is used to drive tmux's layout — the rest
+// follow by the layout constraints.
+func resizeMultiagentGrid(sessionName string, colWidths, rowHeights []int) error {
+	if len(colWidths) == 3 {
+		for c, w := range colWidths {
+			if w <= 0 {
+				continue
+			}
+			// First pane of each column: 0, 3, 6.
+			if err := tmux.ResizePane(sessionName, c*3, w, 0); err != nil {
+				return fmt.Errorf("resize col %d: %w", c, err)
+			}
+		}
+	}
+	if len(rowHeights) == 3 {
+		for r, h := range rowHeights {
+			if h <= 0 {
+				continue
+			}
+			// First pane of each row (in column 0): 0, 1, 2.
+			if err := tmux.ResizePane(sessionName, r, 0, h); err != nil {
+				return fmt.Errorf("resize row %d: %w", r, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (m *Manager) SendKeys(id string, keys []string) error {

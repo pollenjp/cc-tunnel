@@ -89,14 +89,28 @@ func (h *Server) DiscoverSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *Server) ResizeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
+func (h *Server) ResizeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId, params ResizeSessionParams) {
 	var body ResizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	if err := h.manager.Resize(sessionId, body.Width, body.Height); err != nil {
+	var colWidths, rowHeights []int
+	if body.ColWidths != nil {
+		colWidths = *body.ColWidths
+	}
+	if body.RowHeights != nil {
+		rowHeights = *body.RowHeights
+	}
+
+	var paneIndex *int
+	if params.PaneIndex != nil {
+		v := *params.PaneIndex
+		paneIndex = &v
+	}
+
+	if err := h.manager.Resize(sessionId, body.Width, body.Height, paneIndex, colWidths, rowHeights); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
