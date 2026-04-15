@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { Session, SessionType, DiscoveredSession } from './api/client';
 import {
   createSession,
@@ -10,6 +10,7 @@ import {
   deleteSession,
   resizeSession,
 } from './api/client';
+import { parseAnsi } from './ansi';
 
 import './App.css';
 
@@ -122,6 +123,16 @@ function App() {
 
   const activeSession = sessions.find((s) => s.id === activeId);
   const isMultiAgent = activeSession?.type === 'multi_agent_shogun';
+
+  // Parse ANSI escape codes once per output update so colors render faithfully.
+  const parsedOutput = useMemo(() => parseAnsi(output), [output]);
+  const parsedPaneOutputs = useMemo(() => {
+    const result: Record<string, ReturnType<typeof parseAnsi>> = {};
+    for (const [k, v] of Object.entries(allPaneOutputs)) {
+      result[k] = parseAnsi(v);
+    }
+    return result;
+  }, [allPaneOutputs]);
 
   const scrollToBottom = useCallback((el: HTMLElement) => {
     isProgrammaticScrollRef.current = true;
@@ -788,7 +799,7 @@ function App() {
               {viewMode === 'single' && (
                 <div className="output-wrapper">
                   <pre className="output" ref={outputRef}>
-                    {output || 'Waiting for output...'}
+                    {output ? parsedOutput : 'Waiting for output...'}
                   </pre>
                   {!autoScrollState[SINGLE_VIEW_SCROLL_INDEX] && (
                     <button
@@ -819,7 +830,7 @@ function App() {
                       className="grid-pane-output"
                       ref={(el) => { gridOutputRefs.current[0] = el; }}
                     >
-                      {allPaneOutputs['0'] || 'Waiting...'}
+                      {allPaneOutputs['0'] ? parsedPaneOutputs['0'] : 'Waiting...'}
                     </pre>
                     {!autoScrollState[0] && (
                       <button
@@ -869,7 +880,9 @@ function App() {
                             className="grid-pane-output"
                             ref={(el) => { gridOutputRefs.current[paneIndex] = el; }}
                           >
-                            {allPaneOutputs[String(paneIndex)] || 'Waiting...'}
+                            {allPaneOutputs[String(paneIndex)]
+                              ? parsedPaneOutputs[String(paneIndex)]
+                              : 'Waiting...'}
                           </pre>
                           {!autoScrollState[paneIndex] && (
                             <button
