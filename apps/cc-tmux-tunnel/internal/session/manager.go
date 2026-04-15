@@ -194,7 +194,11 @@ func (m *Manager) List() []*Session {
 	return result
 }
 
-func (m *Manager) Resize(id string, width, height int) error {
+// Resize updates the tmux window size. For multi_agent_shogun sessions the
+// optional colWidths/rowHeights (each exactly 3 entries) set per-column /
+// per-row pane sizes of the 3x3 multiagent grid so each column can have a
+// width proportional to the corresponding frontend pane column.
+func (m *Manager) Resize(id string, width, height int, colWidths, rowHeights []int) error {
 	s, ok := m.Get(id)
 	if !ok {
 		return fmt.Errorf("session not found: %s", id)
@@ -208,6 +212,44 @@ func (m *Manager) Resize(id string, width, height int) error {
 	if s.Type == SessionTypeMultiAgentShogun && s.MultiagentTmuxName != "" {
 		if err := tmux.ResizeWindow(s.MultiagentTmuxName, width, height); err != nil {
 			return fmt.Errorf("resize %s: %w", s.MultiagentTmuxName, err)
+		}
+		if err := resizeMultiagentGrid(s.MultiagentTmuxName, colWidths, rowHeights); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resizeMultiagentGrid applies per-column and per-row pane sizes to the
+// multiagent session. Pane layout (column-major, 0-based):
+//
+//	col 0 -> panes 0, 1, 2
+//	col 1 -> panes 3, 4, 5
+//	col 2 -> panes 6, 7, 8
+//
+// Only one pane per column/row is used to drive tmux's layout — the rest
+// follow by the layout constraints.
+func resizeMultiagentGrid(sessionName string, colWidths, rowHeights []int) error {
+	if len(colWidths) == 3 {
+		for c, w := range colWidths {
+			if w <= 0 {
+				continue
+			}
+			// First pane of each column: 0, 3, 6.
+			if err := tmux.ResizePane(sessionName, c*3, w, 0); err != nil {
+				return fmt.Errorf("resize col %d: %w", c, err)
+			}
+		}
+	}
+	if len(rowHeights) == 3 {
+		for r, h := range rowHeights {
+			if h <= 0 {
+				continue
+			}
+			// First pane of each row (in column 0): 0, 1, 2.
+			if err := tmux.ResizePane(sessionName, r, 0, h); err != nil {
+				return fmt.Errorf("resize row %d: %w", r, err)
+			}
 		}
 	}
 	return nil

@@ -73,8 +73,18 @@ type OutputResponse struct {
 
 // ResizeRequest defines model for ResizeRequest.
 type ResizeRequest struct {
+	// ColWidths Per-column pane widths in cells. Only used for `multi_agent_shogun`
+	// sessions and must contain exactly 3 entries corresponding to the
+	// three columns of the 3x3 multiagent grid (left to right).
+	ColWidths *[]int `json:"col_widths,omitempty"`
+
 	// Height tmux window height in rows
 	Height int `json:"height"`
+
+	// RowHeights Per-row pane heights in cells. Only used for `multi_agent_shogun`
+	// sessions and must contain exactly 3 entries corresponding to the
+	// three rows of the 3x3 multiagent grid (top to bottom).
+	RowHeights *[]int `json:"row_heights,omitempty"`
 
 	// Width tmux window width in columns
 	Width int `json:"width"`

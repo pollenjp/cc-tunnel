@@ -111,6 +111,7 @@ function App() {
   const intervalRef = useRef<number | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
   const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const lastGridResizeSigRef = useRef<string | null>(null);
 
   // Grid resize state
   const [shogunHeight, setShogunHeight] = useState(0);
@@ -371,22 +372,18 @@ function App() {
     );
     if (charWidth === 0 || lineHeight === 0) return;
 
-    // The multiagent tmux window width is defined as the sum of the 3 grid
-    // pane column widths (converted to tmux columns). Likewise, the height
-    // is the sum of the 3 row heights. Handle separators between cells are
-    // excluded from the sum so the tmux window exactly matches the total
-    // visible pane area.
-    const totalPaneW = colWidths[0] + colWidths[1] + colWidths[2];
-    const totalPaneH = rowHeights[0] + rowHeights[1] + rowHeights[2];
+    // Each tmux pane column / row gets a size proportional to the matching
+    // frontend cell, so unequal drag-resized columns are reflected in the
+    // multiagent tmux layout instead of all 3 columns staying equal.
+    // The overall window size is the sum of the per-column / per-row sizes.
+    const paneCols = colWidths.map((w) => Math.max(20, Math.floor(w / charWidth))) as [number, number, number];
+    const paneRows = rowHeights.map((h) => Math.max(8, Math.floor(h / lineHeight))) as [number, number, number];
 
-    const cols = Math.max(40, Math.floor(totalPaneW / charWidth));
-    const rows = Math.max(10, Math.floor(totalPaneH / lineHeight));
+    const cols = Math.max(40, paneCols[0] + paneCols[1] + paneCols[2]);
+    const rows = Math.max(10, paneRows[0] + paneRows[1] + paneRows[2]);
 
-    if (
-      lastResizeRef.current &&
-      lastResizeRef.current.cols === cols &&
-      lastResizeRef.current.rows === rows
-    ) {
+    const sig = `${paneCols.join(',')}|${paneRows.join(',')}`;
+    if (lastGridResizeSigRef.current === sig) {
       return;
     }
 
@@ -396,11 +393,15 @@ function App() {
 
     const currentActiveId = activeId;
     resizeTimeoutRef.current = window.setTimeout(async () => {
+      lastGridResizeSigRef.current = sig;
       lastResizeRef.current = { cols, rows };
       setTmuxWidth(cols);
       setTmuxHeight(rows);
       try {
-        await resizeSession(currentActiveId, cols, rows);
+        await resizeSession(currentActiveId, cols, rows, {
+          colWidths: paneCols,
+          rowHeights: paneRows,
+        });
       } catch (e) {
         console.error('Grid auto-resize failed:', e);
       }

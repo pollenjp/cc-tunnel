@@ -210,6 +210,18 @@ export interface components {
              * @example 50
              */
             height: number;
+            /**
+             * @description Per-column pane widths in cells. Only used for `multi_agent_shogun`
+             *     sessions and must contain exactly 3 entries corresponding to the
+             *     three columns of the 3x3 multiagent grid (left to right).
+             */
+            col_widths?: number[];
+            /**
+             * @description Per-row pane heights in cells. Only used for `multi_agent_shogun`
+             *     sessions and must contain exactly 3 entries corresponding to the
+             *     three rows of the 3x3 multiagent grid (top to bottom).
+             */
+            row_heights?: number[];
         };
         SendInputRequest: {
             /**

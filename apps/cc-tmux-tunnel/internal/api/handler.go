@@ -96,7 +96,15 @@ func (h *Server) ResizeSession(w http.ResponseWriter, r *http.Request, sessionId
 		return
 	}
 
-	if err := h.manager.Resize(sessionId, body.Width, body.Height); err != nil {
+	var colWidths, rowHeights []int
+	if body.ColWidths != nil {
+		colWidths = *body.ColWidths
+	}
+	if body.RowHeights != nil {
+		rowHeights = *body.RowHeights
+	}
+
+	if err := h.manager.Resize(sessionId, body.Width, body.Height, colWidths, rowHeights); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

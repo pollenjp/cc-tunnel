@@ -32,6 +32,27 @@ func ResizeWindow(name string, width, height int) error {
 	).Run()
 }
 
+// ResizePane sets the size of an individual pane. Width or height values
+// <= 0 are skipped, so callers can adjust only one axis at a time.
+// Because tmux layouts are constrained (the three panes in a column must
+// share a width), setting one pane's -x affects its neighbours, which is
+// exactly how per-column / per-row sizing is expressed.
+func ResizePane(sessionName string, paneIndex int, width, height int) error {
+	target := fmt.Sprintf("%s:0.%d", sessionName, paneIndex)
+	args := []string{"resize-pane", "-t", target}
+	if width > 0 {
+		args = append(args, "-x", fmt.Sprintf("%d", width))
+	}
+	if height > 0 {
+		args = append(args, "-y", fmt.Sprintf("%d", height))
+	}
+	if len(args) == 3 {
+		// Nothing to change.
+		return nil
+	}
+	return exec.Command("tmux", args...).Run()
+}
+
 // SendKeys sends keystrokes to a tmux session.
 // Each key is passed as a separate argument to tmux send-keys.
 // Special key names (Enter, Escape, C-c, etc.) are interpreted by tmux.
