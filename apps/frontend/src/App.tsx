@@ -315,16 +315,31 @@ function App() {
     setAutoScrollState(Array(11).fill(true));
   }, [viewMode, activeId, activePaneIndex]);
 
-  // Auto-resize tmux pane to match frontend output element dimensions
+  // Auto-resize tmux pane to match frontend output element dimensions.
+  //
+  // Runs for:
+  //   - claude_code sessions (single pane 0), or
+  //   - multi_agent_shogun sessions in single view showing the shogun
+  //     pane (activePaneIndex === 0). In that case only the shogun tmux
+  //     session is resized via the `paneIndex` query param, leaving the
+  //     multiagent grid layout untouched.
   useEffect(() => {
     if (viewMode !== 'single' || !autoResize || !activeId) return;
     const session = sessions.find((s) => s.id === activeId);
-    if (!session || session.type !== 'claude_code') return;
+    if (!session) return;
+
+    const isClaudeCode = session.type === 'claude_code';
+    const isShogunSolo =
+      session.type === 'multi_agent_shogun' && activePaneIndex === 0;
+    if (!isClaudeCode && !isShogunSolo) return;
 
     const el = outputRef.current;
     if (!el) return;
 
     const currentActiveId = activeId;
+    // For multi_agent_shogun the shogun pane is pane 0. Passing it as
+    // paneIndex tells the backend to resize only the shogun tmux session.
+    const paneIndex = isShogunSolo ? 0 : undefined;
 
     const observer = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect;
@@ -353,7 +368,7 @@ function App() {
         setTmuxWidth(cols);
         setTmuxHeight(rows);
         try {
-          await resizeSession(currentActiveId, cols, rows);
+          await resizeSession(currentActiveId, cols, rows, paneIndex != null ? { paneIndex } : undefined);
         } catch (e) {
           console.error('Auto-resize failed:', e);
         }
@@ -368,7 +383,7 @@ function App() {
         resizeTimeoutRef.current = null;
       }
     };
-  }, [viewMode, autoResize, activeId, sessions]);
+  }, [viewMode, autoResize, activeId, sessions, activePaneIndex]);
 
   // Auto-resize the multiagent tmux window to match the 3x3 grid pane sizes
   // so each agent pane's terminal content fills its visible cell width
@@ -422,7 +437,11 @@ function App() {
       setTmuxWidth(cols);
       setTmuxHeight(rows);
       try {
+        // paneIndex 1 (any multiagent pane) targets only the multiagent
+        // tmux session; shogun is managed by the single-view effect when
+        // the user switches to it.
         await resizeSession(currentActiveId, cols, rows, {
+          paneIndex: 1,
           colWidths: paneCols,
           rowHeights: paneRows,
         });

@@ -58,10 +58,13 @@ export async function resizeSession(
   id: string,
   width: number,
   height: number,
-  opts?: { colWidths?: number[]; rowHeights?: number[] },
+  opts?: { paneIndex?: number; colWidths?: number[]; rowHeights?: number[] },
 ): Promise<void> {
   const result = await client.POST('/sessions/{sessionId}/resize', {
-    params: { path: { sessionId: id } },
+    params: {
+      path: { sessionId: id },
+      query: opts?.paneIndex != null ? { paneIndex: opts.paneIndex } : undefined,
+    },
     body: {
       width,
       height,

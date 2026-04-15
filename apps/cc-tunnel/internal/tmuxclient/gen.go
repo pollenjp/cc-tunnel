@@ -138,6 +138,13 @@ type GetOutputParams struct {
 	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
 }
 
+// ResizeSessionParams defines parameters for ResizeSession.
+type ResizeSessionParams struct {
+	// PaneIndex Pane index to target. For claude_code sessions, only 0 is valid.
+	// For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
+	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
+}
+
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
 
@@ -246,9 +253,9 @@ type ClientInterface interface {
 	GetAllOutputs(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ResizeSessionWithBody request with any body
-	ResizeSessionWithBody(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ResizeSessionWithBody(ctx context.Context, sessionId SessionId, params *ResizeSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	ResizeSession(ctx context.Context, sessionId SessionId, body ResizeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ResizeSession(ctx context.Context, sessionId SessionId, params *ResizeSessionParams, body ResizeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) ListSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -359,8 +366,8 @@ func (c *Client) GetAllOutputs(ctx context.Context, sessionId SessionId, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) ResizeSessionWithBody(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResizeSessionRequestWithBody(c.Server, sessionId, contentType, body)
+func (c *Client) ResizeSessionWithBody(ctx context.Context, sessionId SessionId, params *ResizeSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResizeSessionRequestWithBody(c.Server, sessionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -371,8 +378,8 @@ func (c *Client) ResizeSessionWithBody(ctx context.Context, sessionId SessionId,
 	return c.Client.Do(req)
 }
 
-func (c *Client) ResizeSession(ctx context.Context, sessionId SessionId, body ResizeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResizeSessionRequest(c.Server, sessionId, body)
+func (c *Client) ResizeSession(ctx context.Context, sessionId SessionId, params *ResizeSessionParams, body ResizeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResizeSessionRequest(c.Server, sessionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -681,18 +688,18 @@ func NewGetAllOutputsRequest(server string, sessionId SessionId) (*http.Request,
 }
 
 // NewResizeSessionRequest calls the generic ResizeSession builder with application/json body
-func NewResizeSessionRequest(server string, sessionId SessionId, body ResizeSessionJSONRequestBody) (*http.Request, error) {
+func NewResizeSessionRequest(server string, sessionId SessionId, params *ResizeSessionParams, body ResizeSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewResizeSessionRequestWithBody(server, sessionId, "application/json", bodyReader)
+	return NewResizeSessionRequestWithBody(server, sessionId, params, "application/json", bodyReader)
 }
 
 // NewResizeSessionRequestWithBody generates requests for ResizeSession with any type of body
-func NewResizeSessionRequestWithBody(server string, sessionId SessionId, contentType string, body io.Reader) (*http.Request, error) {
+func NewResizeSessionRequestWithBody(server string, sessionId SessionId, params *ResizeSessionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -715,6 +722,33 @@ func NewResizeSessionRequestWithBody(server string, sessionId SessionId, content
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.PaneIndex != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "paneIndex", *params.PaneIndex, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
@@ -796,9 +830,9 @@ type ClientWithResponsesInterface interface {
 	GetAllOutputsWithResponse(ctx context.Context, sessionId SessionId, reqEditors ...RequestEditorFn) (*GetAllOutputsResponse, error)
 
 	// ResizeSessionWithBodyWithResponse request with any body
-	ResizeSessionWithBodyWithResponse(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error)
+	ResizeSessionWithBodyWithResponse(ctx context.Context, sessionId SessionId, params *ResizeSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error)
 
-	ResizeSessionWithResponse(ctx context.Context, sessionId SessionId, body ResizeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error)
+	ResizeSessionWithResponse(ctx context.Context, sessionId SessionId, params *ResizeSessionParams, body ResizeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error)
 }
 
 type ListSessionsResponse struct {
@@ -1066,16 +1100,16 @@ func (c *ClientWithResponses) GetAllOutputsWithResponse(ctx context.Context, ses
 }
 
 // ResizeSessionWithBodyWithResponse request with arbitrary body returning *ResizeSessionResponse
-func (c *ClientWithResponses) ResizeSessionWithBodyWithResponse(ctx context.Context, sessionId SessionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error) {
-	rsp, err := c.ResizeSessionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ResizeSessionWithBodyWithResponse(ctx context.Context, sessionId SessionId, params *ResizeSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error) {
+	rsp, err := c.ResizeSessionWithBody(ctx, sessionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseResizeSessionResponse(rsp)
 }
 
-func (c *ClientWithResponses) ResizeSessionWithResponse(ctx context.Context, sessionId SessionId, body ResizeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error) {
-	rsp, err := c.ResizeSession(ctx, sessionId, body, reqEditors...)
+func (c *ClientWithResponses) ResizeSessionWithResponse(ctx context.Context, sessionId SessionId, params *ResizeSessionParams, body ResizeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeSessionResponse, error) {
+	rsp, err := c.ResizeSession(ctx, sessionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

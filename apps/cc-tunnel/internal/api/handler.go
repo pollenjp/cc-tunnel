@@ -94,14 +94,20 @@ func (h *Server) DiscoverSessions(w http.ResponseWriter, r *http.Request) {
 	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
 }
 
-func (h *Server) ResizeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
+func (h *Server) ResizeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId, params ResizeSessionParams) {
 	var body tmuxclient.ResizeSessionJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	resp, err := h.client.ResizeSessionWithResponse(r.Context(), sessionId, body)
+	var clientParams *tmuxclient.ResizeSessionParams
+	if params.PaneIndex != nil {
+		v := tmuxclient.PaneIndex(*params.PaneIndex)
+		clientParams = &tmuxclient.ResizeSessionParams{PaneIndex: &v}
+	}
+
+	resp, err := h.client.ResizeSessionWithResponse(r.Context(), sessionId, clientParams, body)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
