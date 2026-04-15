@@ -199,7 +199,18 @@ func (m *Manager) Resize(id string, width, height int) error {
 	if !ok {
 		return fmt.Errorf("session not found: %s", id)
 	}
-	return tmux.ResizeWindow(s.TmuxName, width, height)
+	if err := tmux.ResizeWindow(s.TmuxName, width, height); err != nil {
+		return fmt.Errorf("resize %s: %w", s.TmuxName, err)
+	}
+	// For multi_agent_shogun, also resize the multiagent tmux session so the
+	// 3x3 agent grid expands along with the frontend instead of staying at
+	// the narrow size set by the startup script.
+	if s.Type == SessionTypeMultiAgentShogun && s.MultiagentTmuxName != "" {
+		if err := tmux.ResizeWindow(s.MultiagentTmuxName, width, height); err != nil {
+			return fmt.Errorf("resize %s: %w", s.MultiagentTmuxName, err)
+		}
+	}
+	return nil
 }
 
 func (m *Manager) SendKeys(id string, keys []string) error {

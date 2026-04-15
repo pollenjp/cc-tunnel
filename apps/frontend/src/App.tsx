@@ -67,11 +67,18 @@ const OUTPUT_FONT_FAMILY = "'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, m
 const OUTPUT_FONT_SIZE = '13px';
 const OUTPUT_LINE_HEIGHT = 1.6;
 
-function measureCharSize(): { charWidth: number; lineHeight: number } {
+// Grid-view pane font — must match `.grid-pane-output` in App.css.
+const GRID_OUTPUT_FONT_SIZE = '9px';
+const GRID_OUTPUT_LINE_HEIGHT = 1.3;
+
+function measureCharSize(
+  fontSize: string = OUTPUT_FONT_SIZE,
+  lineHeight: number = OUTPUT_LINE_HEIGHT,
+): { charWidth: number; lineHeight: number } {
   const span = document.createElement('span');
   span.style.fontFamily = OUTPUT_FONT_FAMILY;
-  span.style.fontSize = OUTPUT_FONT_SIZE;
-  span.style.lineHeight = String(OUTPUT_LINE_HEIGHT);
+  span.style.fontSize = fontSize;
+  span.style.lineHeight = String(lineHeight);
   span.style.position = 'absolute';
   span.style.visibility = 'hidden';
   span.style.whiteSpace = 'pre';
@@ -346,6 +353,64 @@ function App() {
       }
     };
   }, [viewMode, autoResize, activeId, sessions]);
+
+  // Auto-resize the multiagent tmux window to match the 3x3 grid pane sizes
+  // so each agent pane's terminal content fills its visible cell width
+  // instead of staying at the narrow default set by the startup script.
+  useEffect(() => {
+    if (viewMode !== 'grid' || !autoResize || !activeId) return;
+    const session = sessions.find((s) => s.id === activeId);
+    if (!session || session.type !== 'multi_agent_shogun') return;
+
+    // Wait until ResizeObserver has initialized the pane sizes.
+    if (colWidths[0] <= 0 || rowHeights[0] <= 0) return;
+
+    const { charWidth, lineHeight } = measureCharSize(
+      GRID_OUTPUT_FONT_SIZE,
+      GRID_OUTPUT_LINE_HEIGHT,
+    );
+    if (charWidth === 0 || lineHeight === 0) return;
+
+    // Total width spanned by the 3 pane columns (excludes handle separators).
+    // The multiagent tmux window needs 2 extra columns for its internal
+    // pane-separator borders between the 3 tmux columns.
+    const totalPaneW = colWidths[0] + colWidths[1] + colWidths[2];
+    const totalPaneH = rowHeights[0] + rowHeights[1] + rowHeights[2];
+
+    const cols = Math.max(40, Math.floor(totalPaneW / charWidth) + 2);
+    const rows = Math.max(10, Math.floor(totalPaneH / lineHeight) + 2);
+
+    if (
+      lastResizeRef.current &&
+      lastResizeRef.current.cols === cols &&
+      lastResizeRef.current.rows === rows
+    ) {
+      return;
+    }
+
+    if (resizeTimeoutRef.current) {
+      clearTimeout(resizeTimeoutRef.current);
+    }
+
+    const currentActiveId = activeId;
+    resizeTimeoutRef.current = window.setTimeout(async () => {
+      lastResizeRef.current = { cols, rows };
+      setTmuxWidth(cols);
+      setTmuxHeight(rows);
+      try {
+        await resizeSession(currentActiveId, cols, rows);
+      } catch (e) {
+        console.error('Grid auto-resize failed:', e);
+      }
+    }, 500);
+
+    return () => {
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+        resizeTimeoutRef.current = null;
+      }
+    };
+  }, [viewMode, autoResize, activeId, sessions, colWidths, rowHeights]);
 
   // Drag handler for resize handles
   const handleDragStart = useCallback(
