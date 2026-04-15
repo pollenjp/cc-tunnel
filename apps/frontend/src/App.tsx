@@ -371,14 +371,16 @@ function App() {
     );
     if (charWidth === 0 || lineHeight === 0) return;
 
-    // Total width spanned by the 3 pane columns (excludes handle separators).
-    // The multiagent tmux window needs 2 extra columns for its internal
-    // pane-separator borders between the 3 tmux columns.
+    // The multiagent tmux window width is defined as the sum of the 3 grid
+    // pane column widths (converted to tmux columns). Likewise, the height
+    // is the sum of the 3 row heights. Handle separators between cells are
+    // excluded from the sum so the tmux window exactly matches the total
+    // visible pane area.
     const totalPaneW = colWidths[0] + colWidths[1] + colWidths[2];
     const totalPaneH = rowHeights[0] + rowHeights[1] + rowHeights[2];
 
-    const cols = Math.max(40, Math.floor(totalPaneW / charWidth) + 2);
-    const rows = Math.max(10, Math.floor(totalPaneH / lineHeight) + 2);
+    const cols = Math.max(40, Math.floor(totalPaneW / charWidth));
+    const rows = Math.max(10, Math.floor(totalPaneH / lineHeight));
 
     if (
       lastResizeRef.current &&
