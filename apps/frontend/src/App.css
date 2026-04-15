@@ -134,7 +134,17 @@
   padding: 6px 14px;
   font-family: var(--mono);
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-bright);
+  text-shadow:
+    -1px -1px 0 #000,
+     1px -1px 0 #000,
+    -1px  1px 0 #000,
+     1px  1px 0 #000,
+     0   -1px 0 #000,
+     0    1px 0 #000,
+    -1px  0   0 #000,
+     1px  0   0 #000;
   background: var(--accent);
   border: none;
   border-radius: 16px;
