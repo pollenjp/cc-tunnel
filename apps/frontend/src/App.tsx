@@ -71,6 +71,21 @@ const OUTPUT_LINE_HEIGHT = 1.6;
 const GRID_OUTPUT_FONT_SIZE = '9px';
 const GRID_OUTPUT_LINE_HEIGHT = 1.3;
 
+// Pixel overhead that sits inside each `.grid-pane` cell but outside the
+// actual character area, and therefore must be subtracted from
+// `colWidths[i]` / `rowHeights[i]` before converting to tmux cells.
+// Values mirror App.css `.grid-pane`, `.grid-pane-header`, `.grid-pane-output`.
+//
+//   horizontal : 1px border * 2 sides + 6px output padding * 2 sides + 15px vertical scrollbar
+//   vertical   : 1px border * 2 sides + ~22px header (padding 3+3 + font 10*~1.3 + border 1) + 4px output padding * 2 sides
+const GRID_PANE_BORDER = 2;
+const GRID_PANE_OUTPUT_PADDING_X = 12;
+const GRID_PANE_OUTPUT_PADDING_Y = 8;
+const GRID_PANE_SCROLLBAR_W = 15;
+const GRID_PANE_HEADER_H = 22;
+const GRID_PANE_OVERHEAD_X = GRID_PANE_BORDER + GRID_PANE_OUTPUT_PADDING_X + GRID_PANE_SCROLLBAR_W;
+const GRID_PANE_OVERHEAD_Y = GRID_PANE_BORDER + GRID_PANE_HEADER_H + GRID_PANE_OUTPUT_PADDING_Y;
+
 function measureCharSize(
   fontSize: string = OUTPUT_FONT_SIZE,
   lineHeight: number = OUTPUT_LINE_HEIGHT,
@@ -376,8 +391,17 @@ function App() {
     // frontend cell, so unequal drag-resized columns are reflected in the
     // multiagent tmux layout instead of all 3 columns staying equal.
     // The overall window size is the sum of the per-column / per-row sizes.
-    const paneCols = colWidths.map((w) => Math.max(20, Math.floor(w / charWidth))) as [number, number, number];
-    const paneRows = rowHeights.map((h) => Math.max(8, Math.floor(h / lineHeight))) as [number, number, number];
+    //
+    // Subtract the per-cell visual overhead (cell border, output padding,
+    // scrollbar, header) from each pane's pixel size before converting to
+    // tmux cells — otherwise the right edge of every tmux pane's content
+    // is cropped behind the scrollbar / padding on the frontend.
+    const paneCols = colWidths.map((w) =>
+      Math.max(20, Math.floor((w - GRID_PANE_OVERHEAD_X) / charWidth)),
+    ) as [number, number, number];
+    const paneRows = rowHeights.map((h) =>
+      Math.max(8, Math.floor((h - GRID_PANE_OVERHEAD_Y) / lineHeight)),
+    ) as [number, number, number];
 
     const cols = Math.max(40, paneCols[0] + paneCols[1] + paneCols[2]);
     const rows = Math.max(10, paneRows[0] + paneRows[1] + paneRows[2]);
