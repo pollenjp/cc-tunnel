@@ -117,6 +117,8 @@ function App() {
   const SINGLE_VIEW_SCROLL_INDEX = 10;
   const autoScrollRef = useRef<boolean[]>(Array(11).fill(true));
   const isProgrammaticScrollRef = useRef(false);
+  // Mirror of autoScrollRef as state, used to drive UI (e.g. "see latest log" button visibility)
+  const [autoScrollState, setAutoScrollState] = useState<boolean[]>(Array(11).fill(true));
 
   const activeSession = sessions.find((s) => s.id === activeId);
   const isMultiAgent = activeSession?.type === 'multi_agent_shogun';
@@ -132,8 +134,30 @@ function App() {
   const handlePaneScroll = useCallback((paneIndex: number, el: HTMLElement) => {
     if (isProgrammaticScrollRef.current) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    autoScrollRef.current[paneIndex] = distanceFromBottom < 30;
+    const isAtBottom = distanceFromBottom < 30;
+    if (autoScrollRef.current[paneIndex] !== isAtBottom) {
+      autoScrollRef.current[paneIndex] = isAtBottom;
+      setAutoScrollState((prev) => {
+        const next = prev.slice();
+        next[paneIndex] = isAtBottom;
+        return next;
+      });
+    }
   }, []);
+
+  const jumpToBottom = useCallback(
+    (paneIndex: number, el: HTMLElement) => {
+      autoScrollRef.current[paneIndex] = true;
+      setAutoScrollState((prev) => {
+        if (prev[paneIndex]) return prev;
+        const next = prev.slice();
+        next[paneIndex] = true;
+        return next;
+      });
+      scrollToBottom(el);
+    },
+    [scrollToBottom],
+  );
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -254,6 +278,7 @@ function App() {
   // Reset auto-scroll flags when view mode, session, or pane tab changes
   useEffect(() => {
     autoScrollRef.current = Array(11).fill(true);
+    setAutoScrollState(Array(11).fill(true));
   }, [viewMode, activeId, activePaneIndex]);
 
   // Auto-resize tmux pane to match frontend output element dimensions
@@ -761,9 +786,23 @@ function App() {
 
               {/* Single pane view */}
               {viewMode === 'single' && (
-                <pre className="output" ref={outputRef}>
-                  {output || 'Waiting for output...'}
-                </pre>
+                <div className="output-wrapper">
+                  <pre className="output" ref={outputRef}>
+                    {output || 'Waiting for output...'}
+                  </pre>
+                  {!autoScrollState[SINGLE_VIEW_SCROLL_INDEX] && (
+                    <button
+                      className="see-latest-btn"
+                      onClick={() => {
+                        if (outputRef.current) {
+                          jumpToBottom(SINGLE_VIEW_SCROLL_INDEX, outputRef.current);
+                        }
+                      }}
+                    >
+                      See latest log ↓
+                    </button>
+                  )}
+                </div>
               )}
 
               {/* Grid view for multi-agent */}
@@ -782,6 +821,18 @@ function App() {
                     >
                       {allPaneOutputs['0'] || 'Waiting...'}
                     </pre>
+                    {!autoScrollState[0] && (
+                      <button
+                        className="see-latest-btn see-latest-btn-grid"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const el = gridOutputRefs.current[0];
+                          if (el) jumpToBottom(0, el);
+                        }}
+                      >
+                        See latest ↓
+                      </button>
+                    )}
                   </div>
 
                   {/* Resize handle: Shogun <-> Agents */}
@@ -802,23 +853,36 @@ function App() {
                     {Array.from({ length: 9 }, (_, i) => {
                       const col = Math.floor(i / 3);
                       const row = i % 3;
+                      const paneIndex = i + 1;
                       return (
                         <div
-                          key={i + 1}
+                          key={paneIndex}
                           className="grid-pane"
                           style={{
                             gridRow: row * 2 + 1,
                             gridColumn: col * 2 + 1,
                           }}
-                          onClick={() => handleGridPaneClick(i + 1)}
+                          onClick={() => handleGridPaneClick(paneIndex)}
                         >
-                          <div className="grid-pane-header">Agent {i + 1}</div>
+                          <div className="grid-pane-header">Agent {paneIndex}</div>
                           <pre
                             className="grid-pane-output"
-                            ref={(el) => { gridOutputRefs.current[i + 1] = el; }}
+                            ref={(el) => { gridOutputRefs.current[paneIndex] = el; }}
                           >
-                            {allPaneOutputs[String(i + 1)] || 'Waiting...'}
+                            {allPaneOutputs[String(paneIndex)] || 'Waiting...'}
                           </pre>
+                          {!autoScrollState[paneIndex] && (
+                            <button
+                              className="see-latest-btn see-latest-btn-grid"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const el = gridOutputRefs.current[paneIndex];
+                                if (el) jumpToBottom(paneIndex, el);
+                              }}
+                            >
+                              See latest ↓
+                            </button>
+                          )}
                         </div>
                       );
                     })}
