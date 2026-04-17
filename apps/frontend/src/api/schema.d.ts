@@ -4,6 +4,108 @@
  */
 
 export interface paths {
+    "/auth/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get authentication status */
+        get: operations["GetAuthStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Initiate login flow */
+        post: operations["InitiateLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["Logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel the in-progress login PTY process */
+        post: operations["CancelLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit input to the login process stdin */
+        post: operations["SubmitAuthInput"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/output": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get buffered stdout from the login process */
+        get: operations["GetAuthOutput"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations": {
         parameters: {
             query?: never;
@@ -68,6 +170,43 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AuthStatus: {
+            loggedIn: boolean;
+            /** @enum {string} */
+            authMethod: "none" | "api_key" | "claude.ai";
+            apiProvider?: string;
+            email?: string;
+            orgName?: string;
+            subscriptionType?: string;
+            apiKeySource?: string;
+            loginPending: boolean;
+            loginUrl?: string;
+        };
+        LoginRequest: {
+            /** @enum {string} */
+            method?: "claudeai" | "console";
+        };
+        LoginResponse: {
+            loginUrl?: string;
+            loggedIn?: boolean;
+            message: string;
+        };
+        AuthInputRequest: {
+            /** @description Input to send to the login process stdin (can be empty string for Enter) */
+            input: string;
+        };
+        AuthInputResponse: {
+            message: string;
+        };
+        AuthOutputResponse: {
+            /** @description Base64-encoded PTY output bytes since the given cursor */
+            data: string;
+            /** @description New cursor position for the next request */
+            cursor: number;
+        };
+        AuthCancelResponse: {
+            message: string;
+        };
         CreateConversationRequest: {
             /** @default  */
             title: string;
@@ -125,6 +264,144 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    GetAuthStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authentication status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthStatus"];
+                };
+            };
+        };
+    };
+    InitiateLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Login initiated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+        };
+    };
+    Logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Logout successful */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthStatus"];
+                };
+            };
+        };
+    };
+    CancelLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Login cancelled */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthCancelResponse"];
+                };
+            };
+        };
+    };
+    SubmitAuthInput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthInputRequest"];
+            };
+        };
+        responses: {
+            /** @description Input submitted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthInputResponse"];
+                };
+            };
+            /** @description No login in progress */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    GetAuthOutput: {
+        parameters: {
+            query?: {
+                /** @description Cursor position to start from (0 = all lines) */
+                since?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stdout lines and new cursor */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthOutputResponse"];
+                };
+            };
+        };
+    };
     listConversations: {
         parameters: {
             query?: never;

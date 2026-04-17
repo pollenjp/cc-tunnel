@@ -23,6 +23,77 @@ func NewHandler(repo *db.Repository, remote *remoteclient.Client) *Server {
 	return &Server{repo: repo, remote: remote}
 }
 
+func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := h.remote.GetAuthStatus(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (h *Server) InitiateLogin(w http.ResponseWriter, r *http.Request) {
+	var req LoginRequest
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req)
+	}
+	method := ""
+	if req.Method != nil {
+		method = string(*req.Method)
+	}
+	resp, err := h.remote.InitiateLogin(r.Context(), method)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Server) Logout(w http.ResponseWriter, r *http.Request) {
+	status, err := h.remote.Logout(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (h *Server) CancelLogin(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.remote.CancelLogin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Server) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
+	var req AuthInputRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	resp, err := h.remote.SubmitAuthInput(r.Context(), req.Input)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Server) GetAuthOutput(w http.ResponseWriter, r *http.Request, params GetAuthOutputParams) {
+	since := 0
+	if params.Since != nil {
+		since = *params.Since
+	}
+	resp, err := h.remote.GetAuthOutput(r.Context(), since)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (h *Server) CreateConversation(w http.ResponseWriter, r *http.Request) {
 	var req CreateConversationRequest
 	if r.Body != nil {

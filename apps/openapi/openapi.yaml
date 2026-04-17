@@ -5,6 +5,100 @@ info:
   version: 1.0.0
 
 paths:
+  /auth/status:
+    get:
+      operationId: GetAuthStatus
+      summary: Get authentication status
+      responses:
+        "200":
+          description: Authentication status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /auth/login:
+    post:
+      operationId: InitiateLogin
+      summary: Initiate login flow
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+
+  /auth/logout:
+    post:
+      operationId: Logout
+      summary: Logout
+      responses:
+        "200":
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /auth/cancel:
+    post:
+      operationId: CancelLogin
+      summary: Cancel the in-progress login PTY process
+      responses:
+        "200":
+          description: Login cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthCancelResponse"
+
+  /auth/input:
+    post:
+      operationId: SubmitAuthInput
+      summary: Submit input to the login process stdin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthInputRequest"
+      responses:
+        "200":
+          description: Input submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthInputResponse"
+        "409":
+          description: No login in progress
+
+  /auth/output:
+    get:
+      operationId: GetAuthOutput
+      summary: Get buffered stdout from the login process
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Cursor position to start from (0 = all lines)
+      responses:
+        "200":
+          description: Stdout lines and new cursor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthOutputResponse"
+
   /conversations:
     post:
       operationId: createConversation
@@ -128,6 +222,85 @@ components:
         format: uuid
 
   schemas:
+    AuthStatus:
+      type: object
+      required:
+        - loggedIn
+        - authMethod
+        - loginPending
+      properties:
+        loggedIn:
+          type: boolean
+        authMethod:
+          type: string
+          enum: [none, api_key, claude.ai]
+        apiProvider:
+          type: string
+        email:
+          type: string
+        orgName:
+          type: string
+        subscriptionType:
+          type: string
+        apiKeySource:
+          type: string
+        loginPending:
+          type: boolean
+        loginUrl:
+          type: string
+
+    LoginRequest:
+      type: object
+      properties:
+        method:
+          type: string
+          enum: [claudeai, console]
+
+    LoginResponse:
+      type: object
+      required:
+        - message
+      properties:
+        loginUrl:
+          type: string
+        loggedIn:
+          type: boolean
+        message:
+          type: string
+
+    AuthInputRequest:
+      type: object
+      required: [input]
+      properties:
+        input:
+          type: string
+          description: Input to send to the login process stdin (can be empty string for Enter)
+
+    AuthInputResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    AuthOutputResponse:
+      type: object
+      required: [data, cursor]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded PTY output bytes since the given cursor
+        cursor:
+          type: integer
+          description: New cursor position for the next request
+
+    AuthCancelResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
     CreateConversationRequest:
       type: object
       properties:

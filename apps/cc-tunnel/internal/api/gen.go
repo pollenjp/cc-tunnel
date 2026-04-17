@@ -21,6 +21,45 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AuthStatusAuthMethod.
+const (
+	ApiKey   AuthStatusAuthMethod = "api_key"
+	ClaudeAi AuthStatusAuthMethod = "claude.ai"
+	None     AuthStatusAuthMethod = "none"
+)
+
+// Valid indicates whether the value is a known member of the AuthStatusAuthMethod enum.
+func (e AuthStatusAuthMethod) Valid() bool {
+	switch e {
+	case ApiKey:
+		return true
+	case ClaudeAi:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LoginRequestMethod.
+const (
+	Claudeai LoginRequestMethod = "claudeai"
+	Console  LoginRequestMethod = "console"
+)
+
+// Valid indicates whether the value is a known member of the LoginRequestMethod enum.
+func (e LoginRequestMethod) Valid() bool {
+	switch e {
+	case Claudeai:
+		return true
+	case Console:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MessageRole.
 const (
 	Assistant MessageRole = "assistant"
@@ -41,6 +80,47 @@ func (e MessageRole) Valid() bool {
 		return false
 	}
 }
+
+// AuthCancelResponse defines model for AuthCancelResponse.
+type AuthCancelResponse struct {
+	Message string `json:"message"`
+}
+
+// AuthInputRequest defines model for AuthInputRequest.
+type AuthInputRequest struct {
+	// Input Input to send to the login process stdin (can be empty string for Enter)
+	Input string `json:"input"`
+}
+
+// AuthInputResponse defines model for AuthInputResponse.
+type AuthInputResponse struct {
+	Message string `json:"message"`
+}
+
+// AuthOutputResponse defines model for AuthOutputResponse.
+type AuthOutputResponse struct {
+	// Cursor New cursor position for the next request
+	Cursor int `json:"cursor"`
+
+	// Data Base64-encoded PTY output bytes since the given cursor
+	Data string `json:"data"`
+}
+
+// AuthStatus defines model for AuthStatus.
+type AuthStatus struct {
+	ApiKeySource     *string              `json:"apiKeySource,omitempty"`
+	ApiProvider      *string              `json:"apiProvider,omitempty"`
+	AuthMethod       AuthStatusAuthMethod `json:"authMethod"`
+	Email            *string              `json:"email,omitempty"`
+	LoggedIn         bool                 `json:"loggedIn"`
+	LoginPending     bool                 `json:"loginPending"`
+	LoginUrl         *string              `json:"loginUrl,omitempty"`
+	OrgName          *string              `json:"orgName,omitempty"`
+	SubscriptionType *string              `json:"subscriptionType,omitempty"`
+}
+
+// AuthStatusAuthMethod defines model for AuthStatus.AuthMethod.
+type AuthStatusAuthMethod string
 
 // Conversation defines model for Conversation.
 type Conversation struct {
@@ -75,6 +155,21 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// LoginRequest defines model for LoginRequest.
+type LoginRequest struct {
+	Method *LoginRequestMethod `json:"method,omitempty"`
+}
+
+// LoginRequestMethod defines model for LoginRequest.Method.
+type LoginRequestMethod string
+
+// LoginResponse defines model for LoginResponse.
+type LoginResponse struct {
+	LoggedIn *bool   `json:"loggedIn,omitempty"`
+	LoginUrl *string `json:"loginUrl,omitempty"`
+	Message  string  `json:"message"`
+}
+
 // Message defines model for Message.
 type Message struct {
 	Content        string                  `json:"content"`
@@ -102,6 +197,18 @@ type StatusResponse struct {
 // ConversationId defines model for ConversationId.
 type ConversationId = openapi_types.UUID
 
+// GetAuthOutputParams defines parameters for GetAuthOutput.
+type GetAuthOutputParams struct {
+	// Since Cursor position to start from (0 = all lines)
+	Since *int `form:"since,omitempty" json:"since,omitempty"`
+}
+
+// SubmitAuthInputJSONRequestBody defines body for SubmitAuthInput for application/json ContentType.
+type SubmitAuthInputJSONRequestBody = AuthInputRequest
+
+// InitiateLoginJSONRequestBody defines body for InitiateLogin for application/json ContentType.
+type InitiateLoginJSONRequestBody = LoginRequest
+
 // CreateConversationJSONRequestBody defines body for CreateConversation for application/json ContentType.
 type CreateConversationJSONRequestBody = CreateConversationRequest
 
@@ -110,6 +217,24 @@ type SendMessageJSONRequestBody = SendMessageRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Cancel the in-progress login PTY process
+	// (POST /auth/cancel)
+	CancelLogin(w http.ResponseWriter, r *http.Request)
+	// Submit input to the login process stdin
+	// (POST /auth/input)
+	SubmitAuthInput(w http.ResponseWriter, r *http.Request)
+	// Initiate login flow
+	// (POST /auth/login)
+	InitiateLogin(w http.ResponseWriter, r *http.Request)
+	// Logout
+	// (POST /auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request)
+	// Get buffered stdout from the login process
+	// (GET /auth/output)
+	GetAuthOutput(w http.ResponseWriter, r *http.Request, params GetAuthOutputParams)
+	// Get authentication status
+	// (GET /auth/status)
+	GetAuthStatus(w http.ResponseWriter, r *http.Request)
 	// List all conversations
 	// (GET /conversations)
 	ListConversations(w http.ResponseWriter, r *http.Request)
@@ -135,6 +260,103 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// CancelLogin operation middleware
+func (siw *ServerInterfaceWrapper) CancelLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SubmitAuthInput operation middleware
+func (siw *ServerInterfaceWrapper) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitAuthInput(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InitiateLogin operation middleware
+func (siw *ServerInterfaceWrapper) InitiateLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InitiateLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAuthOutput operation middleware
+func (siw *ServerInterfaceWrapper) GetAuthOutput(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAuthOutputParams
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAuthOutput(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAuthStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAuthStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListConversations operation middleware
 func (siw *ServerInterfaceWrapper) ListConversations(w http.ResponseWriter, r *http.Request) {
@@ -359,6 +581,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cancel", wrapper.CancelLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/input", wrapper.SubmitAuthInput)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.InitiateLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/output", wrapper.GetAuthOutput)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/status", wrapper.GetAuthStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/conversations", wrapper.ListConversations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/conversations", wrapper.CreateConversation)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/conversations/{conversationId}", wrapper.DeleteConversation)
@@ -371,25 +599,35 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/9RXUW/bNhD+KwS3hw2QbWXJ9qC3NjWKAN1W1NtTFQQ36Ryzk0iVPKU1PP33gaQki5Li",
-	"JFjaoUAeFPJ4vPs+fnfnA89UWSmJkgxPDrwCDSUSavffpZJ3qA2QUPIqtytC8oRXQDsecQkl8oRnoVHE",
-	"NX6shcacJ6RrjLjJdliCPb1VugTiCa9rYS1pX1kPhrSQt7xpms54cruLTasKNQl0u5lGIMxvrL+B5xwI",
-	"FyRKnLqPuMgfEUXES5VjYS0nO2ZvCMubSquyolkLElTg7E5d5U8MuBli+Z77YJ3/LsZoCENwxXXvTf31",
-	"ATOyEQwBfYUEwiUJRfH7lifvD/x7jVue8O9WxzexavlYBWQ00ZiNEo2BW/8tCEv3ccrfr/6Ag8zHCVrD",
-	"fpJ073ia0LVNyaU/DO4dfqzR0PTB9KzmuIW6sNhnBdQ5LoySEmlxsfhl7jU8gfOj51kyJ4SstVZ6Gil2",
-	"y6ffgzebI7oDdyoaJQnlfBZDHd88UilfUoRIkAO5ugF5LmxYULwdpOOryyR5rTwZKOvSwlQb1DziYIww",
-	"BNLqxFM6gO6U4sa4tDdEPZgBDHN0bFDmLSX3vs4BMzmaTIvKlz3+p0HNWhWw45WnA+/sZqMhoNq8Q1Mp",
-	"aWbeiHH7DsHPUFaFO/33g1e2x6Y3WkMht2qa2osrlu2AmEFjhJKsBAm3WKIkdieAeXWyyzdXfd1LeJYt",
-	"qJYSC/birV231HhvZ8t4GdsEVYUSKsETfr6Ml+c8cg3LZbQakulWbtFhbgHo2xx/IwxdBpY2Vw+YO/VT",
-	"HI9Ig6oqROasVx+Mb1jHxveokjgqseO62EQj+GyUTG1ZmJNronVZgt53NlAUY6OIV8rMZD6tp21DR0Mv",
-	"Vb5/UtYnk723cDeNf1oB3GfPd3GA8hTV4T5rhW3x+vmJlJ+Kwdf9mcuvJKGWUDCD+g41w9ZwSKlHjgGT",
-	"+Cmg1dmFL3x1CKezxouwQMIp96/c+oj74UB4z4hwNFmNBsbm+j/q5hSIozo2g6ZPyLF3EV98efZ+U8S2",
-	"qpb5iDEfB4MRW9F88XmN9M1wMDNRPiSpT4J2rJ/q/m9qXiMFrAThsZ0wpPT+McJaDSfgrraGMdgxwDBg",
-	"9bCjk2K0wzAGkDkzpBFK4zb70SWVHZMMDNu4GrHY2H65vrM4sB82m/WPy1R2qmCXHtXFH/sKE0b4mVZo",
-	"TRfefyrXkO3YZrNmbpntwDA/miXMTl8JS+s4Ps8sDe4L01TaP+luZLZHmYQdUtetUp6k3F6S8ijtGHWL",
-	"y+Uy5Q37J7DMlURn2Q4ANyI/GjsHhm5qYxfjZXw2Pu6KozNswRzclFrdhLoaTGHPo6nnb4ozg2ITzll2",
-	"5m0eFPSE5zCEmZ/do5e6WbcP0M4X/fNjui+2VrZfoR++hJzpDomvVCqCaiXvqRuWKQa9io+KDQU7QKxp",
-	"mn8DAAD//9ryhBFtEQAA",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
