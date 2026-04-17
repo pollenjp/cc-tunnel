@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { getAuthOutput, submitAuthInput } from '../api/client';
@@ -12,6 +12,8 @@ export function AuthTerminal({ onLoginComplete: _onLoginComplete }: Props) {
   const xtermRef = useRef<Terminal | null>(null);
   const cursorRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [authUrl, setAuthUrl] = useState<string | null>(null);
+  const fullOutputRef = useRef<string>('');
 
   const pollOutput = useCallback(async () => {
     try {
@@ -23,6 +25,13 @@ export function AuthTerminal({ onLoginComplete: _onLoginComplete }: Props) {
           bytes[i] = binary.charCodeAt(i);
         }
         xtermRef.current?.write(bytes);
+
+        fullOutputRef.current += binary;
+        const flat = fullOutputRef.current.replace(/[\r\n]/g, '');
+        const urlMatch = flat.match(/https?:\/\/[^\s'"<>]+/);
+        if (urlMatch) {
+          setAuthUrl((prev) => prev ?? urlMatch[0]);
+        }
       }
       cursorRef.current = res.cursor;
     } catch { /* ignore */ }
@@ -60,10 +69,22 @@ export function AuthTerminal({ onLoginComplete: _onLoginComplete }: Props) {
   }, [pollOutput]);
 
   return (
-    <div
-      ref={terminalRef}
-      className="rounded-lg overflow-hidden border border-[var(--color-border)]"
-      style={{ width: '640px', height: '384px' }}
-    />
+    <div className="flex flex-col items-center gap-2">
+      {authUrl && (
+        <a
+          href={authUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-4 py-2 rounded-md bg-[var(--color-accent)] text-[#1a1b26] text-sm font-medium hover:bg-[var(--color-accent-hover)] transition-colors"
+        >
+          認証URLを開く →
+        </a>
+      )}
+      <div
+        ref={terminalRef}
+        className="rounded-lg overflow-hidden border border-[var(--color-border)]"
+        style={{ width: '640px', height: '384px' }}
+      />
+    </div>
   );
 }
