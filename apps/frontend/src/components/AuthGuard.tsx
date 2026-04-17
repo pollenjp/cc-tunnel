@@ -7,7 +7,7 @@ interface Props {
 }
 
 export function AuthGuard({ auth, children }: Props) {
-  const { status, isLoading, login, logout } = auth;
+  const { status, isLoading, login } = auth;
 
   if (isLoading && !status) {
     return (
@@ -18,26 +18,7 @@ export function AuthGuard({ auth, children }: Props) {
   }
 
   if (status?.loggedIn) {
-    return (
-      <>
-        <div className="fixed top-2 right-3 z-50 flex items-center gap-2 text-xs">
-          <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">
-            {status.authMethod === 'api_key'
-              ? 'API Key で認証済み'
-              : `${status.email ?? 'claude.ai'} でログイン中`}
-          </span>
-          {status.authMethod !== 'api_key' && (
-            <button
-              onClick={logout}
-              className="px-2 py-0.5 rounded text-[var(--color-text)] hover:text-[var(--color-danger)] text-xs"
-            >
-              ログアウト
-            </button>
-          )}
-        </div>
-        {children}
-      </>
-    );
+    return <>{children}</>;
   }
 
   if (status?.loginPending) {

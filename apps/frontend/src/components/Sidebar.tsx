@@ -8,6 +8,10 @@ interface SidebarProps {
   onDelete: (id: string, e: React.MouseEvent) => void;
   sidebarOpen: boolean;
   onClose: () => void;
+  // 追加
+  authMethod?: string;
+  authEmail?: string;
+  onLogout?: () => void;
 }
 
 function getTitle(conv: Conversation): string {
@@ -22,6 +26,9 @@ export function Sidebar({
   onDelete,
   sidebarOpen,
   onClose,
+  authMethod,
+  authEmail,
+  onLogout,
 }: SidebarProps) {
   return (
     <>
@@ -76,6 +83,23 @@ export function Sidebar({
             </li>
           ))}
         </ul>
+        {(authMethod && authMethod !== 'none') && (
+          <div className="px-3 py-3 border-t border-[var(--color-border)] shrink-0">
+            <div className="text-xs text-[var(--color-text)] truncate mb-2">
+              {authMethod === 'api_key'
+                ? '🔑 API Key 認証済み'
+                : `👤 ${authEmail ?? 'claude.ai'}`}
+            </div>
+            {authMethod !== 'api_key' && onLogout && (
+              <button
+                onClick={onLogout}
+                className="w-full px-3 py-1.5 rounded text-xs text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-danger)] hover:text-[var(--color-danger)] transition-colors"
+              >
+                ログアウト
+              </button>
+            )}
+          </div>
+        )}
       </aside>
     </>
   );

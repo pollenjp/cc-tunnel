@@ -127,6 +127,9 @@ function App() {
           onDelete={handleDeleteConversation}
           sidebarOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
+          authMethod={auth.status?.authMethod}
+          authEmail={auth.status?.email ?? undefined}
+          onLogout={auth.logout}
         />
         <main className="flex-1 flex flex-col overflow-hidden min-w-0">
           {selectedId ? (
