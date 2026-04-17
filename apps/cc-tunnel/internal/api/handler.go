@@ -4,214 +4,254 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
-	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/tmuxclient"
+	"github.com/google/uuid"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
-// Server implements the generated ServerInterface.
 type Server struct {
-	client *tmuxclient.ClientWithResponses
+	repo   *db.Repository
+	remote *remoteclient.Client
 }
 
 var _ ServerInterface = (*Server)(nil)
 
-func NewHandler(client *tmuxclient.ClientWithResponses) *Server {
-	return &Server{client: client}
+func NewHandler(repo *db.Repository, remote *remoteclient.Client) *Server {
+	return &Server{repo: repo, remote: remote}
 }
 
-func (h *Server) CreateSession(w http.ResponseWriter, r *http.Request) {
-	var body tmuxclient.CreateSessionJSONRequestBody
-	if r.Body != nil && r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
+func (h *Server) CreateConversation(w http.ResponseWriter, r *http.Request) {
+	var req CreateConversationRequest
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req)
 	}
 
-	resp, err := h.client.CreateSessionWithResponse(r.Context(), body)
+	title := ""
+	if req.Title != nil {
+		title = *req.Title
+	}
+	model := "claude-sonnet-4-6"
+	if req.Model != nil {
+		model = *req.Model
+	}
+	var systemPrompt *string
+	if req.SystemPrompt != nil {
+		systemPrompt = req.SystemPrompt
+	}
+
+	conv, err := h.repo.CreateConversation(r.Context(), title, model, systemPrompt)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, dbConvToAPI(conv))
+}
+
+func (h *Server) ListConversations(w http.ResponseWriter, r *http.Request) {
+	convs, err := h.repo.ListConversations(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result := make([]Conversation, 0, len(convs))
+	for _, c := range convs {
+		result = append(result, dbConvToAPI(c))
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Server) GetConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
+	conv, err := h.repo.GetConversation(r.Context(), conversationId.String())
+	if err != nil {
+		writeError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	msgs, err := h.repo.ListMessages(r.Context(), conversationId.String())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	convUUID, _ := uuid.Parse(conv.ID)
+	detail := ConversationDetail{
+		Id:           convUUID,
+		Title:        conv.Title,
+		Model:        conv.Model,
+		CreatedAt:    conv.CreatedAt,
+		UpdatedAt:    conv.UpdatedAt,
+		SystemPrompt: conv.SystemPrompt,
+		Messages:     make([]Message, 0, len(msgs)),
+	}
+	for _, m := range msgs {
+		detail.Messages = append(detail.Messages, dbMsgToAPI(m))
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (h *Server) DeleteConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
+	if err := h.repo.DeleteConversation(r.Context(), conversationId.String()); err != nil {
+		writeError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, StatusResponse{Status: "ok"})
+}
+
+func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
+	var req SendMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
 
-	if resp.JSON201 != nil {
-		s := resp.JSON201
-		writeJSON(w, http.StatusCreated, Session{
-			Id:        s.Id,
-			Type:      SessionType(s.Type),
-			TmuxName:  s.TmuxName,
-			PaneCount: s.PaneCount,
-			CreatedAt: s.CreatedAt,
+	convIDStr := conversationId.String()
+
+	// 会話の存在確認 + 過去メッセージ取得
+	conv, err := h.repo.GetConversation(r.Context(), convIDStr)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	history, err := h.repo.ListMessages(r.Context(), convIDStr)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// ユーザーメッセージを DB に保存
+	_, err = h.repo.CreateMessage(r.Context(), convIDStr, "user", req.Content, nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// 過去メッセージから --resume 用 session_id を取得
+	// 最新の assistant メッセージの metadata["session_id"] を使う
+	var resumeSessionID string
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "assistant" {
+			if sid, ok := history[i].Metadata["session_id"].(string); ok && sid != "" {
+				resumeSessionID = sid
+				break
+			}
+		}
+	}
+
+	// cc-remote-agent への会話履歴（フォールバック用）
+	var convHistory []remoteclient.Message
+	for _, m := range history {
+		convHistory = append(convHistory, remoteclient.Message{
+			Role:    m.Role,
+			Content: m.Content,
 		})
-		return
-	}
-	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
-}
-
-func (h *Server) ListSessions(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.client.ListSessionsWithResponse(r.Context())
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
 	}
 
-	if resp.JSON200 != nil {
-		result := make([]Session, 0, len(*resp.JSON200))
-		for _, s := range *resp.JSON200 {
-			result = append(result, Session{
-				Id:        s.Id,
-				Type:      SessionType(s.Type),
-				TmuxName:  s.TmuxName,
-				PaneCount: s.PaneCount,
-				CreatedAt: s.CreatedAt,
-			})
+	// SSE ストリーミングレスポンス開始
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	// cc-remote-agent に実行依頼
+	var assistantContent string
+	executeReq := remoteclient.Request{
+		Prompt:              req.Content,
+		SessionID:           resumeSessionID,
+		Model:               conv.Model,
+		ConversationHistory: convHistory,
+	}
+	if conv.SystemPrompt != nil {
+		executeReq.SystemPrompt = *conv.SystemPrompt
+	}
+
+	newSessionID, err := h.remote.Execute(r.Context(), executeReq, func(event remoteclient.StreamEvent) {
+		switch event.Type {
+		case "assistant":
+			if event.Message != nil {
+				for _, block := range event.Message.Content {
+					if block.Type == "text" && block.Text != "" {
+						assistantContent += block.Text
+						sseEvent := map[string]string{"type": "text", "content": block.Text}
+						data, _ := json.Marshal(sseEvent)
+						fmt.Fprintf(w, "data: %s\n\n", data)
+						flusher.Flush()
+					}
+				}
+			}
+		case "result":
+			doneEvent := map[string]interface{}{
+				"type":       "done",
+				"session_id": event.SessionID,
+				"cost_usd":   event.CostUSD,
+			}
+			data, _ := json.Marshal(doneEvent)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
 		}
-		writeJSON(w, http.StatusOK, result)
-		return
-	}
-	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
-}
+	})
 
-func (h *Server) DiscoverSessions(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.client.DiscoverSessionsWithResponse(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		errEvent := map[string]string{"type": "error", "message": err.Error()}
+		data, _ := json.Marshal(errEvent)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
 		return
 	}
 
-	if resp.JSON200 != nil {
-		result := make([]DiscoveredSession, 0, len(*resp.JSON200))
-		for _, d := range *resp.JSON200 {
-			result = append(result, DiscoveredSession{
-				Type:      SessionType(d.Type),
-				TmuxNames: d.TmuxNames,
-			})
-		}
-		writeJSON(w, http.StatusOK, result)
-		return
-	}
-	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
+	// assistant メッセージを DB に保存（session_id を metadata に含める）
+	metadata := map[string]interface{}{"session_id": newSessionID}
+	h.repo.CreateMessage(r.Context(), convIDStr, "assistant", assistantContent, metadata)
+	h.repo.UpdateConversationUpdatedAt(r.Context(), convIDStr)
 }
 
-func (h *Server) ResizeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId, params ResizeSessionParams) {
-	var body tmuxclient.ResizeSessionJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
+// --- helper functions ---
 
-	var clientParams *tmuxclient.ResizeSessionParams
-	if params.PaneIndex != nil {
-		v := tmuxclient.PaneIndex(*params.PaneIndex)
-		clientParams = &tmuxclient.ResizeSessionParams{PaneIndex: &v}
-	}
-
-	resp, err := h.client.ResizeSessionWithResponse(r.Context(), sessionId, clientParams, body)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	if resp.JSON200 != nil {
-		writeJSON(w, http.StatusOK, StatusResponse{Status: resp.JSON200.Status})
-		return
-	}
-	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
-}
-
-func (h *Server) SendInput(w http.ResponseWriter, r *http.Request, sessionId SessionId, params SendInputParams) {
-	var body tmuxclient.SendInputJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if len(body.Keys) == 0 {
-		writeError(w, http.StatusBadRequest, "keys must not be empty")
-		return
-	}
-
-	// Forward paneIndex to internal API
-	upstreamParams := &tmuxclient.SendInputParams{}
-	if params.PaneIndex != nil {
-		upstreamParams.PaneIndex = params.PaneIndex
-	}
-
-	resp, err := h.client.SendInputWithResponse(r.Context(), sessionId, upstreamParams, body)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	if resp.JSON200 != nil {
-		writeJSON(w, http.StatusOK, StatusResponse{Status: resp.JSON200.Status})
-		return
-	}
-	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
-}
-
-func (h *Server) GetOutput(w http.ResponseWriter, r *http.Request, sessionId SessionId, params GetOutputParams) {
-	// Forward paneIndex to internal API
-	upstreamParams := &tmuxclient.GetOutputParams{}
-	if params.PaneIndex != nil {
-		upstreamParams.PaneIndex = params.PaneIndex
-	}
-
-	resp, err := h.client.GetOutputWithResponse(r.Context(), sessionId, upstreamParams)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	if resp.JSON200 != nil {
-		writeJSON(w, http.StatusOK, OutputResponse{Output: resp.JSON200.Output})
-		return
-	}
-	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
-}
-
-func (h *Server) GetAllOutputs(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
-	resp, err := h.client.GetAllOutputsWithResponse(r.Context(), sessionId)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	if resp.JSON200 != nil {
-		writeJSON(w, http.StatusOK, AllOutputsResponse{Panes: resp.JSON200.Panes})
-		return
-	}
-	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
-}
-
-func (h *Server) DeleteSession(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
-	resp, err := h.client.DeleteSessionWithResponse(r.Context(), sessionId)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	if resp.JSON200 != nil {
-		writeJSON(w, http.StatusOK, StatusResponse{Status: resp.JSON200.Status})
-		return
-	}
-	proxyErrorResponse(w, resp.StatusCode(), resp.Body)
-}
-
-// proxyErrorResponse forwards the upstream error response as-is.
-func proxyErrorResponse(w http.ResponseWriter, statusCode int, body []byte) {
+func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_, _ = w.Write(body)
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(v)
 }
 
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
+func writeError(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, Error{Error: msg})
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, Error{Error: message})
+func dbConvToAPI(c *db.Conversation) Conversation {
+	id, _ := uuid.Parse(c.ID)
+	conv := Conversation{
+		Id:        id,
+		Title:     c.Title,
+		Model:     c.Model,
+		CreatedAt: c.CreatedAt,
+		UpdatedAt: c.UpdatedAt,
+	}
+	if c.SystemPrompt != nil {
+		conv.SystemPrompt = c.SystemPrompt
+	}
+	return conv
+}
+
+func dbMsgToAPI(m *db.Message) Message {
+	msgID, _ := uuid.Parse(m.ID)
+	convID, _ := uuid.Parse(m.ConversationID)
+	msg := Message{
+		Id:             msgID,
+		ConversationId: convID,
+		Role:           MessageRole(m.Role),
+		Content:        m.Content,
+		CreatedAt:      m.CreatedAt,
+	}
+	if len(m.Metadata) > 0 {
+		msg.Metadata = &m.Metadata
+	}
+	return msg
 }

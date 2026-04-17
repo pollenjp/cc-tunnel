@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -8,7 +9,8 @@ import (
 	"os"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
-	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/tmuxclient"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
 func main() {
@@ -17,20 +19,33 @@ func main() {
 		defaultAddr = ":" + p
 	}
 	addr := flag.String("addr", defaultAddr, "listen address")
-	runnerURL := flag.String("runner-url", "http://localhost:9090", "cc-tmux-tunnel runner URL")
+	agentURL := flag.String("agent-url", "http://localhost:9091", "cc-remote-agent URL")
+	dbURL := flag.String("db-url", "", "PostgreSQL connection URL")
 	flag.Parse()
 
-	client, err := tmuxclient.NewClientWithResponses(*runnerURL)
-	if err != nil {
-		log.Fatalf("failed to create runner client: %v", err)
+	if *dbURL == "" {
+		if v := os.Getenv("DATABASE_URL"); v != "" {
+			*dbURL = v
+		} else {
+			*dbURL = "postgres://cctunnel:cctunnel_dev@localhost:5432/cctunnel?sslmode=disable"
+		}
 	}
 
-	handler := api.NewHandler(client)
+	ctx := context.Background()
+	pool, err := db.NewPool(ctx, *dbURL)
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+	}
+	defer pool.Close()
+
+	repo := db.NewRepository(pool)
+	remote := remoteclient.NewClient(*agentURL)
+	handler := api.NewHandler(repo, remote)
 
 	mux := http.NewServeMux()
 	api.HandlerFromMux(handler, mux)
 
-	fmt.Printf("cc-tunnel listening on %s (runner: %s)\n", *addr, *runnerURL)
+	fmt.Printf("cc-tunnel listening on %s (agent: %s)\n", *addr, *agentURL)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
 		log.Fatal(err)
 	}

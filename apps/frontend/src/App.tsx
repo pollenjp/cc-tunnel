@@ -1,1137 +1,201 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import type { Session, SessionType, DiscoveredSession } from './api/client';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import type { Conversation, Message } from './api/client';
 import {
-  createSession,
-  listSessions,
-  discoverSessions,
-  sendKeys,
-  getOutput,
-  getAllOutputs,
-  deleteSession,
-  resizeSession,
+  listConversations,
+  createConversation,
+  getConversation,
+  deleteConversation,
+  sendMessage,
 } from './api/client';
-import { parseAnsi } from './ansi';
 
 import './App.css';
 
-const MODIFIER_KEYS = ['Ctrl', 'Shift', 'Alt'] as const;
-type Modifier = typeof MODIFIER_KEYS[number];
-
-const SPECIAL_KEYS = [
-  { label: 'Enter', tmux: 'Enter' },
-  { label: 'Esc', tmux: 'Escape' },
-  { label: 'Tab', tmux: 'Tab' },
-  { label: 'Space', tmux: 'Space' },
-  { label: 'BS', tmux: 'BSpace' },
-  { label: 'Del', tmux: 'DC' },
-  { label: 'Up', tmux: 'Up' },
-  { label: 'Down', tmux: 'Down' },
-  { label: 'Left', tmux: 'Left' },
-  { label: 'Right', tmux: 'Right' },
-  { label: 'Home', tmux: 'Home' },
-  { label: 'End', tmux: 'End' },
-  { label: 'PgUp', tmux: 'PageUp' },
-  { label: 'PgDn', tmux: 'PageDown' },
-] as const;
-
-const QUICK_COMBOS = [
-  { label: 'Ctrl+C', keys: ['C-c'] },
-  { label: 'Ctrl+D', keys: ['C-d'] },
-  { label: 'Ctrl+Z', keys: ['C-z'] },
-  { label: 'Ctrl+L', keys: ['C-l'] },
-  { label: 'Ctrl+A', keys: ['C-a'] },
-  { label: 'Ctrl+E', keys: ['C-e'] },
-] as const;
-
-type ViewMode = 'single' | 'grid';
-
-function buildTmuxKey(tmuxKeyName: string, modifiers: Set<Modifier>): string {
-  let key = tmuxKeyName;
-  if (modifiers.has('Shift')) key = `S-${key}`;
-  if (modifiers.has('Alt')) key = `M-${key}`;
-  if (modifiers.has('Ctrl')) key = `C-${key}`;
-  return key;
-}
-
-function getPaneName(paneIndex: number, sessionType: SessionType): string {
-  if (sessionType === 'multi_agent_shogun') {
-    if (paneIndex === 0) return 'Shogun';
-    return `Agent ${paneIndex}`;
-  }
-  return 'Main';
-}
-
-const HANDLE_SIZE = 6;
-
-const OUTPUT_FONT_FAMILY = "'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace";
-const OUTPUT_FONT_SIZE = '13px';
-const OUTPUT_LINE_HEIGHT = 1.6;
-
-// Grid-view pane font — must match `.grid-pane-output` in App.css.
-const GRID_OUTPUT_FONT_SIZE = '9px';
-const GRID_OUTPUT_LINE_HEIGHT = 1.3;
-
-// Pixel overhead that sits inside each `.grid-pane` cell but outside the
-// actual character area, and therefore must be subtracted from
-// `colWidths[i]` / `rowHeights[i]` before converting to tmux cells.
-// Values mirror App.css `.grid-pane`, `.grid-pane-header`, `.grid-pane-output`.
-//
-//   horizontal : 1px border * 2 sides + 6px output padding * 2 sides + 15px vertical scrollbar
-//   vertical   : 1px border * 2 sides + ~22px header (padding 3+3 + font 10*~1.3 + border 1) + 4px output padding * 2 sides
-const GRID_PANE_BORDER = 2;
-const GRID_PANE_OUTPUT_PADDING_X = 12;
-const GRID_PANE_OUTPUT_PADDING_Y = 8;
-const GRID_PANE_SCROLLBAR_W = 15;
-const GRID_PANE_HEADER_H = 22;
-const GRID_PANE_OVERHEAD_X = GRID_PANE_BORDER + GRID_PANE_OUTPUT_PADDING_X + GRID_PANE_SCROLLBAR_W;
-const GRID_PANE_OVERHEAD_Y = GRID_PANE_BORDER + GRID_PANE_HEADER_H + GRID_PANE_OUTPUT_PADDING_Y;
-
-function measureCharSize(
-  fontSize: string = OUTPUT_FONT_SIZE,
-  lineHeight: number = OUTPUT_LINE_HEIGHT,
-): { charWidth: number; lineHeight: number } {
-  const span = document.createElement('span');
-  span.style.fontFamily = OUTPUT_FONT_FAMILY;
-  span.style.fontSize = fontSize;
-  span.style.lineHeight = String(lineHeight);
-  span.style.position = 'absolute';
-  span.style.visibility = 'hidden';
-  span.style.whiteSpace = 'pre';
-  span.textContent = 'M';
-  document.body.appendChild(span);
-  const rect = span.getBoundingClientRect();
-  document.body.removeChild(span);
-  return { charWidth: rect.width, lineHeight: rect.height };
-}
-
 function App() {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [output, setOutput] = useState('');
-  const [allPaneOutputs, setAllPaneOutputs] = useState<Record<string, string>>({});
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [polling, setPolling] = useState(false);
-  const [activeModifiers, setActiveModifiers] = useState<Set<Modifier>>(new Set());
-  const [tmuxWidth, setTmuxWidth] = useState(200);
-  const [tmuxHeight, setTmuxHeight] = useState(50);
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
-  const [newSessionType, setNewSessionType] = useState<SessionType>('claude_code');
-  const [viewMode, setViewMode] = useState<ViewMode>('single');
-  const [activePaneIndex, setActivePaneIndex] = useState(0);
-  const [discovered, setDiscovered] = useState<DiscoveredSession[]>([]);
-  const [showDiscover, setShowDiscover] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [autoResize, setAutoResize] = useState(true);
-  const outputRef = useRef<HTMLPreElement>(null);
-  const intervalRef = useRef<number | null>(null);
-  const resizeTimeoutRef = useRef<number | null>(null);
-  const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
-  const lastGridResizeSigRef = useRef<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Grid resize state
-  const [shogunHeight, setShogunHeight] = useState(0);
-  const [colWidths, setColWidths] = useState<[number, number, number]>([0, 0, 0]);
-  const [rowHeights, setRowHeights] = useState<[number, number, number]>([0, 0, 0]);
-  const gridContainerRef = useRef<HTMLDivElement>(null);
-  const gridOutputRefs = useRef<(HTMLPreElement | null)[]>([]);
-  const userResizedRef = useRef(false);
-  const prevContainerSize = useRef<{ w: number; h: number } | null>(null);
-
-  // Auto-scroll tracking per pane: 0-9 = grid panes, 10 = single view
-  const SINGLE_VIEW_SCROLL_INDEX = 10;
-  const autoScrollRef = useRef<boolean[]>(Array(11).fill(true));
-  const isProgrammaticScrollRef = useRef(false);
-  // Mirror of autoScrollRef as state, used to drive UI (e.g. "see latest log" button visibility)
-  const [autoScrollState, setAutoScrollState] = useState<boolean[]>(Array(11).fill(true));
-
-  const activeSession = sessions.find((s) => s.id === activeId);
-  const isMultiAgent = activeSession?.type === 'multi_agent_shogun';
-
-  // Parse ANSI escape codes once per output update so colors render faithfully.
-  const parsedOutput = useMemo(() => parseAnsi(output), [output]);
-  const parsedPaneOutputs = useMemo(() => {
-    const result: Record<string, ReturnType<typeof parseAnsi>> = {};
-    for (const [k, v] of Object.entries(allPaneOutputs)) {
-      result[k] = parseAnsi(v);
-    }
-    return result;
-  }, [allPaneOutputs]);
-
-  const scrollToBottom = useCallback((el: HTMLElement) => {
-    isProgrammaticScrollRef.current = true;
-    el.scrollTop = el.scrollHeight;
-    requestAnimationFrame(() => {
-      isProgrammaticScrollRef.current = false;
-    });
-  }, []);
-
-  const handlePaneScroll = useCallback((paneIndex: number, el: HTMLElement) => {
-    if (isProgrammaticScrollRef.current) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const isAtBottom = distanceFromBottom < 30;
-    if (autoScrollRef.current[paneIndex] !== isAtBottom) {
-      autoScrollRef.current[paneIndex] = isAtBottom;
-      setAutoScrollState((prev) => {
-        const next = prev.slice();
-        next[paneIndex] = isAtBottom;
-        return next;
-      });
-    }
-  }, []);
-
-  const jumpToBottom = useCallback(
-    (paneIndex: number, el: HTMLElement) => {
-      autoScrollRef.current[paneIndex] = true;
-      setAutoScrollState((prev) => {
-        if (prev[paneIndex]) return prev;
-        const next = prev.slice();
-        next[paneIndex] = true;
-        return next;
-      });
-      scrollToBottom(el);
-    },
-    [scrollToBottom],
-  );
-
-  const refreshSessions = useCallback(async () => {
+  const refreshConversations = useCallback(async () => {
     try {
-      const list = await listSessions();
-      setSessions(list ?? []);
+      const list = await listConversations();
+      setConversations(list ?? []);
     } catch (e) {
-      console.error('Failed to list sessions:', e);
+      console.error('Failed to list conversations:', e);
     }
   }, []);
 
   useEffect(() => {
-    refreshSessions();
-  }, [refreshSessions]);
-
-  const pollOutput = useCallback(
-    async (id: string) => {
-      try {
-        const session = sessions.find((s) => s.id === id);
-        if (session && session.type === 'multi_agent_shogun' && viewMode === 'grid') {
-          const outputs = await getAllOutputs(id);
-          setAllPaneOutputs(outputs);
-        } else {
-          const text = await getOutput(id, activePaneIndex > 0 ? activePaneIndex : undefined);
-          setOutput(text);
-          if (outputRef.current && autoScrollRef.current[SINGLE_VIEW_SCROLL_INDEX]) {
-            scrollToBottom(outputRef.current);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to get output:', e);
-      }
-    },
-    [sessions, viewMode, activePaneIndex, scrollToBottom],
-  );
+    refreshConversations();
+  }, [refreshConversations]);
 
   useEffect(() => {
-    if (activeId && polling) {
-      pollOutput(activeId);
-      intervalRef.current = window.setInterval(() => pollOutput(activeId), 2000);
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [activeId, polling, pollOutput]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-  // ResizeObserver for grid container - initializes and scales pane sizes
-  useEffect(() => {
-    const el = gridContainerRef.current;
-    if (!el || viewMode !== 'grid') return;
-
-    const observer = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      const padding = 0; // padding is outside contentRect
-
-      if (userResizedRef.current && prevContainerSize.current) {
-        // Scale proportionally from user's ratios
-        const scaleX = width / prevContainerSize.current.w;
-        const scaleY = height / prevContainerSize.current.h;
-        setShogunHeight((prev) => Math.max(40, prev * scaleY));
-        setColWidths((prev) => prev.map((w) => Math.max(60, w * scaleX)) as [number, number, number]);
-        setRowHeights((prev) => prev.map((h) => Math.max(40, h * scaleY)) as [number, number, number]);
-      } else {
-        // Initialize proportionally
-        const shogunH = Math.max(40, height * 0.15);
-        const agentsH = height - shogunH - HANDLE_SIZE - padding;
-        const rowH = (agentsH - 2 * HANDLE_SIZE) / 3;
-        const colW = (width - 2 * HANDLE_SIZE) / 3;
-        setShogunHeight(shogunH);
-        setRowHeights([rowH, rowH, rowH]);
-        setColWidths([colW, colW, colW]);
-      }
-      prevContainerSize.current = { w: width, h: height };
-    });
-
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [viewMode]);
-
-  // Auto-scroll grid panes when outputs update (only if auto-scroll enabled per pane)
-  useEffect(() => {
-    if (viewMode !== 'grid') return;
-    requestAnimationFrame(() => {
-      gridOutputRefs.current.forEach((el, i) => {
-        if (!el) return;
-        if (autoScrollRef.current[i]) {
-          scrollToBottom(el);
-        }
-      });
-    });
-  }, [allPaneOutputs, viewMode, scrollToBottom]);
-
-  // Attach scroll listeners to grid panes
-  useEffect(() => {
-    if (viewMode !== 'grid') return;
-    const cleanups: (() => void)[] = [];
-    gridOutputRefs.current.forEach((el, i) => {
-      if (!el) return;
-      const handler = () => handlePaneScroll(i, el);
-      el.addEventListener('scroll', handler, { passive: true });
-      cleanups.push(() => el.removeEventListener('scroll', handler));
-    });
-    return () => cleanups.forEach((fn) => fn());
-  }, [viewMode, allPaneOutputs, handlePaneScroll]);
-
-  // Attach scroll listener to single-view pane
-  useEffect(() => {
-    if (viewMode !== 'single') return;
-    const el = outputRef.current;
-    if (!el) return;
-    const handler = () => handlePaneScroll(SINGLE_VIEW_SCROLL_INDEX, el);
-    el.addEventListener('scroll', handler, { passive: true });
-    return () => el.removeEventListener('scroll', handler);
-  }, [viewMode, output, handlePaneScroll]);
-
-  // Reset auto-scroll flags when view mode, session, or pane tab changes
-  useEffect(() => {
-    autoScrollRef.current = Array(11).fill(true);
-    setAutoScrollState(Array(11).fill(true));
-  }, [viewMode, activeId, activePaneIndex]);
-
-  // Auto-resize tmux pane to match frontend output element dimensions.
-  //
-  // Runs for:
-  //   - claude_code sessions (single pane 0), or
-  //   - multi_agent_shogun sessions in single view showing the shogun
-  //     pane (activePaneIndex === 0). In that case only the shogun tmux
-  //     session is resized via the `paneIndex` query param, leaving the
-  //     multiagent grid layout untouched.
-  useEffect(() => {
-    if (viewMode !== 'single' || !autoResize || !activeId) return;
-    const session = sessions.find((s) => s.id === activeId);
-    if (!session) return;
-
-    const isClaudeCode = session.type === 'claude_code';
-    const isShogunSolo =
-      session.type === 'multi_agent_shogun' && activePaneIndex === 0;
-    if (!isClaudeCode && !isShogunSolo) return;
-
-    const el = outputRef.current;
-    if (!el) return;
-
-    const currentActiveId = activeId;
-    // For multi_agent_shogun the shogun pane is pane 0. Passing it as
-    // paneIndex tells the backend to resize only the shogun tmux session.
-    const paneIndex = isShogunSolo ? 0 : undefined;
-
-    const observer = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      const { charWidth, lineHeight } = measureCharSize();
-
-      if (charWidth === 0 || lineHeight === 0) return;
-
-      const cols = Math.max(40, Math.floor(width / charWidth));
-      const rows = Math.max(10, Math.floor(height / lineHeight));
-
-      // Skip if unchanged
-      if (
-        lastResizeRef.current &&
-        lastResizeRef.current.cols === cols &&
-        lastResizeRef.current.rows === rows
-      ) {
-        return;
-      }
-
-      if (resizeTimeoutRef.current) {
-        clearTimeout(resizeTimeoutRef.current);
-      }
-
-      resizeTimeoutRef.current = window.setTimeout(async () => {
-        lastResizeRef.current = { cols, rows };
-        setTmuxWidth(cols);
-        setTmuxHeight(rows);
-        try {
-          await resizeSession(currentActiveId, cols, rows, paneIndex != null ? { paneIndex } : undefined);
-        } catch (e) {
-          console.error('Auto-resize failed:', e);
-        }
-      }, 500);
-    });
-
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-      if (resizeTimeoutRef.current) {
-        clearTimeout(resizeTimeoutRef.current);
-        resizeTimeoutRef.current = null;
-      }
-    };
-  }, [viewMode, autoResize, activeId, sessions, activePaneIndex]);
-
-  // Auto-resize the multiagent tmux window to match the 3x3 grid pane sizes
-  // so each agent pane's terminal content fills its visible cell width
-  // instead of staying at the narrow default set by the startup script.
-  useEffect(() => {
-    if (viewMode !== 'grid' || !autoResize || !activeId) return;
-    const session = sessions.find((s) => s.id === activeId);
-    if (!session || session.type !== 'multi_agent_shogun') return;
-
-    // Wait until ResizeObserver has initialized the pane sizes.
-    if (colWidths[0] <= 0 || rowHeights[0] <= 0) return;
-
-    const { charWidth, lineHeight } = measureCharSize(
-      GRID_OUTPUT_FONT_SIZE,
-      GRID_OUTPUT_LINE_HEIGHT,
-    );
-    if (charWidth === 0 || lineHeight === 0) return;
-
-    // Each tmux pane column / row gets a size proportional to the matching
-    // frontend cell, so unequal drag-resized columns are reflected in the
-    // multiagent tmux layout instead of all 3 columns staying equal.
-    // The overall window size is the sum of the per-column / per-row sizes.
-    //
-    // Subtract the per-cell visual overhead (cell border, output padding,
-    // scrollbar, header) from each pane's pixel size before converting to
-    // tmux cells — otherwise the right edge of every tmux pane's content
-    // is cropped behind the scrollbar / padding on the frontend.
-    const paneCols = colWidths.map((w) =>
-      Math.max(20, Math.floor((w - GRID_PANE_OVERHEAD_X) / charWidth)),
-    ) as [number, number, number];
-    const paneRows = rowHeights.map((h) =>
-      Math.max(8, Math.floor((h - GRID_PANE_OVERHEAD_Y) / lineHeight)),
-    ) as [number, number, number];
-
-    const cols = Math.max(40, paneCols[0] + paneCols[1] + paneCols[2]);
-    const rows = Math.max(10, paneRows[0] + paneRows[1] + paneRows[2]);
-
-    const sig = `${paneCols.join(',')}|${paneRows.join(',')}`;
-    if (lastGridResizeSigRef.current === sig) {
-      return;
-    }
-
-    if (resizeTimeoutRef.current) {
-      clearTimeout(resizeTimeoutRef.current);
-    }
-
-    const currentActiveId = activeId;
-    resizeTimeoutRef.current = window.setTimeout(async () => {
-      lastGridResizeSigRef.current = sig;
-      lastResizeRef.current = { cols, rows };
-      setTmuxWidth(cols);
-      setTmuxHeight(rows);
-      try {
-        // paneIndex 1 (any multiagent pane) targets only the multiagent
-        // tmux session; shogun is managed by the single-view effect when
-        // the user switches to it.
-        await resizeSession(currentActiveId, cols, rows, {
-          paneIndex: 1,
-          colWidths: paneCols,
-          rowHeights: paneRows,
-        });
-      } catch (e) {
-        console.error('Grid auto-resize failed:', e);
-      }
-    }, 500);
-
-    return () => {
-      if (resizeTimeoutRef.current) {
-        clearTimeout(resizeTimeoutRef.current);
-        resizeTimeoutRef.current = null;
-      }
-    };
-  }, [viewMode, autoResize, activeId, sessions, colWidths, rowHeights]);
-
-  // Drag handler for resize handles
-  const handleDragStart = useCallback(
-    (type: 'shogun' | 'col' | 'row', index: number, startEvent: React.MouseEvent) => {
-      startEvent.preventDefault();
-      startEvent.stopPropagation();
-
-      const startPos = type === 'col' ? startEvent.clientX : startEvent.clientY;
-      const target = startEvent.currentTarget as HTMLElement;
-      target.classList.add('active');
-
-      const startShogunHeight = shogunHeight;
-      const startColWidths = [...colWidths] as [number, number, number];
-      const startRowHeights = [...rowHeights] as [number, number, number];
-
-      const onMouseMove = (e: MouseEvent) => {
-        const delta = (type === 'col' ? e.clientX : e.clientY) - startPos;
-
-        if (type === 'shogun') {
-          const newShogun = Math.max(40, startShogunHeight + delta);
-          const newFirstRow = Math.max(40, startRowHeights[0] - delta);
-          setShogunHeight(newShogun);
-          setRowHeights((prev) => [newFirstRow, prev[1], prev[2]]);
-        } else if (type === 'col') {
-          const newLeft = Math.max(60, startColWidths[index] + delta);
-          const newRight = Math.max(60, startColWidths[index + 1] - delta);
-          setColWidths((prev) => {
-            const next = [...prev] as [number, number, number];
-            next[index] = newLeft;
-            next[index + 1] = newRight;
-            return next;
-          });
-        } else if (type === 'row') {
-          const newTop = Math.max(40, startRowHeights[index] + delta);
-          const newBottom = Math.max(40, startRowHeights[index + 1] - delta);
-          setRowHeights((prev) => {
-            const next = [...prev] as [number, number, number];
-            next[index] = newTop;
-            next[index + 1] = newBottom;
-            return next;
-          });
-        }
-
-        userResizedRef.current = true;
-      };
-
-      const onMouseUp = () => {
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        target.classList.remove('active');
-      };
-
-      document.body.style.cursor = type === 'col' ? 'col-resize' : 'row-resize';
-      document.body.style.userSelect = 'none';
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-    },
-    [shogunHeight, colWidths, rowHeights],
-  );
-
-  const doSendKeys = async (keys: string[]) => {
-    if (!activeId) return;
+  const handleSelectConversation = useCallback(async (id: string) => {
+    setSelectedId(id);
+    setMessages([]);
     try {
-      await sendKeys(activeId, keys, activePaneIndex > 0 ? activePaneIndex : undefined);
-      setCommandHistory((prev) => [...prev, keys.join(' ')]);
+      const detail = await getConversation(id);
+      setMessages(detail.messages ?? []);
     } catch (e) {
-      alert(`Failed to send keys: ${e}`);
+      console.error('Failed to load conversation:', e);
     }
-  };
+  }, []);
 
-  const handleCreate = async () => {
+  const handleNewConversation = async () => {
     try {
-      setCreating(true);
-      const opts: Parameters<typeof createSession>[0] = { type: newSessionType };
-      if (newSessionType === 'claude_code') {
-        opts.width = tmuxWidth;
-        opts.height = tmuxHeight;
-      }
-      const session = await createSession(opts);
-      await refreshSessions();
-      setActiveId(session.id);
-      setOutput('');
-      setAllPaneOutputs({});
-      setPolling(true);
-      setCommandHistory([]);
-      setActivePaneIndex(0);
-      if (session.type === 'multi_agent_shogun') {
-        setViewMode('grid');
-      } else {
-        setViewMode('single');
-      }
+      const conv = await createConversation();
+      await refreshConversations();
+      await handleSelectConversation(conv.id);
     } catch (e) {
-      alert(`Failed to create session: ${e}`);
-    } finally {
-      setCreating(false);
+      console.error('Failed to create conversation:', e);
     }
   };
 
-  const handleAdopt = async (d: DiscoveredSession) => {
+  const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     try {
-      setCreating(true);
-      const opts: Parameters<typeof createSession>[0] = { type: d.type };
-      if (d.type === 'claude_code') {
-        opts.tmux_name = d.tmux_names[0];
-        opts.width = tmuxWidth;
-        opts.height = tmuxHeight;
+      await deleteConversation(id);
+      if (selectedId === id) {
+        setSelectedId(null);
+        setMessages([]);
       }
-      const session = await createSession(opts);
-      await refreshSessions();
-      setActiveId(session.id);
-      setOutput('');
-      setAllPaneOutputs({});
-      setPolling(true);
-      setCommandHistory([]);
-      setActivePaneIndex(0);
-      setShowDiscover(false);
-      if (session.type === 'multi_agent_shogun') {
-        setViewMode('grid');
-      } else {
-        setViewMode('single');
-      }
-    } catch (e) {
-      alert(`Failed to adopt session: ${e}`);
-    } finally {
-      setCreating(false);
+      await refreshConversations();
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
     }
   };
 
-  const handleDiscover = async () => {
-    try {
-      const list = await discoverSessions();
-      setDiscovered(list);
-      setShowDiscover(true);
-    } catch (e) {
-      alert(`Failed to discover sessions: ${e}`);
-    }
-  };
-
-  const handleResize = async () => {
-    if (!activeId) return;
-    try {
-      await resizeSession(activeId, tmuxWidth, tmuxHeight);
-    } catch (e) {
-      alert(`Failed to resize session: ${e}`);
-    }
-  };
-
-  const handleSelect = (id: string) => {
-    const session = sessions.find((s) => s.id === id);
-    setActiveId(id);
-    setOutput('');
-    setAllPaneOutputs({});
-    setPolling(true);
-    setActivePaneIndex(0);
-    if (session?.type === 'multi_agent_shogun') {
-      setViewMode('grid');
-    } else {
-      setViewMode('single');
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteSession(id);
-      if (activeId === id) {
-        setActiveId(null);
-        setOutput('');
-        setAllPaneOutputs({});
-        setPolling(false);
-      }
-      await refreshSessions();
-    } catch (e) {
-      alert(`Failed to delete session: ${e}`);
-    }
-  };
-
-  const handleSendText = async () => {
-    if (!activeId || !input.trim()) return;
-    const lines = input.split('\n');
-    const keys: string[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      if (i > 0) keys.push('Enter');
-      keys.push(lines[i]);
-    }
-    keys.push('Enter');
-    await doSendKeys(keys);
+  const handleSend = async () => {
+    if (!input.trim() || !selectedId || sending) return;
+    const content = input.trim();
     setInput('');
+    setSending(true);
+
+    // ユーザーメッセージを即座に表示
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      conversation_id: selectedId,
+      role: 'user' as Message['role'],
+      content,
+      created_at: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, userMsg]);
+
+    // アシスタントの空メッセージを追加（ストリーミング先）
+    const assistantMsg: Message = {
+      id: crypto.randomUUID(),
+      conversation_id: selectedId,
+      role: 'assistant' as Message['role'],
+      content: '',
+      created_at: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, assistantMsg]);
+
+    try {
+      await sendMessage(selectedId, content, (event) => {
+        if (event.type === 'text') {
+          setMessages(prev => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.role === 'assistant') {
+              copy[copy.length - 1] = { ...last, content: last.content + event.content };
+            }
+            return copy;
+          });
+        }
+      });
+    } catch (err) {
+      console.error('Failed to send message:', err);
+    } finally {
+      setSending(false);
+      await refreshConversations();
+    }
   };
 
-  const handleSendEnter = async () => {
-    if (!activeId) return;
-    await doSendKeys(['Enter']);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      handleSendText();
-    } else if (e.key === 'Enter' && e.shiftKey) {
-      e.preventDefault();
-      handleSendEnter();
+      handleSend();
     }
   };
 
-  const toggleModifier = (mod: Modifier) => {
-    setActiveModifiers((prev) => {
-      const next = new Set(prev);
-      if (next.has(mod)) {
-        next.delete(mod);
-      } else {
-        next.add(mod);
-      }
-      return next;
-    });
-  };
-
-  const handleSpecialKey = async (tmuxKeyName: string) => {
-    const key = buildTmuxKey(tmuxKeyName, activeModifiers);
-    await doSendKeys([key]);
-    setActiveModifiers(new Set());
-  };
-
-  const handleQuickCombo = async (keys: readonly string[]) => {
-    await doSendKeys([...keys]);
-    setActiveModifiers(new Set());
-  };
-
-  const handleGridPaneClick = (paneIndex: number) => {
-    setActivePaneIndex(paneIndex);
-    setViewMode('single');
-    setOutput('');
-  };
-
-  const sessionTypeLabel = (type: SessionType) =>
-    type === 'claude_code' ? 'CC' : 'Shogun';
+  const getConversationTitle = (conv: Conversation) =>
+    conv.title && conv.title.trim() ? conv.title : '新しい会話';
 
   return (
     <div className="app">
-      <header className="header">
-        <h1>cc-tunnel</h1>
-      </header>
-
-      <div className="layout">
-        <aside className="sidebar">
-          {/* Session type selector */}
-          <div className="type-selector">
-            <label className="type-option">
-              <input
-                type="radio"
-                name="sessionType"
-                value="claude_code"
-                checked={newSessionType === 'claude_code'}
-                onChange={() => setNewSessionType('claude_code')}
-              />
-              Claude Code
-            </label>
-            <label className="type-option">
-              <input
-                type="radio"
-                name="sessionType"
-                value="multi_agent_shogun"
-                checked={newSessionType === 'multi_agent_shogun'}
-                onChange={() => setNewSessionType('multi_agent_shogun')}
-              />
-              Multi-Agent Shogun
-            </label>
-          </div>
-
-          {newSessionType === 'claude_code' && (
-            <div className="size-controls">
-              <label className="auto-resize-toggle">
-                <input
-                  type="checkbox"
-                  checked={autoResize}
-                  onChange={(e) => setAutoResize(e.target.checked)}
-                />
-                Auto-resize
-              </label>
-              <label className="size-label">
-                Width
-                <input
-                  type="number"
-                  className="size-input"
-                  value={tmuxWidth}
-                  onChange={(e) => setTmuxWidth(Number(e.target.value))}
-                  min={40}
-                  max={500}
-                  disabled={autoResize}
-                />
-              </label>
-              <label className="size-label">
-                Height
-                <input
-                  type="number"
-                  className="size-input"
-                  value={tmuxHeight}
-                  onChange={(e) => setTmuxHeight(Number(e.target.value))}
-                  min={10}
-                  max={200}
-                  disabled={autoResize}
-                />
-              </label>
-            </div>
-          )}
-
-          <div className="sidebar-buttons">
-            <button className="btn btn-primary" onClick={handleCreate} disabled={creating}>
-              {creating ? 'Starting...' : '+ New'}
-            </button>
-            <button className="btn" onClick={handleDiscover} disabled={creating}>
-              Discover
-            </button>
-            {activeId && activeSession?.type === 'claude_code' && !autoResize && (
-              <button className="btn" onClick={handleResize}>
-                Resize
-              </button>
-            )}
-          </div>
-
-          {/* Discover panel */}
-          {showDiscover && (
-            <div className="discover-panel">
-              <div className="discover-header">
-                <span className="discover-title">Discovered Sessions</span>
-                <button className="btn btn-sm" onClick={() => setShowDiscover(false)}>
-                  Close
-                </button>
-              </div>
-              {discovered.length === 0 ? (
-                <div className="discover-empty">No unmanaged sessions found</div>
-              ) : (
-                <ul className="discover-list">
-                  {discovered.map((d, i) => (
-                    <li key={i} className="discover-item">
-                      <span className="discover-info">
-                        <span className={`type-badge ${d.type}`}>{sessionTypeLabel(d.type)}</span>
-                        {d.tmux_names.join(', ')}
-                      </span>
-                      <button className="btn btn-sm btn-primary" onClick={() => handleAdopt(d)}>
-                        Attach
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          <ul className="session-list">
-            {sessions.map((s) => (
-              <li
-                key={s.id}
-                className={`session-item ${s.id === activeId ? 'active' : ''}`}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <h1 className="app-title">cc-tunnel</h1>
+          <button className="btn btn-primary new-conv-btn" onClick={handleNewConversation}>
+            + 新しい会話
+          </button>
+        </div>
+        <ul className="conversation-list">
+          {conversations.map(conv => (
+            <li
+              key={conv.id}
+              className={`conversation-item ${conv.id === selectedId ? 'active' : ''}`}
+              onClick={() => handleSelectConversation(conv.id)}
+            >
+              <span className="conversation-title">{getConversationTitle(conv)}</span>
+              <button
+                className="btn btn-danger btn-sm delete-btn"
+                onClick={(e) => handleDeleteConversation(conv.id, e)}
               >
-                <span className="session-name" onClick={() => handleSelect(s.id)}>
-                  <span className={`type-badge ${s.type}`}>{sessionTypeLabel(s.type)}</span>
-                  {s.tmux_name}
-                </span>
-                <button
-                  className="btn btn-danger btn-sm"
-                  onClick={() => handleDelete(s.id)}
+                x
+              </button>
+            </li>
+          ))}
+        </ul>
+      </aside>
+
+      <main className="main">
+        {selectedId ? (
+          <div className="chat-container">
+            <div className="messages">
+              {messages.map(msg => (
+                <div
+                  key={msg.id}
+                  className={`message message-${msg.role}`}
                 >
-                  x
-                </button>
-              </li>
-            ))}
-          </ul>
-        </aside>
-
-        <main className="main">
-          {creating && (
-            <div className="loading-overlay">
-              <div className="loading-content">
-                <div className="spinner" />
-                <div className="loading-text">
-                  {newSessionType === 'multi_agent_shogun'
-                    ? 'Starting Multi-Agent Shogun...'
-                    : 'Creating session...'}
+                  <div className="message-role">{msg.role === 'user' ? 'You' : 'Assistant'}</div>
+                  <div className="message-content">{msg.content}</div>
                 </div>
-                <div className="loading-sub">
-                  {newSessionType === 'multi_agent_shogun'
-                    ? 'Running startup script and waiting for tmux sessions'
-                    : 'Setting up tmux session'}
-                </div>
-              </div>
+              ))}
+              <div ref={messagesEndRef} />
             </div>
-          )}
-          {!creating && activeId && activeSession ? (
-            <>
-              <div className="toolbar">
-                <span className="session-label">
-                  {activeSession.tmux_name}
-                  {isMultiAgent && (
-                    <span className="pane-label">
-                      {' '}/ {getPaneName(activePaneIndex, activeSession.type)}
-                    </span>
-                  )}
-                </span>
 
-                {isMultiAgent && (
-                  <div className="view-toggle">
-                    <button
-                      className={`btn btn-sm ${viewMode === 'single' ? 'btn-active' : ''}`}
-                      onClick={() => setViewMode('single')}
-                    >
-                      Single
-                    </button>
-                    <button
-                      className={`btn btn-sm ${viewMode === 'grid' ? 'btn-active' : ''}`}
-                      onClick={() => setViewMode('grid')}
-                    >
-                      Grid
-                    </button>
-                  </div>
-                )}
-
-                <label className="polling-toggle">
-                  <input
-                    type="checkbox"
-                    checked={polling}
-                    onChange={(e) => setPolling(e.target.checked)}
-                  />
-                  Auto-refresh
-                </label>
-                <button className="btn btn-sm" onClick={() => pollOutput(activeId)}>
-                  Refresh
-                </button>
-              </div>
-
-              {/* Pane selector tabs for multi-agent in single view */}
-              {isMultiAgent && viewMode === 'single' && (
-                <div className="pane-tabs">
-                  {Array.from({ length: activeSession.pane_count }, (_, i) => (
-                    <button
-                      key={i}
-                      className={`pane-tab ${activePaneIndex === i ? 'active' : ''}`}
-                      onClick={() => {
-                        setActivePaneIndex(i);
-                        setOutput('');
-                      }}
-                    >
-                      {getPaneName(i, activeSession.type)}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Single pane view */}
-              {viewMode === 'single' && (
-                <div className="output-wrapper">
-                  <pre className="output" ref={outputRef}>
-                    {output ? parsedOutput : 'Waiting for output...'}
-                  </pre>
-                  {!autoScrollState[SINGLE_VIEW_SCROLL_INDEX] && (
-                    <button
-                      className="see-latest-btn"
-                      onClick={() => {
-                        if (outputRef.current) {
-                          jumpToBottom(SINGLE_VIEW_SCROLL_INDEX, outputRef.current);
-                        }
-                      }}
-                    >
-                      See latest log ↓
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Grid view for multi-agent */}
-              {viewMode === 'grid' && isMultiAgent && (
-                <div className="grid-container" ref={gridContainerRef}>
-                  {/* Shogun pane banner */}
-                  <div
-                    className="grid-shogun"
-                    style={{ height: shogunHeight }}
-                    onClick={() => handleGridPaneClick(0)}
-                  >
-                    <div className="grid-pane-header">Shogun</div>
-                    <pre
-                      className="grid-pane-output"
-                      ref={(el) => { gridOutputRefs.current[0] = el; }}
-                    >
-                      {allPaneOutputs['0'] ? parsedPaneOutputs['0'] : 'Waiting...'}
-                    </pre>
-                    {!autoScrollState[0] && (
-                      <button
-                        className="see-latest-btn see-latest-btn-grid"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const el = gridOutputRefs.current[0];
-                          if (el) jumpToBottom(0, el);
-                        }}
-                      >
-                        See latest ↓
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Resize handle: Shogun <-> Agents */}
-                  <div
-                    className="resize-handle-h"
-                    onMouseDown={(e) => handleDragStart('shogun', 0, e)}
-                  />
-
-                  {/* 3x3 grid of agent panes */}
-                  <div
-                    className="grid-agents"
-                    style={{
-                      gridTemplateColumns: `${colWidths[0]}px ${HANDLE_SIZE}px ${colWidths[1]}px ${HANDLE_SIZE}px ${colWidths[2]}px`,
-                      gridTemplateRows: `${rowHeights[0]}px ${HANDLE_SIZE}px ${rowHeights[1]}px ${HANDLE_SIZE}px ${rowHeights[2]}px`,
-                    }}
-                  >
-                    {/* Agent panes placed explicitly */}
-                    {Array.from({ length: 9 }, (_, i) => {
-                      const col = Math.floor(i / 3);
-                      const row = i % 3;
-                      const paneIndex = i + 1;
-                      return (
-                        <div
-                          key={paneIndex}
-                          className="grid-pane"
-                          style={{
-                            gridRow: row * 2 + 1,
-                            gridColumn: col * 2 + 1,
-                          }}
-                          onClick={() => handleGridPaneClick(paneIndex)}
-                        >
-                          <div className="grid-pane-header">Agent {paneIndex}</div>
-                          <pre
-                            className="grid-pane-output"
-                            ref={(el) => { gridOutputRefs.current[paneIndex] = el; }}
-                          >
-                            {allPaneOutputs[String(paneIndex)]
-                              ? parsedPaneOutputs[String(paneIndex)]
-                              : 'Waiting...'}
-                          </pre>
-                          {!autoScrollState[paneIndex] && (
-                            <button
-                              className="see-latest-btn see-latest-btn-grid"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const el = gridOutputRefs.current[paneIndex];
-                                if (el) jumpToBottom(paneIndex, el);
-                              }}
-                            >
-                              See latest ↓
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Column resize handles */}
-                    {[0, 1].map((ci) => (
-                      <div
-                        key={`col-handle-${ci}`}
-                        className="resize-handle-v"
-                        style={{ gridColumn: (ci + 1) * 2, gridRow: '1 / -1' }}
-                        onMouseDown={(e) => handleDragStart('col', ci, e)}
-                      />
-                    ))}
-
-                    {/* Row resize handles */}
-                    {[0, 1].map((ri) => (
-                      <div
-                        key={`row-handle-${ri}`}
-                        className="resize-handle-row"
-                        style={{ gridRow: (ri + 1) * 2, gridColumn: '1 / -1' }}
-                        onMouseDown={(e) => handleDragStart('row', ri, e)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="keys-panel">
-                <div className="keys-row">
-                  <span className="keys-label">Modifiers</span>
-                  {MODIFIER_KEYS.map((mod) => (
-                    <button
-                      key={mod}
-                      className={`key-btn modifier ${activeModifiers.has(mod) ? 'active' : ''}`}
-                      onClick={() => toggleModifier(mod)}
-                    >
-                      {mod}
-                    </button>
-                  ))}
-                  {activeModifiers.size > 0 && (
-                    <span className="modifier-indicator">
-                      {[...activeModifiers].join('+')}+
-                    </span>
-                  )}
-                </div>
-
-                <div className="keys-row">
-                  <span className="keys-label">Keys</span>
-                  {SPECIAL_KEYS.map((k) => (
-                    <button
-                      key={k.tmux}
-                      className="key-btn"
-                      onClick={() => handleSpecialKey(k.tmux)}
-                    >
-                      {k.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="keys-row">
-                  <span className="keys-label">Quick</span>
-                  {QUICK_COMBOS.map((c) => (
-                    <button
-                      key={c.label}
-                      className="key-btn combo"
-                      onClick={() => handleQuickCombo(c.keys)}
-                    >
-                      {c.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="input-bar">
-                <textarea
-                  className="input-field"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  rows={3}
-                  placeholder={
-                    isMultiAgent
-                      ? `Send to ${getPaneName(activePaneIndex, activeSession.type)}... (Ctrl+Enter to send)`
-                      : 'Type text... (Enter for newline, Ctrl+Enter to send)'
-                  }
-                />
-                <div className="input-buttons">
-                  <button className="btn btn-primary" onClick={handleSendText}>
-                    Send (Ctrl+Enter)
-                  </button>
-                  <button className="btn btn-secondary" onClick={handleSendEnter}>
-                    Enter (Shift+Enter)
-                  </button>
-                </div>
-              </div>
-
-              {commandHistory.length > 0 && (
-                <div className="history-panel">
-                  <div className="history-header">
-                    <span className="history-title">Command History</span>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => setCommandHistory([])}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  <ul className="history-list">
-                    {[...commandHistory].reverse().map((cmd, i) => (
-                      <li key={commandHistory.length - 1 - i} className="history-item">
-                        <span className="history-index">{commandHistory.length - i}</span>
-                        <code className="history-cmd">{cmd}</code>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
-          ) : !creating ? (
-            <div className="empty-state">
-              Select a session or create a new one.
+            <div className="input-bar">
+              <textarea
+                className="input-field"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={3}
+                placeholder="メッセージを入力... (Ctrl+Enter で送信)"
+                disabled={sending}
+              />
+              <button
+                className="btn btn-primary send-btn"
+                onClick={handleSend}
+                disabled={sending || !input.trim()}
+              >
+                {sending ? '送信中...' : '送信'}
+              </button>
             </div>
-          ) : null}
-        </main>
-      </div>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <p>左のサイドバーから会話を選択するか、「+ 新しい会話」を押して開始してください。</p>
+          </div>
+        )}
+      </main>
     </div>
   );
 }

@@ -4,70 +4,43 @@
  */
 
 export interface paths {
-    "/sessions": {
+    "/conversations": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List all sessions */
-        get: operations["listSessions"];
+        /** List all conversations */
+        get: operations["listConversations"];
         put?: never;
-        /**
-         * Create a new session
-         * @description Creates a new session. For claude_code type, creates a new tmux session and starts Claude Code CLI.
-         *     For multi_agent_shogun type, starts the shogun startup script or adopts existing sessions.
-         */
-        post: operations["createSession"];
+        /** Create a new conversation */
+        post: operations["createConversation"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/sessions/discover": {
+    "/conversations/{conversationId}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Discover existing unmanaged tmux sessions
-         * @description Lists tmux sessions that exist but are not currently managed.
-         *     Returns claude-* sessions and shogun/multiagent session pairs.
-         */
-        get: operations["discoverSessions"];
+        /** Get conversation with message history */
+        get: operations["getConversation"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a conversation */
+        delete: operations["deleteConversation"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/sessions/{sessionId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Delete a session
-         * @description Kills the tmux session(s) and removes it from management.
-         */
-        delete: operations["deleteSession"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sessions/{sessionId}/resize": {
+    "/conversations/{conversationId}/messages": {
         parameters: {
             query?: never;
             header?: never;
@@ -77,87 +50,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Resize the tmux window
-         * @description Resizes the tmux window of a running session.
-         *
-         *     For `multi_agent_shogun` sessions:
-         *     - If `paneIndex` is not supplied (or omitted) the shogun and
-         *       multiagent tmux sessions are both resized, and the optional
-         *       `col_widths` / `row_heights` are applied to the multiagent grid.
-         *     - If `paneIndex` is `0` only the shogun tmux session is resized.
-         *     - If `paneIndex` is `1`–`9` only the multiagent tmux session is
-         *       resized; `col_widths` / `row_heights` still apply.
+         * Send a message and stream the assistant response
+         * @description Sends a user message to the conversation and streams the assistant
+         *     response as Server-Sent Events (SSE).
+         *     Response Content-Type: text/event-stream
+         *     Each SSE event has format: data: <json>\n\n
+         *     Event types: {"type":"text","content":"..."} | {"type":"done","session_id":"...","cost_usd":0.01} | {"type":"error","message":"..."}
          */
-        post: operations["resizeSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sessions/{sessionId}/input": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Send input to a session
-         * @description Sends keystrokes to the tmux session via send-keys.
-         *     Each element in the `keys` array is passed as a separate argument to `tmux send-keys`.
-         *     Plain text is sent as literal characters. Special key names are interpreted by tmux.
-         *
-         *     Supported special keys include: Enter, Escape, Space, Tab, BSpace (Backspace),
-         *     Up, Down, Left, Right, Home, End, PageUp (PgUp), PageDown (PgDn),
-         *     F1-F12, IC (Insert), DC (Delete).
-         *
-         *     Modifier prefixes: C- (Ctrl), M- (Alt/Meta), S- (Shift).
-         *     Examples: "C-c" (Ctrl+C), "C-a" (Ctrl+A), "M-x" (Alt+X), "C-S-Up" (Ctrl+Shift+Up).
-         */
-        post: operations["sendInput"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sessions/{sessionId}/output": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get session output
-         * @description Captures the current tmux pane content.
-         */
-        get: operations["getOutput"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sessions/{sessionId}/outputs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get all pane outputs
-         * @description Captures the content of all panes in the session.
-         */
-        get: operations["getAllOutputs"];
-        put?: never;
-        post?: never;
+        post: operations["sendMessage"];
         delete?: never;
         options?: never;
         head?: never;
@@ -168,90 +68,44 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @enum {string} */
-        SessionType: "claude_code" | "multi_agent_shogun";
-        CreateSessionRequest: {
-            /** @default claude_code */
-            type: components["schemas"]["SessionType"];
-            /** @description Existing tmux session name to adopt (for claude_code type) */
-            tmux_name?: string;
-            /**
-             * @description tmux window width in columns
-             * @default 200
-             * @example 200
-             */
-            width: number;
-            /**
-             * @description tmux window height in rows
-             * @default 50
-             * @example 50
-             */
-            height: number;
+        CreateConversationRequest: {
+            /** @default  */
+            title: string;
+            /** @default claude-sonnet-4-6 */
+            model: string;
+            system_prompt?: string;
         };
-        Session: {
-            /** @example a1b2c3d4e5f6g7h8 */
+        Conversation: {
+            /** Format: uuid */
             id: string;
-            type: components["schemas"]["SessionType"];
-            /** @example claude-a1b2c3d4e5f6g7h8 */
-            tmux_name: string;
-            /**
-             * @description Number of panes (1 for claude_code, 10 for multi_agent_shogun)
-             * @example 1
-             */
-            pane_count: number;
+            title: string;
+            model: string;
+            system_prompt?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        Message: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            conversation_id: string;
+            /** @enum {string} */
+            role: "user" | "assistant" | "system";
+            content: string;
+            metadata?: {
+                [key: string]: unknown;
+            };
             /** Format: date-time */
             created_at: string;
         };
-        DiscoveredSession: {
-            type: components["schemas"]["SessionType"];
-            /** @description Tmux session names (1 for claude_code, 2 for multi_agent_shogun) */
-            tmux_names: string[];
+        ConversationDetail: components["schemas"]["Conversation"] & {
+            messages: components["schemas"]["Message"][];
         };
-        ResizeRequest: {
-            /**
-             * @description tmux window width in columns
-             * @example 200
-             */
-            width: number;
-            /**
-             * @description tmux window height in rows
-             * @example 50
-             */
-            height: number;
-            /**
-             * @description Per-column pane widths in cells. Only used for `multi_agent_shogun`
-             *     sessions and must contain exactly 3 entries corresponding to the
-             *     three columns of the 3x3 multiagent grid (left to right).
-             */
-            col_widths?: number[];
-            /**
-             * @description Per-row pane heights in cells. Only used for `multi_agent_shogun`
-             *     sessions and must contain exactly 3 entries corresponding to the
-             *     three rows of the 3x3 multiagent grid (top to bottom).
-             */
-            row_heights?: number[];
-        };
-        SendInputRequest: {
-            /**
-             * @description Array of keys to send to the tmux session.
-             *     Each element is passed as a separate argument to `tmux send-keys`.
-             *     Plain text strings are sent as literal input.
-             *     Special key names (Enter, Escape, C-c, etc.) are interpreted by tmux.
-             * @example [
-             *       "hello",
-             *       "Enter"
-             *     ]
-             */
-            keys: string[];
-        };
-        OutputResponse: {
-            output: string;
-        };
-        AllOutputsResponse: {
-            /** @description Map of pane index (as string key) to output content */
-            panes: {
-                [key: string]: string;
-            };
+        SendMessageRequest: {
+            /** @description User message content */
+            content: string;
         };
         StatusResponse: {
             /** @example ok */
@@ -263,12 +117,7 @@ export interface components {
     };
     responses: never;
     parameters: {
-        SessionId: string;
-        /**
-         * @description Pane index to target. For claude_code sessions, only 0 is valid.
-         *     For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
-         */
-        PaneIndex: number;
+        ConversationId: string;
     };
     requestBodies: never;
     headers: never;
@@ -276,7 +125,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    listSessions: {
+    listConversations: {
         parameters: {
             query?: never;
             header?: never;
@@ -285,18 +134,18 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description List of sessions */
+            /** @description List of conversations */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Session"][];
+                    "application/json": components["schemas"]["Conversation"][];
                 };
             };
         };
     };
-    createSession: {
+    createConversation: {
         parameters: {
             query?: never;
             header?: never;
@@ -305,17 +154,17 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["CreateSessionRequest"];
+                "application/json": components["schemas"]["CreateConversationRequest"];
             };
         };
         responses: {
-            /** @description Session created */
+            /** @description Conversation created */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Session"];
+                    "application/json": components["schemas"]["Conversation"];
                 };
             };
             /** @description Internal server error */
@@ -329,56 +178,27 @@ export interface operations {
             };
         };
     };
-    discoverSessions: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description List of discoverable sessions */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DiscoveredSession"][];
-                };
-            };
-            /** @description Internal server error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    deleteSession: {
+    getConversation: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                sessionId: components["parameters"]["SessionId"];
+                conversationId: components["parameters"]["ConversationId"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Session deleted */
+            /** @description Conversation with messages */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StatusResponse"];
+                    "application/json": components["schemas"]["ConversationDetail"];
                 };
             };
-            /** @description Session not found */
+            /** @description Not found */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -389,28 +209,18 @@ export interface operations {
             };
         };
     };
-    resizeSession: {
+    deleteConversation: {
         parameters: {
-            query?: {
-                /**
-                 * @description Pane index to target. For claude_code sessions, only 0 is valid.
-                 *     For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
-                 */
-                paneIndex?: components["parameters"]["PaneIndex"];
-            };
+            query?: never;
             header?: never;
             path: {
-                sessionId: components["parameters"]["SessionId"];
+                conversationId: components["parameters"]["ConversationId"];
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResizeRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Session resized */
+            /** @description Deleted */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -419,7 +229,42 @@ export interface operations {
                     "application/json": components["schemas"]["StatusResponse"];
                 };
             };
-            /** @description Invalid request body */
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sendMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description SSE stream of assistant response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Bad request */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -428,125 +273,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Session not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    sendInput: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Pane index to target. For claude_code sessions, only 0 is valid.
-                 *     For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
-                 */
-                paneIndex?: components["parameters"]["PaneIndex"];
-            };
-            header?: never;
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SendInputRequest"];
-            };
-        };
-        responses: {
-            /** @description Input sent */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StatusResponse"];
-                };
-            };
-            /** @description Invalid request body */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Session not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    getOutput: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Pane index to target. For claude_code sessions, only 0 is valid.
-                 *     For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
-                 */
-                paneIndex?: components["parameters"]["PaneIndex"];
-            };
-            header?: never;
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Pane output */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OutputResponse"];
-                };
-            };
-            /** @description Session not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    getAllOutputs: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description All pane outputs */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AllOutputsResponse"];
-                };
-            };
-            /** @description Session not found */
+            /** @description Conversation not found */
             404: {
                 headers: {
                     [name: string]: unknown;

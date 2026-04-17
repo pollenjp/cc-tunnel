@@ -1,7 +1,0 @@
-# Configuration for oapi-codegen (Server B client for cc-tmux-tunnel)
-# Usage: oapi-codegen -config apps/openapi/internal-oapi-codegen-client.yaml apps/openapi/internal-openapi.yaml
-# Or via go generate: go generate ./apps/cc-tunnel/internal/tmuxclient/
-package: tmuxclient
-generate:
-  client: true
-  models: true

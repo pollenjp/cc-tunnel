@@ -1,119 +1,141 @@
 # cc-tunnel
 
-tmux 上で Claude Code CLI を対話モードで起動し、HTTP API 経由で外部から制御するツール。
-2 つのサーバー構成 (API プロキシ + tmux ランナー) で動作し、マルチエージェント Shogun セッションにも対応。
+Claude Code CLI をリモートから操作するためのチャット型 AI インターフェース。
+Docker コンテナ上で `claude` CLI を実行し、Web ブラウザからチャット形式でやり取りできる。
+会話セッションは PostgreSQL に永続化され、`--resume` による高効率なコンテキスト継続をサポート。
 
-## プロジェクト構成
+## アーキテクチャ
 
 ```
-cc-tunnel/
-├── apps/
-│   ├── cc-tunnel/         # Server B: API Server (外部向けプロキシ)
-│   ├── cc-tmux-tunnel/    # Server A: Claude Runner (tmux + claude 管理)
-│   ├── frontend/          # React フロントエンド (Web UI)
-│   ├── openapi/           # OpenAPI 定義 (外部 API + 内部 API)
-│   ├── compose.yaml       # Docker Compose 設定
-│   └── mise.toml          # タスクランナー設定
-├── design/                # 設計ドキュメント
-└── .github/workflows/     # CI (GitHub Actions)
+Browser
+   │  (HTTP / SSE)
+   ▼
+frontend (React Chat UI)
+   │  (HTTP proxy via nginx)
+   ▼
+cc-tunnel (Go API Server :8080)
+   │  ├─ PostgreSQL (会話・メッセージ永続化)
+   │  └─ cc-remote-agent (ndjson streaming)
+   ▼
+cc-remote-agent (Go :9091)
+   │  (os/exec)
+   ▼
+claude CLI (`claude -p --output-format=stream-json --verbose`)
 ```
 
-## 前提条件
+## コンポーネント
 
-- Go 1.26+
-- Node.js 24+
-- tmux 3.0+
-- [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) (コード生成時のみ)
+| コンポーネント | 役割 |
+|---|---|
+| **cc-remote-agent** | Docker上でclaude CLIを実行。プロンプトを受け取り、stream-json形式でndjsonストリーミング返却 |
+| **cc-tunnel** | 外部向けAPIサーバ。会話セッション管理、PostgreSQL永続化、cc-remote-agentへのプロキシ |
+| **frontend** | React製チャットUI。会話一覧・作成・メッセージ送受信をSSEでリアルタイム表示 |
+| **PostgreSQL** | 会話（conversations）とメッセージ（messages）を永続化 |
 
-## クイックスタート
+## 会話継続メカニズム
 
-### 1. Server A (Claude Runner) 起動
+claude CLIの `--resume <session_id>` フラグを主軸に使用する。
+- **初回**: 新規セッションとして実行 → `result.session_id` を DB に保存
+- **2回目以降**: `--resume <session_id>` でCLI内部のコンテキストを再利用
+- **フォールバック**: resumeが失敗した場合、DBの過去メッセージをプロンプトに組み込んで再実行
+
+これにより、長い会話でもトークン消費をO(1)/メッセージに抑える。
+
+## セットアップ
+
+### 前提条件
+
+- Docker / Docker Compose
+- Anthropic API キー
+
+### 起動
 
 ```bash
-cd apps/cc-tmux-tunnel
-go run ./cmd/cc-tmux-tunnel/ -addr :9090
-```
+# .env ファイルを作成
+echo "ANTHROPIC_API_KEY=sk-ant-..." > apps/.env
 
-### 2. Server B (API Server) 起動
-
-```bash
-cd apps/cc-tunnel
-go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090
-```
-
-### 3. フロントエンド起動
-
-```bash
-cd apps/frontend
-npm install
-npm run dev
-```
-
-ブラウザで http://localhost:5173 を開く。
-
-### 4. curl で操作
-
-```bash
-# セッション作成 (claude_code タイプ)
-curl -X POST localhost:8080/sessions \
-  -H 'Content-Type: application/json' \
-  -d '{"type": "claude_code"}'
-
-# マルチエージェント Shogun セッション作成
-curl -X POST localhost:8080/sessions \
-  -H 'Content-Type: application/json' \
-  -d '{"type": "multi_agent_shogun"}'
-
-# セッション一覧
-curl localhost:8080/sessions
-
-# 入力送信 (paneIndex で対象ペインを指定)
-curl -X POST 'localhost:8080/sessions/<id>/input?paneIndex=0' \
-  -H 'Content-Type: application/json' \
-  -d '{"keys": ["hello", "Enter"]}'
-
-# 出力取得
-curl 'localhost:8080/sessions/<id>/output?paneIndex=0'
-
-# 全ペイン出力を一括取得
-curl localhost:8080/sessions/<id>/outputs
-
-# ウィンドウリサイズ
-curl -X POST 'localhost:8080/sessions/<id>/resize' \
-  -H 'Content-Type: application/json' \
-  -d '{"width": 200, "height": 50}'
-
-# 未管理セッションの検出
-curl localhost:8080/sessions/discover
-
-# セッション削除
-curl -X DELETE localhost:8080/sessions/<id>
-```
-
-## Docker Compose で一括起動
-
-```bash
+# 全サービス起動
 cd apps
-docker compose up --build -d
+docker compose up -d
+
+# ブラウザで開く
+open http://localhost:3000
 ```
 
-ブラウザで http://localhost:3000 を開く。停止は `docker compose down`。
+### 環境変数
 
-[mise](https://mise.jdx.dev/) を使っている場合は `apps/` ディレクトリで以下も利用可能:
+| 変数 | デフォルト | 説明 |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | （必須） | Anthropic API キー |
+| `POSTGRES_PASSWORD` | `cctunnel_dev` | PostgreSQL パスワード |
+| `CC_REMOTE_AGENT_ENV_PORT` | `9091` | cc-remote-agent ポート |
+| `CC_TUNNEL_ENV_PORT` | `8080` | cc-tunnel ポート |
+| `FRONTEND_ENV_PORT` | `8080` | フロントエンドポート |
+
+## API
+
+cc-tunnel は以下の REST API を提供する（`/api/` プレフィックス経由）。
+
+### 会話管理
+
+| メソッド | パス | 説明 |
+|---|---|---|
+| `POST` | `/conversations` | 新規会話を作成 |
+| `GET` | `/conversations` | 会話一覧を取得 |
+| `GET` | `/conversations/{id}` | 会話詳細（メッセージ履歴含む）を取得 |
+| `DELETE` | `/conversations/{id}` | 会話を削除 |
+
+### メッセージ送信（SSEストリーミング）
+
+```
+POST /conversations/{id}/messages
+Content-Type: application/json
+
+{"content": "Goでhello worldを書いて"}
+```
+
+レスポンスは `text/event-stream` 形式でリアルタイム配信:
+```
+data: {"type":"text","content":"こちらがGoのhello world"}
+
+data: {"type":"text","content":"プログラムです:\n```go\n..."}
+
+data: {"type":"done","session_id":"abc123","cost_usd":0.002}
+
+```
+
+## 開発
+
+### コード生成
+
+OpenAPI定義からGoコード・TypeScript型を再生成:
 
 ```bash
-mise run docker:up    # 起動
-mise run docker:down  # 停止
-mise run check        # 全テスト + lint
+# Go (cc-tunnel)
+cd apps/cc-tunnel && go generate ./internal/api/
+
+# TypeScript (frontend)
+cd apps/frontend && npm run generate
 ```
 
-## API 定義
+### ビルド確認
 
-OpenAPI 定義は `apps/openapi/` にある。詳細は [apps/openapi/README.md](apps/openapi/README.md) を参照。
+```bash
+# Go
+cd apps/cc-tunnel && go build ./...
+cd apps/cc-remote-agent && go build ./...
 
-- `openapi.yaml` — 外部 API (Server B)
-- `internal-openapi.yaml` — 内部 API (Server A)
+# TypeScript
+cd apps/frontend && npm run build
+```
 
-## 設計ドキュメント
+## 技術スタック
 
-アーキテクチャや将来の構成計画については [design/architecture.md](design/architecture.md) を参照。
+| レイヤー | 技術 |
+|---|---|
+| バックエンド | Go 1.25、net/http |
+| API仕様 | OpenAPI 3.0 + oapi-codegen |
+| DB | PostgreSQL 17 + pgx/v5 + goose（マイグレーション） |
+| フロントエンド | React 19 + TypeScript + Vite |
+| AI | Claude Code CLI（`claude -p --output-format=stream-json`） |
+| インフラ | Docker Compose |
