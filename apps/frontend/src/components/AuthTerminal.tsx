@@ -85,6 +85,25 @@ export function AuthTerminal({ onLoginComplete: _onLoginComplete }: Props) {
         className="rounded-lg overflow-hidden border border-[var(--color-border)]"
         style={{ width: '640px', height: '384px' }}
       />
+      <div className="flex gap-2">
+        <button
+          onClick={async () => {
+            try {
+              const text = await navigator.clipboard.readText();
+              if (text) await submitAuthInput(text);
+            } catch { /* ignore */ }
+          }}
+          className="px-3 py-1.5 rounded text-xs bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors flex items-center gap-1.5"
+        >
+          📋 貼り付け
+        </button>
+        <button
+          onClick={() => submitAuthInput('\r').catch(() => {})}
+          className="px-3 py-1.5 rounded text-xs bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors"
+        >
+          ↵ Enter
+        </button>
+      </div>
     </div>
   );
 }
