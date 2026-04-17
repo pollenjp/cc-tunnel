@@ -2,10 +2,6 @@
 dir = "cc-tunnel"
 run = 'mise run cc-tunnel:test'
 
-[tasks."test:cc-tmux-tunnel"]
-dir = "cc-tmux-tunnel"
-run = 'mise run cc-tmux-tunnel:test'
-
 [tasks."test:frontend"]
 dir = "frontend"
 run = 'mise run frontend:test'
@@ -16,10 +12,6 @@ depends = ["test:*"]
 [tasks."lint:cc-tunnel"]
 dir = "cc-tunnel"
 run = 'mise run cc-tunnel:lint'
-
-[tasks."lint:cc-tmux-tunnel"]
-dir = "cc-tmux-tunnel"
-run = 'mise run cc-tmux-tunnel:lint'
 
 [tasks."lint:frontend"]
 dir = "frontend"

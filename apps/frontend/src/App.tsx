@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { Conversation, Message } from './api/client';
 import {
   listConversations,
@@ -7,6 +7,8 @@ import {
   deleteConversation,
   sendMessage,
 } from './api/client';
+import { Sidebar } from './components/Sidebar';
+import { ChatView } from './components/ChatView';
 
 import './App.css';
 
@@ -16,7 +18,7 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -31,13 +33,10 @@ function App() {
     refreshConversations();
   }, [refreshConversations]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
   const handleSelectConversation = useCallback(async (id: string) => {
     setSelectedId(id);
     setMessages([]);
+    setSidebarOpen(false);
     try {
       const detail = await getConversation(id);
       setMessages(detail.messages ?? []);
@@ -70,23 +69,20 @@ function App() {
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || !selectedId || sending) return;
-    const content = input.trim();
+  const handleSend = async (content: string) => {
+    if (!content.trim() || !selectedId || sending) return;
     setInput('');
     setSending(true);
 
-    // ユーザーメッセージを即座に表示
     const userMsg: Message = {
       id: crypto.randomUUID(),
       conversation_id: selectedId,
       role: 'user' as Message['role'],
-      content,
+      content: content.trim(),
       created_at: new Date().toISOString(),
     };
     setMessages(prev => [...prev, userMsg]);
 
-    // アシスタントの空メッセージを追加（ストリーミング先）
     const assistantMsg: Message = {
       id: crypto.randomUUID(),
       conversation_id: selectedId,
@@ -97,7 +93,7 @@ function App() {
     setMessages(prev => [...prev, assistantMsg]);
 
     try {
-      await sendMessage(selectedId, content, (event) => {
+      await sendMessage(selectedId, content.trim(), (event) => {
         if (event.type === 'text') {
           setMessages(prev => {
             const copy = [...prev];
@@ -117,82 +113,38 @@ function App() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  const getConversationTitle = (conv: Conversation) =>
-    conv.title && conv.title.trim() ? conv.title : '新しい会話';
-
   return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <h1 className="app-title">cc-tunnel</h1>
-          <button className="btn btn-primary new-conv-btn" onClick={handleNewConversation}>
-            + 新しい会話
-          </button>
-        </div>
-        <ul className="conversation-list">
-          {conversations.map(conv => (
-            <li
-              key={conv.id}
-              className={`conversation-item ${conv.id === selectedId ? 'active' : ''}`}
-              onClick={() => handleSelectConversation(conv.id)}
-            >
-              <span className="conversation-title">{getConversationTitle(conv)}</span>
-              <button
-                className="btn btn-danger btn-sm delete-btn"
-                onClick={(e) => handleDeleteConversation(conv.id, e)}
-              >
-                x
-              </button>
-            </li>
-          ))}
-        </ul>
-      </aside>
-
-      <main className="main">
+    <div className="flex flex-row h-screen overflow-hidden bg-[var(--color-bg)]">
+      <Sidebar
+        conversations={conversations}
+        selectedId={selectedId}
+        onSelect={handleSelectConversation}
+        onNew={handleNewConversation}
+        onDelete={handleDeleteConversation}
+        sidebarOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
+      <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         {selectedId ? (
-          <div className="chat-container">
-            <div className="messages">
-              {messages.map(msg => (
-                <div
-                  key={msg.id}
-                  className={`message message-${msg.role}`}
-                >
-                  <div className="message-role">{msg.role === 'user' ? 'You' : 'Assistant'}</div>
-                  <div className="message-content">{msg.content}</div>
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <div className="input-bar">
-              <textarea
-                className="input-field"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                rows={3}
-                placeholder="メッセージを入力... (Ctrl+Enter で送信)"
-                disabled={sending}
-              />
-              <button
-                className="btn btn-primary send-btn"
-                onClick={handleSend}
-                disabled={sending || !input.trim()}
-              >
-                {sending ? '送信中...' : '送信'}
-              </button>
-            </div>
-          </div>
+          <ChatView
+            messages={messages}
+            onSend={handleSend}
+            sending={sending}
+            input={input}
+            onInputChange={setInput}
+            onHamburger={() => setSidebarOpen(true)}
+          />
         ) : (
-          <div className="empty-state">
-            <p>左のサイドバーから会話を選択するか、「+ 新しい会話」を押して開始してください。</p>
+          <div className="flex-1 flex items-center justify-center text-[var(--color-text)]">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <button
+                className="md:hidden px-3.5 py-2.5 text-xl rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] cursor-pointer hover:bg-[var(--color-border)] transition-colors"
+                onClick={() => setSidebarOpen(true)}
+              >
+                ☰
+              </button>
+              <p>左のサイドバーから会話を選択するか、「+ 新しい会話」を押して開始してください。</p>
+            </div>
           </div>
         )}
       </main>

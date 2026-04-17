@@ -1,34 +1,79 @@
-:root {
-  --bg: #1a1b26;
-  --bg-secondary: #24253a;
-  --bg-tertiary: #2f3050;
-  --text: #a9b1d6;
-  --text-bright: #c0caf5;
-  --accent: #7aa2f7;
-  --accent-hover: #89b4fa;
-  --danger: #f7768e;
-  --danger-hover: #ff899e;
-  --border: #3b3d57;
-  --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
-  --sans: system-ui, -apple-system, sans-serif;
-}
+@import "tailwindcss";
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@theme {
+  --color-bg: #1a1b26;
+  --color-bg-secondary: #24253a;
+  --color-bg-tertiary: #2f3050;
+  --color-text: #a9b1d6;
+  --color-text-bright: #c0caf5;
+  --color-accent: #7aa2f7;
+  --color-accent-hover: #89b4fa;
+  --color-danger: #f7768e;
+  --color-border: #3b3d57;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  --font-sans: system-ui, -apple-system, sans-serif;
 }
 
 body {
-  font-family: var(--sans);
-  background: var(--bg);
-  color: var(--text);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
 }
 
 #root {
   height: 100vh;
-  display: flex;
-  flex-direction: column;
+}
+
+/* Streaming cursor animation */
+.streaming-cursor::after {
+  content: '▋';
+  animation: blink 1s infinite;
+  color: var(--color-accent);
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Markdown content styles */
+.prose-chat p {
+  margin-bottom: 0.5rem;
+}
+
+.prose-chat p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-chat pre {
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.prose-chat code:not(pre code) {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.prose-chat ul {
+  list-style: disc;
+  padding-left: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose-chat ol {
+  list-style: decimal;
+  padding-left: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose-chat h1, .prose-chat h2, .prose-chat h3 {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: var(--color-text-bright);
 }
