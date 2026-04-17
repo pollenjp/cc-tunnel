@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Conversation } from '../api/client';
 
 interface SidebarProps {
@@ -11,7 +12,7 @@ interface SidebarProps {
   // 追加
   authMethod?: string;
   authEmail?: string;
-  onLogout?: () => void;
+  onLogout?: () => Promise<void>;
 }
 
 function getTitle(conv: Conversation): string {
@@ -30,6 +31,7 @@ export function Sidebar({
   authEmail,
   onLogout,
 }: SidebarProps) {
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   return (
     <>
       {sidebarOpen && (
@@ -92,9 +94,21 @@ export function Sidebar({
             </div>
             {authMethod !== 'api_key' && onLogout && (
               <button
-                onClick={onLogout}
-                className="w-full px-3 py-1.5 rounded text-xs text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-danger)] hover:text-[var(--color-danger)] transition-colors"
+                onClick={async () => {
+                  if (!onLogout) return;
+                  setIsLoggingOut(true);
+                  try {
+                    await onLogout();
+                  } finally {
+                    setIsLoggingOut(false);
+                  }
+                }}
+                disabled={isLoggingOut}
+                className="w-full px-3 py-1.5 rounded text-xs text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-danger)] hover:text-[var(--color-danger)] transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
               >
+                {isLoggingOut ? (
+                  <span className="inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                ) : null}
                 ログアウト
               </button>
             )}
