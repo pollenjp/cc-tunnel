@@ -1,16 +1,44 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/auth"
 )
 
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.statusCode,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	})
+}
+
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "9090"
@@ -30,8 +58,9 @@ func main() {
 	mux.HandleFunc("/auth/output", handler.AuthOutput)
 	mux.HandleFunc("/auth/cancel", handler.AuthCancel)
 
-	fmt.Printf("cc-remote-agent listening on %s\n", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatal(err)
+	slog.Info("cc-remote-agent listening", "addr", addr)
+	if err := http.ListenAndServe(addr, loggingMiddleware(mux)); err != nil {
+		slog.Error("server failed", "err", err)
+		os.Exit(1)
 	}
 }

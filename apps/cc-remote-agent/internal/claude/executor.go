@@ -4,19 +4,22 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os/exec"
 )
 
 type ExecuteRequest struct {
-	Prompt              string            `json:"prompt"`
-	SessionID           string            `json:"session_id,omitempty"`          // --resume 用
-	Model               string            `json:"model,omitempty"`
-	SystemPrompt        string            `json:"system_prompt,omitempty"`
-	ConversationHistory []ConversationMsg `json:"conversation_history,omitempty"` // フォールバック用
-	AllowedTools        []string          `json:"allowed_tools,omitempty"`
-	PermissionMode      string            `json:"permission_mode,omitempty"`
-	MaxBudgetUSD        float64           `json:"max_budget_usd,omitempty"`
+	Prompt                 string            `json:"prompt"`
+	SessionID              string            `json:"session_id,omitempty"`           // --resume 用
+	Model                  string            `json:"model,omitempty"`
+	SystemPrompt           string            `json:"system_prompt,omitempty"`
+	ConversationHistory    []ConversationMsg `json:"conversation_history,omitempty"` // フォールバック用
+	AllowedTools           []string          `json:"allowed_tools,omitempty"`
+	PermissionMode         string            `json:"permission_mode,omitempty"`
+	MaxBudgetUSD           float64           `json:"max_budget_usd,omitempty"`
+	IncludePartialMessages bool              `json:"include_partial_messages,omitempty"`
+	IncludeHookEvents      bool              `json:"include_hook_events,omitempty"`
 }
 
 type ConversationMsg struct {
@@ -67,6 +70,15 @@ func buildArgs(req ExecuteRequest, isFallback bool) []string {
 	// パーミッションモード
 	if req.PermissionMode != "" {
 		args = append(args, "--permission-mode", req.PermissionMode)
+	}
+
+	// --include-partial-messages（stream_event デルタ有効化）
+	if req.IncludePartialMessages {
+		args = append(args, "--include-partial-messages")
+	}
+	// --include-hook-events（フックイベント有効化）
+	if req.IncludeHookEvents {
+		args = append(args, "--include-hook-events")
 	}
 
 	// プロンプト（最後の引数）
@@ -134,8 +146,7 @@ func runStream(ctx context.Context, args []string, w http.ResponseWriter, onErro
 	go func() {
 		stderrScanner := bufio.NewScanner(stderr)
 		for stderrScanner.Scan() {
-			// log.Printf("claude stderr: %s", stderrScanner.Text())
-			_ = stderrScanner.Text()
+			slog.Debug("claude stderr", "line", stderrScanner.Text())
 		}
 	}()
 

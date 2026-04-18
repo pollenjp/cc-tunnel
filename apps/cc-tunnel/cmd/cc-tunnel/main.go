@@ -3,8 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -23,6 +22,10 @@ func main() {
 	dbURL := flag.String("db-url", "", "PostgreSQL connection URL")
 	flag.Parse()
 
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+
 	if *dbURL == "" {
 		if v := os.Getenv("DATABASE_URL"); v != "" {
 			*dbURL = v
@@ -34,7 +37,8 @@ func main() {
 	ctx := context.Background()
 	pool, err := db.NewPool(ctx, *dbURL)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		slog.Error("failed to connect to database", "err", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
@@ -45,8 +49,9 @@ func main() {
 	mux := http.NewServeMux()
 	api.HandlerFromMux(handler, mux)
 
-	fmt.Printf("cc-tunnel listening on %s (agent: %s)\n", *addr, *agentURL)
-	if err := http.ListenAndServe(*addr, mux); err != nil {
-		log.Fatal(err)
+	slog.Info("cc-tunnel listening", "addr", *addr, "agent", *agentURL)
+	if err := http.ListenAndServe(*addr, api.LoggingMiddleware(mux)); err != nil {
+		slog.Error("server failed", "err", err)
+		os.Exit(1)
 	}
 }

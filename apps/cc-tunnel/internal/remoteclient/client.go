@@ -32,11 +32,13 @@ type LoginResponse struct {
 
 // Request mirrors cc-remote-agent's ExecuteRequest
 type Request struct {
-	Prompt              string    `json:"prompt"`
-	SessionID           string    `json:"session_id,omitempty"`
-	Model               string    `json:"model,omitempty"`
-	SystemPrompt        string    `json:"system_prompt,omitempty"`
-	ConversationHistory []Message `json:"conversation_history,omitempty"`
+	Prompt                 string    `json:"prompt"`
+	SessionID              string    `json:"session_id,omitempty"`
+	Model                  string    `json:"model,omitempty"`
+	SystemPrompt           string    `json:"system_prompt,omitempty"`
+	ConversationHistory    []Message `json:"conversation_history,omitempty"`
+	IncludePartialMessages bool      `json:"include_partial_messages,omitempty"`
+	IncludeHookEvents      bool      `json:"include_hook_events,omitempty"`
 }
 
 type Message struct {
@@ -46,9 +48,11 @@ type Message struct {
 
 // StreamEvent is one line of cc-remote-agent ndjson output
 type StreamEvent struct {
-	Type    string `json:"type"`
-	SubType string `json:"subtype,omitempty"`
-	// assistant event fields
+	Type      string `json:"type"`
+	SubType   string `json:"subtype,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+
+	// type=assistant 用（既存）
 	Message *struct {
 		Content []struct {
 			Type     string `json:"type"`
@@ -56,10 +60,34 @@ type StreamEvent struct {
 			Thinking string `json:"thinking,omitempty"`
 		} `json:"content"`
 	} `json:"message,omitempty"`
-	// result event fields
-	Result    string  `json:"result,omitempty"`
-	SessionID string  `json:"session_id,omitempty"`
-	CostUSD   float64 `json:"total_cost_usd,omitempty"`
+
+	// type=stream_event 用（新規）
+	Event json.RawMessage `json:"event,omitempty"`
+
+	// type=rate_limit_event 用（新規）
+	RateLimitInfo *RateLimitInfo `json:"rate_limit_info,omitempty"`
+
+	// type=result 用（拡張）
+	Result     string  `json:"result,omitempty"`
+	IsError    bool    `json:"is_error,omitempty"`
+	CostUSD    float64 `json:"total_cost_usd,omitempty"`
+	DurationMs int64   `json:"duration_ms,omitempty"`
+
+	// type=system, subtype=init 用（新規）
+	Model string `json:"model,omitempty"`
+}
+
+type RateLimitInfo struct {
+	Status   string `json:"status"`
+	ResetsAt int64  `json:"resetsAt"`
+	Type     string `json:"rateLimitType"`
+}
+
+// InnerEvent is the inner event inside stream_event's Event field
+type InnerEvent struct {
+	Type  string          `json:"type"`
+	Index int             `json:"index,omitempty"`
+	Delta json.RawMessage `json:"delta,omitempty"`
 }
 
 type Client struct {
