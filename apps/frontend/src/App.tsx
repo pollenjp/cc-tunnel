@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Conversation, Message } from './api/client';
 import {
   listConversations,
@@ -22,6 +22,7 @@ function App() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const streamingThinkingRef = useRef<string>('');
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -39,6 +40,7 @@ function App() {
   const handleSelectConversation = useCallback(async (id: string) => {
     setSelectedId(id);
     setMessages([]);
+    streamingThinkingRef.current = '';
     setSidebarOpen(false);
     try {
       const detail = await getConversation(id);
@@ -76,6 +78,7 @@ function App() {
     if (!content.trim() || !selectedId || sending) return;
     setInput('');
     setSending(true);
+    streamingThinkingRef.current = '';
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -103,6 +106,19 @@ function App() {
             const last = copy[copy.length - 1];
             if (last?.role === 'assistant') {
               copy[copy.length - 1] = { ...last, content: last.content + event.content };
+            }
+            return copy;
+          });
+        } else if (event.type === 'thinking') {
+          streamingThinkingRef.current += event.content;
+          setMessages(prev => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.role === 'assistant') {
+              copy[copy.length - 1] = {
+                ...last,
+                metadata: { ...(last.metadata ?? {}), thinking: streamingThinkingRef.current },
+              };
             }
             return copy;
           });

@@ -51,8 +51,9 @@ type StreamEvent struct {
 	// assistant event fields
 	Message *struct {
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text,omitempty"`
+			Type     string `json:"type"`
+			Text     string `json:"text,omitempty"`
+			Thinking string `json:"thinking,omitempty"`
 		} `json:"content"`
 	} `json:"message,omitempty"`
 	// result event fields

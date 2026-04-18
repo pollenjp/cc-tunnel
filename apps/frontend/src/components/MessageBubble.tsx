@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -11,12 +12,30 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const thinking = message.metadata?.thinking as string | undefined;
+  const [thinkingOpen, setThinkingOpen] = useState(false);
 
   return (
     <div className={`flex flex-col gap-1 max-w-[75%] ${isUser ? 'self-end' : 'self-start'}`}>
       <div className={`text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text)] px-1 ${isUser ? 'text-right' : ''}`}>
         {isUser ? 'You' : 'Assistant'}
       </div>
+      {!isUser && thinking && (
+        <div className="text-xs rounded-lg overflow-hidden border border-[var(--color-border)]">
+          <button
+            onClick={() => setThinkingOpen(o => !o)}
+            className="w-full flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-tertiary)] text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors text-left"
+          >
+            <span className="text-[10px]">{thinkingOpen ? '▾' : '▸'}</span>
+            思考過程
+          </button>
+          {thinkingOpen && (
+            <div className="px-3 py-2 bg-[var(--color-bg)] text-[var(--color-text)] italic whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+              {thinking}
+            </div>
+          )}
+        </div>
+      )}
       <div
         className={[
           'px-[14px] py-[10px] text-[14px] leading-relaxed prose-chat',

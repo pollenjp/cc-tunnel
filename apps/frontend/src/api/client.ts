@@ -18,9 +18,10 @@ export type SendMessageRequest = components['schemas']['SendMessageRequest'];
 
 // SSE イベントの型（バックエンドが送信するイベント）
 export type SSETextEvent = { type: 'text'; content: string };
+export type SSEThinkingEvent = { type: 'thinking'; content: string };
 export type SSEDoneEvent = { type: 'done'; session_id: string; cost_usd: number };
 export type SSEErrorEvent = { type: 'error'; message: string };
-export type SSEEvent = SSETextEvent | SSEDoneEvent | SSEErrorEvent;
+export type SSEEvent = SSETextEvent | SSEThinkingEvent | SSEDoneEvent | SSEErrorEvent;
 
 function throwOnError<T>(result: { data?: T; error?: unknown }): T {
   if (result.error) throw result.error;

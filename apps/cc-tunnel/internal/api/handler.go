@@ -234,6 +234,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 
 	// cc-remote-agent に実行依頼
 	var assistantContent string
+	var thinkingContent string
 	executeReq := remoteclient.Request{
 		Prompt:              req.Content,
 		SessionID:           resumeSessionID,
@@ -249,6 +250,13 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		case "assistant":
 			if event.Message != nil {
 				for _, block := range event.Message.Content {
+					if block.Type == "thinking" && block.Thinking != "" {
+						thinkingContent += block.Thinking
+						sseEvent := map[string]string{"type": "thinking", "content": block.Thinking}
+						data, _ := json.Marshal(sseEvent)
+						fmt.Fprintf(w, "data: %s\n\n", data)
+						flusher.Flush()
+					}
 					if block.Type == "text" && block.Text != "" {
 						assistantContent += block.Text
 						sseEvent := map[string]string{"type": "text", "content": block.Text}
@@ -280,6 +288,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 
 	// assistant メッセージを DB に保存（session_id を metadata に含める）
 	metadata := map[string]interface{}{"session_id": newSessionID}
+	if thinkingContent != "" {
+		metadata["thinking"] = thinkingContent
+	}
 	h.repo.CreateMessage(r.Context(), convIDStr, "assistant", assistantContent, metadata)
 	h.repo.UpdateConversationUpdatedAt(r.Context(), convIDStr)
 }
