@@ -8,6 +8,7 @@ import (
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/auth"
+	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/logging"
 )
 
 type responseWriter struct {
@@ -41,9 +42,9 @@ func loggingMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	stackHandler := &logging.ErrorStackHandler{Next: jsonHandler}
+	slog.SetDefault(slog.New(stackHandler))
 
 	port := os.Getenv("PORT")
 	if port == "" {

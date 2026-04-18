@@ -9,6 +9,7 @@ import (
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/logging"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
@@ -22,9 +23,9 @@ func main() {
 	dbURL := flag.String("db-url", "", "PostgreSQL connection URL")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	stackHandler := &logging.ErrorStackHandler{Next: jsonHandler}
+	slog.SetDefault(slog.New(stackHandler))
 
 	if *dbURL == "" {
 		if v := os.Getenv("DATABASE_URL"); v != "" {
