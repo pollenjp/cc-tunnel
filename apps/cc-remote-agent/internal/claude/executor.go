@@ -88,6 +88,9 @@ func buildArgs(req ExecuteRequest, isFallback bool) []string {
 		args = append(args, "--include-hook-events")
 	}
 
+	// コンテナ内では対話的権限承認不可のためスキップ
+	args = append(args, "--dangerously-skip-permissions")
+
 	// プロンプト（最後の引数）
 	args = append(args, "--", req.Prompt)
 	return args
