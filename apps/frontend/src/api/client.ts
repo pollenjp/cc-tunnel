@@ -21,7 +21,70 @@ export type SSETextEvent = { type: 'text'; content: string };
 export type SSEThinkingEvent = { type: 'thinking'; content: string };
 export type SSEDoneEvent = { type: 'done'; session_id: string; cost_usd: number };
 export type SSEErrorEvent = { type: 'error'; message: string };
-export type SSEEvent = SSETextEvent | SSEThinkingEvent | SSEDoneEvent | SSEErrorEvent;
+
+// デルタイベント（リアルタイム表示用）
+export type SSETextDeltaEvent    = { type: 'text_delta';     content: string };
+export type SSEThinkingDeltaEvent = { type: 'thinking_delta'; content: string };
+
+// メタ情報イベント
+export type SSEInitEvent = {
+  type: 'init';
+  model: string;
+  session_id: string;
+  tools?: string[];
+};
+export type SSERateLimitEvent = {
+  type: 'rate_limit';
+  status: string;
+  resets_at: number;
+  rate_limit_type: string;
+};
+export type SSECostEvent = {
+  type: 'cost';
+  total_cost_usd: number;
+  duration_ms: number;
+};
+
+export type SSEHookEvent = {
+  type: 'hook_event';
+  subtype: string;
+  hook_id?: string;
+  hook_name?: string;
+  hook_event?: string;
+  session_id?: string;
+};
+
+export type SSEToolUseStartEvent = {
+  type: 'tool_use_start';
+  index: number;
+  tool_use_id: string;
+  tool_name: string;
+};
+export type SSEToolInputDeltaEvent = {
+  type: 'tool_input_delta';
+  index: number;
+  partial_json: string;
+};
+export type SSEToolResultEvent = {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+};
+
+export type SSEEvent =
+  | SSETextEvent
+  | SSEThinkingEvent
+  | SSETextDeltaEvent
+  | SSEThinkingDeltaEvent
+  | SSEDoneEvent
+  | SSEErrorEvent
+  | SSEInitEvent
+  | SSERateLimitEvent
+  | SSECostEvent
+  | SSEHookEvent
+  | SSEToolUseStartEvent
+  | SSEToolInputDeltaEvent
+  | SSEToolResultEvent;
 
 function throwOnError<T>(result: { data?: T; error?: unknown }): T {
   if (result.error) throw result.error;

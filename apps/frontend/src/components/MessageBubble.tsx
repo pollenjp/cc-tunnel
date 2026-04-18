@@ -8,11 +8,12 @@ import type { Message } from '../api/client';
 interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
+  streamingThinking?: string;
 }
 
-export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, streamingThinking }: MessageBubbleProps) {
   const isUser = message.role === 'user';
-  const thinking = message.metadata?.thinking as string | undefined;
+  const thinking = streamingThinking ?? (message.metadata?.thinking as string | undefined);
   const [thinkingOpen, setThinkingOpen] = useState(false);
 
   return (

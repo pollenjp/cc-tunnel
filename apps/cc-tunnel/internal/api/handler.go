@@ -37,7 +37,10 @@ func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Server) InitiateLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
 	}
 	method := ""
 	if req.Method != nil {
@@ -99,7 +102,10 @@ func (h *Server) GetAuthOutput(w http.ResponseWriter, r *http.Request, params Ge
 func (h *Server) CreateConversation(w http.ResponseWriter, r *http.Request) {
 	var req CreateConversationRequest
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
 	}
 
 	title := ""
@@ -120,6 +126,7 @@ func (h *Server) CreateConversation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	slog.Info("conversation created", "conversation_id", conv.ID)
 	writeJSON(w, http.StatusCreated, dbConvToAPI(conv))
 }
 
@@ -168,6 +175,7 @@ func (h *Server) DeleteConversation(w http.ResponseWriter, r *http.Request, conv
 		writeError(w, http.StatusNotFound, "conversation not found")
 		return
 	}
+	slog.Info("conversation deleted", "conversation_id", conversationId.String())
 	writeJSON(w, http.StatusOK, StatusResponse{Status: "ok"})
 }
 
@@ -238,16 +246,20 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	var assistantContent string
 	var thinkingContent string
 	executeReq := remoteclient.Request{
-		Prompt:              req.Content,
-		SessionID:           resumeSessionID,
-		Model:               conv.Model,
-		ConversationHistory: convHistory,
+		Prompt:                 req.Content,
+		SessionID:              resumeSessionID,
+		Model:                  conv.Model,
+		ConversationHistory:    convHistory,
+		IncludePartialMessages: true,
+		IncludeHookEvents:      true,
 	}
 	if conv.SystemPrompt != nil {
 		executeReq.SystemPrompt = *conv.SystemPrompt
 	}
 
+	slog.Info("message streaming started", "conversation_id", convIDStr, "has_resume_session", resumeSessionID != "")
 	newSessionID, err := h.remote.Execute(r.Context(), executeReq, func(event remoteclient.StreamEvent) {
+		slog.Info("stream event received", "type", event.Type, "subtype", event.SubType)
 		switch event.Type {
 		case "assistant":
 			if event.Message != nil {
@@ -256,6 +268,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						thinkingContent += block.Thinking
 						sseEvent := map[string]string{"type": "thinking", "content": block.Thinking}
 						data, _ := json.Marshal(sseEvent)
+						slog.Info("SSE sent", "data", string(data))
 						fmt.Fprintf(w, "data: %s\n\n", data)
 						flusher.Flush()
 					}
@@ -263,24 +276,162 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						assistantContent += block.Text
 						sseEvent := map[string]string{"type": "text", "content": block.Text}
 						data, _ := json.Marshal(sseEvent)
+						slog.Info("SSE sent", "data", string(data))
 						fmt.Fprintf(w, "data: %s\n\n", data)
+						flusher.Flush()
+					}
+					if block.Type == "tool_result" {
+						content := ""
+						switch v := block.Content.(type) {
+						case string:
+							content = v
+						case []any:
+							if len(v) > 0 {
+								if m, ok := v[0].(map[string]any); ok {
+									content, _ = m["text"].(string)
+								}
+							}
+						}
+						if len(content) > 1000 {
+							content = content[:1000] + "...[truncated]"
+						}
+						sseData, _ := json.Marshal(map[string]any{
+							"type":        "tool_result",
+							"tool_use_id": block.ToolUseID,
+							"content":     content,
+						})
+						slog.Info("SSE sent", "data", string(sseData))
+						fmt.Fprintf(w, "data: %s\n\n", sseData)
 						flusher.Flush()
 					}
 				}
 			}
+		case "system":
+			switch event.SubType {
+			case "init":
+				if event.Model != "" {
+					sseData, _ := json.Marshal(map[string]any{
+						"type":       "init",
+						"model":      event.Model,
+						"session_id": event.SessionID,
+					})
+					slog.Info("SSE sent", "data", string(sseData))
+					fmt.Fprintf(w, "data: %s\n\n", sseData)
+					flusher.Flush()
+				}
+			case "hook_started", "hook_response", "notification", "status":
+				sseData, _ := json.Marshal(map[string]any{
+					"type":       "hook_event",
+					"subtype":    event.SubType,
+					"hook_id":    event.HookID,
+					"hook_name":  event.HookName,
+					"hook_event": event.HookEvent,
+					"session_id": event.SessionID,
+				})
+				slog.Info("SSE sent", "data", string(sseData))
+				fmt.Fprintf(w, "data: %s\n\n", sseData)
+				flusher.Flush()
+			}
+		case "stream_event":
+			var inner remoteclient.InnerEvent
+			if err := json.Unmarshal(event.Event, &inner); err != nil {
+				break
+			}
+			switch inner.Type {
+			case "content_block_start":
+				var cbInner struct {
+					Type string `json:"type"`
+					ID   string `json:"id,omitempty"`
+					Name string `json:"name,omitempty"`
+				}
+				if err := json.Unmarshal(inner.ContentBlock, &cbInner); err != nil {
+					break
+				}
+				if cbInner.Type == "tool_use" && cbInner.Name != "" {
+					sseData, _ := json.Marshal(map[string]any{
+						"type":        "tool_use_start",
+						"index":       inner.Index,
+						"tool_use_id": cbInner.ID,
+						"tool_name":   cbInner.Name,
+					})
+					slog.Info("SSE sent", "data", string(sseData))
+					fmt.Fprintf(w, "data: %s\n\n", sseData)
+					flusher.Flush()
+				}
+			case "content_block_delta":
+				var delta map[string]string
+				if err := json.Unmarshal(inner.Delta, &delta); err != nil {
+					break
+				}
+				switch delta["type"] {
+				case "text_delta":
+					if delta["text"] != "" {
+						sseData, _ := json.Marshal(map[string]string{
+							"type":    "text_delta",
+							"content": delta["text"],
+						})
+						slog.Info("SSE sent", "data", string(sseData))
+						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						flusher.Flush()
+					}
+				case "thinking_delta":
+					if delta["thinking"] != "" {
+						sseData, _ := json.Marshal(map[string]string{
+							"type":    "thinking_delta",
+							"content": delta["thinking"],
+						})
+						slog.Info("SSE sent", "data", string(sseData))
+						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						flusher.Flush()
+					}
+				case "input_json_delta":
+					if delta["partial_json"] != "" {
+						sseData, _ := json.Marshal(map[string]any{
+							"type":         "tool_input_delta",
+							"index":        inner.Index,
+							"partial_json": delta["partial_json"],
+						})
+						slog.Info("SSE sent", "data", string(sseData))
+						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						flusher.Flush()
+					}
+				}
+			}
+		case "rate_limit_event":
+			if event.RateLimitInfo != nil {
+				sseData, _ := json.Marshal(map[string]any{
+					"type":            "rate_limit",
+					"status":          event.RateLimitInfo.Status,
+					"resets_at":       event.RateLimitInfo.ResetsAt,
+					"rate_limit_type": event.RateLimitInfo.Type,
+				})
+				slog.Info("SSE sent", "data", string(sseData))
+				fmt.Fprintf(w, "data: %s\n\n", sseData)
+				flusher.Flush()
+			}
 		case "result":
+			costData, _ := json.Marshal(map[string]any{
+				"type":           "cost",
+				"total_cost_usd": event.CostUSD,
+				"duration_ms":    event.DurationMs,
+			})
+			slog.Info("SSE sent", "data", string(costData))
+			fmt.Fprintf(w, "data: %s\n\n", costData)
+			flusher.Flush()
 			doneEvent := map[string]interface{}{
 				"type":       "done",
 				"session_id": event.SessionID,
 				"cost_usd":   event.CostUSD,
 			}
 			data, _ := json.Marshal(doneEvent)
+			slog.Info("SSE sent", "data", string(data))
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
 	})
 
 	if err != nil {
+		slog.Error("message streaming error", "conversation_id", convIDStr, "err", err)
 		errEvent := map[string]string{"type": "error", "message": err.Error()}
 		data, _ := json.Marshal(errEvent)
 		fmt.Fprintf(w, "data: %s\n\n", data)
@@ -288,13 +439,18 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		return
 	}
 
+	slog.Info("message streaming completed", "conversation_id", convIDStr)
 	// assistant メッセージを DB に保存（session_id を metadata に含める）
 	metadata := map[string]interface{}{"session_id": newSessionID}
 	if thinkingContent != "" {
 		metadata["thinking"] = thinkingContent
 	}
-	h.repo.CreateMessage(r.Context(), convIDStr, "assistant", assistantContent, metadata)
-	h.repo.UpdateConversationUpdatedAt(r.Context(), convIDStr)
+	if _, err := h.repo.CreateMessage(r.Context(), convIDStr, "assistant", assistantContent, metadata); err != nil {
+		slog.Error("failed to save assistant message", "err", err, "conversation_id", convIDStr)
+	}
+	if err := h.repo.UpdateConversationUpdatedAt(r.Context(), convIDStr); err != nil {
+		slog.Error("failed to update conversation updated_at", "err", err, "conversation_id", convIDStr)
+	}
 }
 
 // --- helper functions ---
@@ -348,6 +504,12 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func LoggingMiddleware(next http.Handler) http.Handler {

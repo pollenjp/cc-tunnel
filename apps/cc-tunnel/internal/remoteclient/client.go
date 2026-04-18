@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 )
 
@@ -54,11 +55,7 @@ type StreamEvent struct {
 
 	// type=assistant 用（既存）
 	Message *struct {
-		Content []struct {
-			Type     string `json:"type"`
-			Text     string `json:"text,omitempty"`
-			Thinking string `json:"thinking,omitempty"`
-		} `json:"content"`
+		Content []ContentBlock `json:"content"`
 	} `json:"message,omitempty"`
 
 	// type=stream_event 用（新規）
@@ -75,6 +72,11 @@ type StreamEvent struct {
 
 	// type=system, subtype=init 用（新規）
 	Model string `json:"model,omitempty"`
+
+	// type=system, subtype=hook_* 用（新規）
+	HookID    string `json:"hook_id,omitempty"`
+	HookName  string `json:"hook_name,omitempty"`
+	HookEvent string `json:"hook_event,omitempty"`
 }
 
 type RateLimitInfo struct {
@@ -83,11 +85,25 @@ type RateLimitInfo struct {
 	Type     string `json:"rateLimitType"`
 }
 
+// ContentBlock represents a content block in an assistant message
+type ContentBlock struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	Thinking string `json:"thinking,omitempty"`
+	// tool_use fields
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	// tool_result fields
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   any    `json:"content,omitempty"`
+}
+
 // InnerEvent is the inner event inside stream_event's Event field
 type InnerEvent struct {
-	Type  string          `json:"type"`
-	Index int             `json:"index,omitempty"`
-	Delta json.RawMessage `json:"delta,omitempty"`
+	Type         string          `json:"type"`
+	Index        int             `json:"index,omitempty"`
+	Delta        json.RawMessage `json:"delta,omitempty"`
+	ContentBlock json.RawMessage `json:"content_block,omitempty"`
 }
 
 type Client struct {
@@ -270,12 +286,14 @@ func (c *Client) Execute(ctx context.Context, req Request, onEvent func(StreamEv
 		return "", err
 	}
 
+	executeURL := c.baseURL + "/execute"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/execute", bytes.NewReader(body))
+		executeURL, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	slog.Info("remoteclient execute", "url", executeURL)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -284,6 +302,7 @@ func (c *Client) Execute(ctx context.Context, req Request, onEvent func(StreamEv
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		slog.Error("remoteclient execute non-200", "status", resp.StatusCode)
 		return "", fmt.Errorf("cc-remote-agent returned %d", resp.StatusCode)
 	}
 
@@ -291,12 +310,14 @@ func (c *Client) Execute(ctx context.Context, req Request, onEvent func(StreamEv
 	for scanner.Scan() {
 		var event StreamEvent
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue // 不正な行はスキップ
+			slog.Error("remoteclient ndjson parse error", "err", err, "line", scanner.Text())
+			continue
 		}
 		onEvent(event)
 		if event.Type == "result" {
 			sessionID = event.SessionID
 		}
 	}
+	slog.Info("remoteclient execute completed")
 	return sessionID, scanner.Err()
 }

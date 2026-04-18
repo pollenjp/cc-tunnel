@@ -1,3 +1,7 @@
+[tasks."test:cc-remote-agent"]
+dir = "cc-remote-agent"
+run = 'mise run cc-remote-agent:test'
+
 [tasks."test:cc-tunnel"]
 dir = "cc-tunnel"
 run = 'mise run cc-tunnel:test'
@@ -8,6 +12,10 @@ run = 'mise run frontend:test'
 
 [tasks."test"]
 depends = ["test:*"]
+
+[tasks."lint:cc-remote-agent"]
+dir = "cc-remote-agent"
+run = 'mise run cc-remote-agent:lint'
 
 [tasks."lint:cc-tunnel"]
 dir = "cc-tunnel"

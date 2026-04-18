@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
@@ -54,15 +55,18 @@ func (m *AuthManager) GetStatus(ctx context.Context) (AuthStatus, error) {
 			exitErr = e
 			_ = exitErr
 			if len(out) == 0 {
+				slog.Error("auth status check failed", "err", err)
 				return AuthStatus{}, err
 			}
 		} else if len(out) == 0 {
+			slog.Error("auth status check failed", "err", err)
 			return AuthStatus{}, err
 		}
 	}
 
 	var status AuthStatus
 	if err := json.Unmarshal(bytes.TrimSpace(out), &status); err != nil {
+		slog.Error("auth status check failed", "err", err)
 		return AuthStatus{}, err
 	}
 
@@ -89,6 +93,8 @@ func (m *AuthManager) StartLogin(ctx context.Context, method string) (LoginRespo
 	}
 	m.mu.Unlock()
 
+	slog.Info("auth login started", "method", method)
+
 	cancelCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
 	cmd := exec.CommandContext(cancelCtx, "claude", "/auth")
@@ -99,6 +105,7 @@ func (m *AuthManager) StartLogin(ctx context.Context, method string) (LoginRespo
 		cancel()
 		return LoginResponse{}, fmt.Errorf("failed to start pty: %w", err)
 	}
+	slog.Info("auth login PTY started", "pid", cmd.Process.Pid)
 
 	// PTY ウィンドウサイズを固定（80x24）
 	pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80})
@@ -187,6 +194,8 @@ func (m *AuthManager) CancelLogin() {
 	m.ptyFd = nil
 	m.mu.Unlock()
 
+	slog.Info("auth login cancelled")
+
 	if fd != nil {
 		fd.Close()
 	}
@@ -203,6 +212,7 @@ func (m *AuthManager) Logout(ctx context.Context) (AuthStatus, error) {
 	if pending {
 		m.CancelLogin()
 	}
+	slog.Info("auth logout executed")
 	exec.CommandContext(ctx, "claude", "auth", "logout").Run()
 	return m.GetStatus(ctx)
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Conversation, Message } from './api/client';
+import type { Conversation, Message, SSEHookEvent } from './api/client';
 import {
   listConversations,
   createConversation,
@@ -14,6 +14,28 @@ import { AuthGuard } from './components/AuthGuard';
 
 import './App.css';
 
+export interface ToolCall {
+  index: number;
+  toolUseId: string;
+  toolName: string;
+  inputJson: string;
+  result?: string;
+  isRunning: boolean;
+}
+
+export interface StreamMeta {
+  model?: string;
+  sessionId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  totalCostUSD?: number;
+  durationMs?: number;
+  rateLimitStatus?: string;
+  stopReason?: string;
+}
+
 function App() {
   const auth = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -22,7 +44,13 @@ function App() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const streamingThinkingRef = useRef<string>('');
+  const [streamMeta, setStreamMeta] = useState<StreamMeta | null>(null);
+  const [hookEvents, setHookEvents] = useState<SSEHookEvent[]>([]);
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const streamContentRef = useRef('');
+  const streamThinkingRef = useRef('');
+  const rafIdRef = useRef<number>(0);
+  const streamMetaRef = useRef<StreamMeta>({});
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -37,10 +65,43 @@ function App() {
     refreshConversations();
   }, [refreshConversations]);
 
+  function scheduleRafUpdate() {
+    if (rafIdRef.current) return;
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = 0;
+      const content = streamContentRef.current;
+      const thinking = streamThinkingRef.current;
+      setMessages(prev => {
+        const copy = [...prev];
+        const last = copy[copy.length - 1];
+        if (last?.role === 'assistant') {
+          copy[copy.length - 1] = {
+            ...last,
+            content: content || last.content,
+            metadata: {
+              ...(last.metadata ?? {}),
+              ...(thinking ? { thinking } : {}),
+            },
+          };
+        }
+        return copy;
+      });
+    });
+  }
+
   const handleSelectConversation = useCallback(async (id: string) => {
     setSelectedId(id);
     setMessages([]);
-    streamingThinkingRef.current = '';
+    streamContentRef.current = '';
+    streamThinkingRef.current = '';
+    streamMetaRef.current = {};
+    setStreamMeta(null);
+    setHookEvents([]);
+    setToolCalls([]);
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = 0;
+    }
     setSidebarOpen(false);
     try {
       const detail = await getConversation(id);
@@ -78,7 +139,16 @@ function App() {
     if (!content.trim() || !selectedId || sending) return;
     setInput('');
     setSending(true);
-    streamingThinkingRef.current = '';
+    streamContentRef.current = '';
+    streamThinkingRef.current = '';
+    streamMetaRef.current = {};
+    setStreamMeta(null);
+    setHookEvents([]);
+    setToolCalls([]);
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = 0;
+    }
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -110,18 +180,66 @@ function App() {
             return copy;
           });
         } else if (event.type === 'thinking') {
-          streamingThinkingRef.current += event.content;
+          streamThinkingRef.current += event.content;
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last?.role === 'assistant') {
               copy[copy.length - 1] = {
                 ...last,
-                metadata: { ...(last.metadata ?? {}), thinking: streamingThinkingRef.current },
+                metadata: { ...(last.metadata ?? {}), thinking: streamThinkingRef.current },
               };
             }
             return copy;
           });
+        } else if (event.type === 'text_delta') {
+          streamContentRef.current += event.content;
+          scheduleRafUpdate();
+        } else if (event.type === 'thinking_delta') {
+          streamThinkingRef.current += event.content;
+          scheduleRafUpdate();
+        } else if (event.type === 'init') {
+          streamMetaRef.current = {
+            ...streamMetaRef.current,
+            model: event.model,
+            sessionId: event.session_id,
+          };
+          setStreamMeta({ ...streamMetaRef.current });
+        } else if (event.type === 'rate_limit') {
+          streamMetaRef.current = {
+            ...streamMetaRef.current,
+            rateLimitStatus: event.status,
+          };
+          setStreamMeta({ ...streamMetaRef.current });
+        } else if (event.type === 'cost') {
+          streamMetaRef.current = {
+            ...streamMetaRef.current,
+            totalCostUSD: event.total_cost_usd,
+            durationMs: event.duration_ms,
+          };
+          setStreamMeta({ ...streamMetaRef.current });
+        } else if (event.type === 'hook_event') {
+          setHookEvents(prev => [...prev, event]);
+        } else if (event.type === 'tool_use_start') {
+          setToolCalls(prev => [...prev, {
+            index: event.index,
+            toolUseId: event.tool_use_id,
+            toolName: event.tool_name,
+            inputJson: '',
+            isRunning: true,
+          }]);
+        } else if (event.type === 'tool_input_delta') {
+          setToolCalls(prev => prev.map(tc =>
+            tc.index === event.index
+              ? { ...tc, inputJson: tc.inputJson + event.partial_json }
+              : tc
+          ));
+        } else if (event.type === 'tool_result') {
+          setToolCalls(prev => prev.map(tc =>
+            tc.toolUseId === event.tool_use_id
+              ? { ...tc, result: event.content, isRunning: false }
+              : tc
+          ));
         }
       });
     } catch (err) {
@@ -152,7 +270,10 @@ function App() {
             <ChatView
               messages={messages}
               onSend={handleSend}
-              sending={sending}
+              isStreaming={sending}
+              streamMeta={streamMeta}
+              hookEvents={hookEvents}
+              toolCalls={toolCalls}
               input={input}
               onInputChange={setInput}
               onHamburger={() => setSidebarOpen(true)}

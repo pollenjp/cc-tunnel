@@ -3,10 +3,13 @@ package claude
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os/exec"
+	"sync"
+	"time"
 )
 
 type ExecuteRequest struct {
@@ -31,9 +34,13 @@ type ConversationMsg struct {
 // Uses --resume if SessionID is set. Falls back to prompt stuffing on resume failure.
 func StreamToWriter(ctx context.Context, req ExecuteRequest, w http.ResponseWriter) error {
 	args := buildArgs(req, false)
+	if req.SessionID != "" {
+		slog.Info("claude CLI resume attempt", "session_id", req.SessionID)
+	}
 	return runStream(ctx, args, w, func() error {
 		// フォールバック: prompt stuffing
 		if req.SessionID != "" && len(req.ConversationHistory) > 0 {
+			slog.Info("claude CLI fallback triggered", "reason", "resume not found", "history_count", len(req.ConversationHistory))
 			fallbackReq := req
 			fallbackReq.SessionID = ""
 			fallbackReq.Prompt = buildFallbackPrompt(req.ConversationHistory, req.Prompt)
@@ -115,9 +122,12 @@ func runStream(ctx context.Context, args []string, w http.ResponseWriter, onErro
 		return err
 	}
 
+	slog.Info("claude CLI command", "args", cmd.Args)
+	startTime := time.Now()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	slog.Info("claude CLI process started", "pid", cmd.Process.Pid)
 
 	// ヘッダー設定（まだ書いていない場合）
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -132,6 +142,7 @@ func runStream(ctx context.Context, args []string, w http.ResponseWriter, onErro
 	resumeFailed := false
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		slog.Info("claude CLI stdout", "line", string(line))
 		// "session not found" エラー検知
 		if containsResumeError(line) {
 			resumeFailed = true
@@ -143,14 +154,25 @@ func runStream(ctx context.Context, args []string, w http.ResponseWriter, onErro
 	}
 
 	// stderr を読み捨て（ログには出力）
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		stderrScanner := bufio.NewScanner(stderr)
 		for stderrScanner.Scan() {
-			slog.Debug("claude stderr", "line", stderrScanner.Text())
+			slog.Warn("claude CLI stderr", "line", stderrScanner.Text())
 		}
 	}()
 
 	cmdErr := cmd.Wait()
+	wg.Wait()
+
+	exitCode := 0
+	var ee *exec.ExitError
+	if errors.As(cmdErr, &ee) {
+		exitCode = ee.ExitCode()
+	}
+	slog.Info("claude CLI process exited", "exit_code", exitCode, "duration_ms", time.Since(startTime).Milliseconds())
 
 	if resumeFailed || (cmdErr != nil && onError != nil) {
 		return onError()
