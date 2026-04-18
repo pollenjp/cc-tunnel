@@ -108,7 +108,9 @@ func (m *AuthManager) StartLogin(ctx context.Context, method string) (LoginRespo
 	slog.Info("auth login PTY started", "pid", cmd.Process.Pid)
 
 	// PTY ウィンドウサイズを固定（80x24）
-	pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80})
+	if err := pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80}); err != nil {
+		slog.Warn("pty.Setsize failed", "error", err)
+	}
 
 	m.mu.Lock()
 	m.loginCmd = cmd
@@ -121,8 +123,12 @@ func (m *AuthManager) StartLogin(ctx context.Context, method string) (LoginRespo
 	// PTY 出力を非同期で読み取る goroutine
 	go func() {
 		defer func() {
-			ptmx.Close()
-			cmd.Wait()
+			if err := ptmx.Close(); err != nil {
+				slog.Warn("ptmx.Close failed", "error", err)
+			}
+			if err := cmd.Wait(); err != nil {
+				slog.Warn("cmd.Wait failed", "error", err)
+			}
 			cancel()
 			m.mu.Lock()
 			m.loginPending = false
@@ -197,7 +203,9 @@ func (m *AuthManager) CancelLogin() {
 	slog.Info("auth login cancelled")
 
 	if fd != nil {
-		fd.Close()
+		if err := fd.Close(); err != nil {
+			slog.Warn("fd.Close failed", "error", err)
+		}
 	}
 	if cancel != nil {
 		cancel()
@@ -213,6 +221,8 @@ func (m *AuthManager) Logout(ctx context.Context) (AuthStatus, error) {
 		m.CancelLogin()
 	}
 	slog.Info("auth logout executed")
-	exec.CommandContext(ctx, "claude", "auth", "logout").Run()
+	if err := exec.CommandContext(ctx, "claude", "auth", "logout").Run(); err != nil {
+		slog.Warn("command failed", "error", err)
+	}
 	return m.GetStatus(ctx)
 }

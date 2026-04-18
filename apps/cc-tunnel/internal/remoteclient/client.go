@@ -128,7 +128,11 @@ func (c *Client) GetAuthStatus(ctx context.Context) (*AuthStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("cc-remote-agent returned %d", resp.StatusCode)
 	}
@@ -154,7 +158,11 @@ func (c *Client) InitiateLogin(ctx context.Context, method string) (*LoginRespon
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("cc-remote-agent returned %d: %s", resp.StatusCode, body)
@@ -202,7 +210,11 @@ func (c *Client) SubmitAuthInput(ctx context.Context, input string) (*AuthInputR
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("submit auth input: status %d: %s", resp.StatusCode, body)
@@ -225,7 +237,11 @@ func (c *Client) GetAuthOutput(ctx context.Context, since int) (*AuthOutputRespo
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get auth output: status %d", resp.StatusCode)
 	}
@@ -246,7 +262,11 @@ func (c *Client) CancelLogin(ctx context.Context) (*AuthCancelResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("cancel login: status %d", resp.StatusCode)
 	}
@@ -267,7 +287,11 @@ func (c *Client) Logout(ctx context.Context) (*AuthStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("cc-remote-agent returned %d", resp.StatusCode)
 	}
@@ -299,7 +323,11 @@ func (c *Client) Execute(ctx context.Context, req Request, onEvent func(StreamEv
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("remoteclient execute non-200", "status", resp.StatusCode)

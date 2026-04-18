@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"embed"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -29,7 +30,11 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 
 func runMigrations(pool *pgxpool.Pool) error {
 	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.Warn("db.Close failed", "error", err)
+		}
+	}()
 
 	goose.SetBaseFS(migrations)
 	if err := goose.SetDialect("postgres"); err != nil {

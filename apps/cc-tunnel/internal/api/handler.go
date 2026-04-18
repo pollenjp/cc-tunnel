@@ -277,7 +277,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						sseEvent := map[string]string{"type": "thinking", "content": block.Thinking}
 						data, _ := json.Marshal(sseEvent)
 						slog.Info("SSE sent", "data", string(data))
-						fmt.Fprintf(w, "data: %s\n\n", data)
+						if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+							slog.Warn("SSE write failed", "error", err)
+							return
+						}
 						flusher.Flush()
 					}
 					if block.Type == "text" && block.Text != "" {
@@ -285,7 +288,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						sseEvent := map[string]string{"type": "text", "content": block.Text}
 						data, _ := json.Marshal(sseEvent)
 						slog.Info("SSE sent", "data", string(data))
-						fmt.Fprintf(w, "data: %s\n\n", data)
+						if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+							slog.Warn("SSE write failed", "error", err)
+							return
+						}
 						flusher.Flush()
 					}
 					if block.Type == "tool_result" {
@@ -309,7 +315,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 							"content":     content,
 						})
 						slog.Info("SSE sent", "data", string(sseData))
-						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+							slog.Warn("SSE write failed", "error", err)
+							return
+						}
 						flusher.Flush()
 					}
 				}
@@ -338,7 +347,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 							"content":     content,
 						})
 						slog.Info("SSE sent", "data", string(sseData))
-						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+							slog.Warn("SSE write failed", "error", err)
+							return
+						}
 						flusher.Flush()
 						for i, tc := range toolCallsData {
 							if tc["tool_use_id"] == block.ToolUseID {
@@ -360,7 +372,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						"session_id": event.SessionID,
 					})
 					slog.Info("SSE sent", "data", string(sseData))
-					fmt.Fprintf(w, "data: %s\n\n", sseData)
+					if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+						slog.Warn("SSE write failed", "error", err)
+						return
+					}
 					flusher.Flush()
 				}
 			case "hook_started", "hook_response", "notification", "status":
@@ -379,7 +394,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					"session_id": event.SessionID,
 				})
 				slog.Info("SSE sent", "data", string(sseData))
-				fmt.Fprintf(w, "data: %s\n\n", sseData)
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+					slog.Warn("SSE write failed", "error", err)
+					return
+				}
 				flusher.Flush()
 			}
 		case "stream_event":
@@ -405,7 +423,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						"tool_name":   cbInner.Name,
 					})
 					slog.Info("SSE sent", "data", string(sseData))
-					fmt.Fprintf(w, "data: %s\n\n", sseData)
+					if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+						slog.Warn("SSE write failed", "error", err)
+						return
+					}
 					flusher.Flush()
 					toolCallsData = append(toolCallsData, map[string]any{
 						"tool_use_id": cbInner.ID,
@@ -427,7 +448,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 							"content": delta["text"],
 						})
 						slog.Info("SSE sent", "data", string(sseData))
-						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+							slog.Warn("SSE write failed", "error", err)
+							return
+						}
 						flusher.Flush()
 					}
 				case "thinking_delta":
@@ -437,7 +461,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 							"content": delta["thinking"],
 						})
 						slog.Info("SSE sent", "data", string(sseData))
-						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+							slog.Warn("SSE write failed", "error", err)
+							return
+						}
 						flusher.Flush()
 						if len(thinkingBlocks) == 0 {
 							thinkingBlocks = append(thinkingBlocks, "")
@@ -452,7 +479,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 							"partial_json": delta["partial_json"],
 						})
 						slog.Info("SSE sent", "data", string(sseData))
-						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+							slog.Warn("SSE write failed", "error", err)
+							return
+						}
 						flusher.Flush()
 						if len(toolCallsData) > 0 {
 							last := toolCallsData[len(toolCallsData)-1]
@@ -473,7 +503,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					"rate_limit_type": event.RateLimitInfo.Type,
 				})
 				slog.Info("SSE sent", "data", string(sseData))
-				fmt.Fprintf(w, "data: %s\n\n", sseData)
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
+					slog.Warn("SSE write failed", "error", err)
+					return
+				}
 				flusher.Flush()
 			}
 		case "result":
@@ -485,7 +518,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 				"duration_ms":    event.DurationMs,
 			})
 			slog.Info("SSE sent", "data", string(costData))
-			fmt.Fprintf(w, "data: %s\n\n", costData)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", costData); err != nil {
+				slog.Warn("SSE write failed", "error", err)
+				return
+			}
 			flusher.Flush()
 			doneEvent := map[string]interface{}{
 				"type":       "done",
@@ -494,7 +530,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 			}
 			data, _ := json.Marshal(doneEvent)
 			slog.Info("SSE sent", "data", string(data))
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				slog.Warn("SSE write failed", "error", err)
+				return
+			}
 			flusher.Flush()
 		}
 	})
@@ -503,7 +542,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		slog.Error("message streaming error", "conversation_id", convIDStr, "err", err)
 		errEvent := map[string]string{"type": "error", "message": err.Error()}
 		data, _ := json.Marshal(errEvent)
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		if _, werr := fmt.Fprintf(w, "data: %s\n\n", data); werr != nil {
+			slog.Warn("SSE write failed", "error", werr)
+		}
 		flusher.Flush()
 		return
 	}
@@ -544,7 +585,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("json encode failed", "error", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

@@ -151,8 +151,14 @@ func runStream(ctx context.Context, args []string, w http.ResponseWriter, onErro
 			resumeFailed = true
 			break
 		}
-		w.Write(line)
-		w.Write([]byte("\n"))
+		if _, err := w.Write(line); err != nil {
+			slog.Warn("write failed", "error", err)
+			return err
+		}
+		if _, err := w.Write([]byte("\n")); err != nil {
+			slog.Warn("write newline failed", "error", err)
+			return err
+		}
 		flusher.Flush()
 	}
 

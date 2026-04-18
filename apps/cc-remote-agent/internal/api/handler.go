@@ -164,7 +164,9 @@ func (h *Handler) AuthOutput(w http.ResponseWriter, r *http.Request) {
 	slog.Info("auth output request")
 	since := 0
 	if s := r.URL.Query().Get("since"); s != "" {
-		fmt.Sscanf(s, "%d", &since)
+		if _, err := fmt.Sscanf(s, "%d", &since); err != nil {
+			slog.Warn("Sscanf failed", "error", err)
+		}
 	}
 	data, cursor := h.authManager.GetOutput(since)
 	w.Header().Set("Content-Type", "application/json")
