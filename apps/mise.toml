@@ -35,7 +35,7 @@ echo 'Access to http://localhost:3000 (if default configuration is used) to see 
 
 [tasks."docker:down"]
 description = "Stop all services with docker compose"
-run = 'docker compose down'
+run = 'docker compose down -v'
 
 [tasks."docker:logs"]
 description = "Follow logs of all services with docker compose"
