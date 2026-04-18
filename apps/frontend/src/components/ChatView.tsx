@@ -44,6 +44,8 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
                   message={msg}
                   isStreaming={isStreamingMsg}
                   streamingThinkings={isLast && msg.role === 'assistant' ? streamingThinkings : undefined}
+                  streamMeta={isStreamingMsg ? streamMeta : undefined}
+                  hookEvents={isLast && msg.role === 'assistant' ? hookEvents : undefined}
                 />
                 {isLast && msg.role === 'assistant' && toolCalls && toolCalls.length > 0 && (
                   <div className="mt-1 space-y-1">
@@ -57,34 +59,6 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
           })}
           <div ref={messagesEndRef} />
         </div>
-      )}
-      {isStreaming && streamMeta && (
-        <div className="px-4 py-1 text-[11px] text-[var(--color-text)] opacity-60 flex gap-4 border-t border-[var(--color-border)]">
-          {streamMeta.model && <span>🤖 {streamMeta.model}</span>}
-          {streamMeta.totalCostUSD !== undefined && (
-            <span>💰 ${streamMeta.totalCostUSD.toFixed(4)}</span>
-          )}
-          {streamMeta.durationMs !== undefined && (
-            <span>⏱ {(streamMeta.durationMs / 1000).toFixed(1)}s</span>
-          )}
-          {streamMeta.rateLimitStatus && streamMeta.rateLimitStatus !== 'allowed' && (
-            <span className="text-yellow-400">⚠ rate limit</span>
-          )}
-        </div>
-      )}
-      {hookEvents && hookEvents.length > 0 && (
-        <details className="mx-4 mb-2 text-[11px] border border-[var(--color-border)] rounded">
-          <summary className="px-3 py-1.5 cursor-pointer text-[var(--color-text)] opacity-60 select-none">
-            Hook Events ({hookEvents.length})
-          </summary>
-          <div className="px-3 py-2 max-h-40 overflow-y-auto space-y-1">
-            {hookEvents.map((ev, i) => (
-              <div key={i} className="font-mono text-[10px] text-[var(--color-text)] opacity-50">
-                [{ev.subtype}] {ev.hook_name ?? ev.hook_event ?? ev.session_id ?? ''}
-              </div>
-            ))}
-          </div>
-        </details>
       )}
       <MessageInput
         value={input}

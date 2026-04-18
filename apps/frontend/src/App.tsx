@@ -52,6 +52,7 @@ function App() {
   const streamThinkingRef = useRef<string[]>([]);
   const rafIdRef = useRef<number>(0);
   const streamMetaRef = useRef<StreamMeta>({});
+  const hookEventsRef = useRef<SSEHookEvent[]>([]);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -92,6 +93,7 @@ function App() {
     streamContentRef.current = '';
     streamThinkingRef.current = [];
     streamMetaRef.current = {};
+    hookEventsRef.current = [];
     setStreamMeta(null);
     setHookEvents([]);
     setToolCalls([]);
@@ -140,6 +142,7 @@ function App() {
     streamContentRef.current = '';
     streamThinkingRef.current = [];
     streamMetaRef.current = {};
+    hookEventsRef.current = [];
     setStreamMeta(null);
     setHookEvents([]);
     setToolCalls([]);
@@ -216,6 +219,7 @@ function App() {
           };
           setStreamMeta({ ...streamMetaRef.current });
         } else if (event.type === 'hook_event') {
+          hookEventsRef.current = [...hookEventsRef.current, event];
           setHookEvents(prev => [...prev, event]);
         } else if (event.type === 'tool_use_start') {
           setToolCalls(prev => [...prev, {
@@ -243,19 +247,24 @@ function App() {
       console.error('Failed to send message:', err);
     } finally {
       const completedThinkings = streamThinkingRef.current.filter(s => s !== '');
-      if (completedThinkings.length > 0) {
-        setMessages(prev => {
-          const copy = [...prev];
-          const last = copy[copy.length - 1];
-          if (last?.role === 'assistant') {
-            copy[copy.length - 1] = {
-              ...last,
-              metadata: { ...(last.metadata as Record<string, unknown> ?? {}), thinking: completedThinkings.join('\n') },
-            };
-          }
-          return copy;
-        });
-      }
+      setMessages(prev => {
+        const copy = [...prev];
+        const last = copy[copy.length - 1];
+        if (last?.role === 'assistant') {
+          copy[copy.length - 1] = {
+            ...last,
+            metadata: {
+              ...(last.metadata as Record<string, unknown> ?? {}),
+              ...(completedThinkings.length > 0 ? { thinking: completedThinkings.join('\n') } : {}),
+              ...(streamMetaRef.current.model ? { model: streamMetaRef.current.model } : {}),
+              ...(streamMetaRef.current.totalCostUSD ? { cost_usd: streamMetaRef.current.totalCostUSD } : {}),
+              ...(streamMetaRef.current.durationMs ? { duration_ms: streamMetaRef.current.durationMs } : {}),
+              ...(hookEventsRef.current?.length > 0 ? { hook_events: hookEventsRef.current } : {}),
+            },
+          };
+        }
+        return copy;
+      });
       setSending(false);
       await refreshConversations();
     }

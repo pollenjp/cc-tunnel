@@ -243,8 +243,14 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 
 	// cc-remote-agent に実行依頼
-	var assistantContent string
-	var thinkingContent string
+	var (
+		assistantContent string
+		thinkingContent  string
+		modelName        string
+		costUSD          float64
+		durationMs       int64
+		hookEventsList   []map[string]any
+	)
 	executeReq := remoteclient.Request{
 		Prompt:                 req.Content,
 		SessionID:              resumeSessionID,
@@ -310,6 +316,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 			switch event.SubType {
 			case "init":
 				if event.Model != "" {
+					modelName = event.Model
 					sseData, _ := json.Marshal(map[string]any{
 						"type":       "init",
 						"model":      event.Model,
@@ -320,6 +327,12 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					flusher.Flush()
 				}
 			case "hook_started", "hook_response", "notification", "status":
+				hookEventsList = append(hookEventsList, map[string]any{
+					"subtype":    event.SubType,
+					"hook_id":    event.HookID,
+					"hook_name":  event.HookName,
+					"hook_event": event.HookEvent,
+				})
 				sseData, _ := json.Marshal(map[string]any{
 					"type":       "hook_event",
 					"subtype":    event.SubType,
@@ -410,6 +423,8 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 				flusher.Flush()
 			}
 		case "result":
+			costUSD = event.CostUSD
+			durationMs = event.DurationMs
 			costData, _ := json.Marshal(map[string]any{
 				"type":           "cost",
 				"total_cost_usd": event.CostUSD,
@@ -444,6 +459,18 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	metadata := map[string]interface{}{"session_id": newSessionID}
 	if thinkingContent != "" {
 		metadata["thinking"] = thinkingContent
+	}
+	if modelName != "" {
+		metadata["model"] = modelName
+	}
+	if costUSD > 0 {
+		metadata["cost_usd"] = costUSD
+	}
+	if durationMs > 0 {
+		metadata["duration_ms"] = durationMs
+	}
+	if len(hookEventsList) > 0 {
+		metadata["hook_events"] = hookEventsList
 	}
 	if _, err := h.repo.CreateMessage(r.Context(), convIDStr, "assistant", assistantContent, metadata); err != nil {
 		slog.Error("failed to save assistant message", "err", err, "conversation_id", convIDStr)

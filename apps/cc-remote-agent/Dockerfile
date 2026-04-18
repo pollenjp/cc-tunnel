@@ -25,5 +25,5 @@ RUN useradd -m -s /bin/bash user \
 COPY --from=builder /cc-remote-agent /usr/local/bin/cc-remote-agent
 
 USER user
-
+WORKDIR /home/user
 ENTRYPOINT ["cc-remote-agent"]

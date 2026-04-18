@@ -3,12 +3,15 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import type { Message } from '../api/client';
+import type { Message, SSEHookEvent } from '../api/client';
+import type { StreamMeta } from '../App';
 
 interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
   streamingThinkings?: string[];
+  streamMeta?: StreamMeta | null;
+  hookEvents?: SSEHookEvent[];
 }
 
 function ThinkingAccordion({ content }: { content: string }) {
@@ -38,7 +41,7 @@ function ThinkingAccordion({ content }: { content: string }) {
   );
 }
 
-export function MessageBubble({ message, isStreaming, streamingThinkings }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, streamingThinkings, streamMeta, hookEvents }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
   const thinkings: string[] = streamingThinkings && streamingThinkings.length > 0
@@ -47,6 +50,11 @@ export function MessageBubble({ message, isStreaming, streamingThinkings }: Mess
       ?? (message.metadata?.thinking
           ? [message.metadata.thinking as string]
           : []);
+
+  const model = streamMeta?.model ?? (message.metadata as Record<string, unknown> | undefined)?.model as string | undefined;
+  const costUSD = streamMeta?.totalCostUSD ?? (message.metadata as Record<string, unknown> | undefined)?.cost_usd as number | undefined;
+  const durationMs = streamMeta?.durationMs ?? (message.metadata as Record<string, unknown> | undefined)?.duration_ms as number | undefined;
+  const msgHookEvents = hookEvents ?? (message.metadata as Record<string, unknown> | undefined)?.hook_events as SSEHookEvent[] | undefined;
 
   return (
     <div className={`flex flex-col gap-1 max-w-[75%] ${isUser ? 'self-end' : 'self-start'}`}>
@@ -94,6 +102,27 @@ export function MessageBubble({ message, isStreaming, streamingThinkings }: Mess
           {message.content}
         </ReactMarkdown>
       </div>
+      {!isUser && (model || costUSD != null || msgHookEvents && msgHookEvents.length > 0) && (
+        <div className="mt-2 text-[11px] opacity-60 space-y-1">
+          <div className="flex flex-wrap gap-x-3">
+            {model && <span>🤖 {model}</span>}
+            {costUSD != null && <span>${costUSD.toFixed(4)}</span>}
+            {durationMs != null && <span>{durationMs}ms</span>}
+          </div>
+          {msgHookEvents && msgHookEvents.length > 0 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer">▸ Hook Events ({msgHookEvents.length})</summary>
+              <div className="mt-1 space-y-1">
+                {msgHookEvents.map((ev, i) => (
+                  <div key={i} className="px-2 py-0.5 rounded bg-[var(--color-bg-tertiary)]">
+                    {ev.subtype} {ev.hook_name && `— ${ev.hook_name}`}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
     </div>
   );
 }
