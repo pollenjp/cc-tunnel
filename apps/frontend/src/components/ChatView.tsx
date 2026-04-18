@@ -38,6 +38,18 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
           {messages.map((msg, idx) => {
             const isLast = idx === messages.length - 1;
             const isStreamingMsg = isStreaming && isLast && msg.role === 'assistant';
+            const msgToolCalls: ToolCall[] = msg.role === 'assistant'
+              ? isStreamingMsg
+                ? (toolCalls ?? [])
+                : ((msg.metadata as any)?.tool_calls ?? []).map((tc: any) => ({
+                    index: 0,
+                    toolUseId: tc.tool_use_id,
+                    toolName: tc.tool_name,
+                    inputJson: tc.input_json ?? '',
+                    result: tc.result ?? undefined,
+                    isRunning: false,
+                  }))
+              : [];
             return (
               <div key={msg.id}>
                 <MessageBubble
@@ -47,9 +59,9 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
                   streamMeta={isStreamingMsg ? streamMeta : undefined}
                   hookEvents={isLast && msg.role === 'assistant' ? hookEvents : undefined}
                 />
-                {isLast && msg.role === 'assistant' && toolCalls && toolCalls.length > 0 && (
+                {msgToolCalls.length > 0 && (
                   <div className="mt-1 space-y-1">
-                    {toolCalls.map((tc, i) => (
+                    {msgToolCalls.map((tc, i) => (
                       <ToolCallCard key={i} toolCall={tc} />
                     ))}
                   </div>

@@ -53,6 +53,7 @@ function App() {
   const rafIdRef = useRef<number>(0);
   const streamMetaRef = useRef<StreamMeta>({});
   const hookEventsRef = useRef<SSEHookEvent[]>([]);
+  const toolCallsRef = useRef<ToolCall[]>([]);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -97,6 +98,7 @@ function App() {
     setStreamMeta(null);
     setHookEvents([]);
     setToolCalls([]);
+    toolCallsRef.current = [];
     setStreamingThinkings([]);
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
@@ -146,6 +148,7 @@ function App() {
     setStreamMeta(null);
     setHookEvents([]);
     setToolCalls([]);
+    toolCallsRef.current = [];
     setStreamingThinkings([]);
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
@@ -222,20 +225,32 @@ function App() {
           hookEventsRef.current = [...hookEventsRef.current, event];
           setHookEvents(prev => [...prev, event]);
         } else if (event.type === 'tool_use_start') {
-          setToolCalls(prev => [...prev, {
+          const newTc: ToolCall = {
             index: event.index,
             toolUseId: event.tool_use_id,
             toolName: event.tool_name,
             inputJson: '',
             isRunning: true,
-          }]);
+          };
+          toolCallsRef.current = [...toolCallsRef.current, newTc];
+          setToolCalls(prev => [...prev, newTc]);
         } else if (event.type === 'tool_input_delta') {
+          toolCallsRef.current = toolCallsRef.current.map(tc =>
+            tc.index === event.index
+              ? { ...tc, inputJson: tc.inputJson + event.partial_json }
+              : tc
+          );
           setToolCalls(prev => prev.map(tc =>
             tc.index === event.index
               ? { ...tc, inputJson: tc.inputJson + event.partial_json }
               : tc
           ));
         } else if (event.type === 'tool_result') {
+          toolCallsRef.current = toolCallsRef.current.map(tc =>
+            tc.toolUseId === event.tool_use_id
+              ? { ...tc, result: event.content, isRunning: false }
+              : tc
+          );
           setToolCalls(prev => prev.map(tc =>
             tc.toolUseId === event.tool_use_id
               ? { ...tc, result: event.content, isRunning: false }
@@ -260,6 +275,14 @@ function App() {
               ...(streamMetaRef.current.totalCostUSD ? { cost_usd: streamMetaRef.current.totalCostUSD } : {}),
               ...(streamMetaRef.current.durationMs ? { duration_ms: streamMetaRef.current.durationMs } : {}),
               ...(hookEventsRef.current?.length > 0 ? { hook_events: hookEventsRef.current } : {}),
+              ...(toolCallsRef.current.length > 0 ? {
+                tool_calls: toolCallsRef.current.map(tc => ({
+                  tool_use_id: tc.toolUseId,
+                  tool_name: tc.toolName,
+                  input_json: tc.inputJson,
+                  result: tc.result ?? null,
+                })),
+              } : {}),
             },
           };
         }

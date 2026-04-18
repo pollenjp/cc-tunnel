@@ -28,6 +28,9 @@ export function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
       </button>
       {open && (
         <div className="px-3 py-2 bg-[var(--color-bg)] space-y-2">
+          {toolCall.isRunning && !toolCall.result && (
+            <div className="text-[11px] opacity-60">🔄 実行中...</div>
+          )}
           {toolCall.inputJson && (
             <div>
               <div className="text-[10px] opacity-50 mb-1">引数</div>

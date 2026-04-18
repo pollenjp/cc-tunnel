@@ -250,6 +250,8 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		costUSD          float64
 		durationMs       int64
 		hookEventsList   []map[string]any
+		thinkingBlocks   []string
+		toolCallsData    []map[string]any
 	)
 	executeReq := remoteclient.Request{
 		Prompt:                 req.Content,
@@ -312,6 +314,41 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					}
 				}
 			}
+		case "user":
+			if event.Message != nil {
+				for _, block := range event.Message.Content {
+					if block.Type == "tool_result" {
+						content := ""
+						switch v := block.Content.(type) {
+						case string:
+							content = v
+						case []any:
+							if len(v) > 0 {
+								if m, ok := v[0].(map[string]any); ok {
+									content, _ = m["text"].(string)
+								}
+							}
+						}
+						if len(content) > 2000 {
+							content = content[:2000] + "...[truncated]"
+						}
+						sseData, _ := json.Marshal(map[string]any{
+							"type":        "tool_result",
+							"tool_use_id": block.ToolUseID,
+							"content":     content,
+						})
+						slog.Info("SSE sent", "data", string(sseData))
+						fmt.Fprintf(w, "data: %s\n\n", sseData)
+						flusher.Flush()
+						for i, tc := range toolCallsData {
+							if tc["tool_use_id"] == block.ToolUseID {
+								toolCallsData[i]["result"] = content
+								break
+							}
+						}
+					}
+				}
+			}
 		case "system":
 			switch event.SubType {
 			case "init":
@@ -370,6 +407,12 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					slog.Info("SSE sent", "data", string(sseData))
 					fmt.Fprintf(w, "data: %s\n\n", sseData)
 					flusher.Flush()
+					toolCallsData = append(toolCallsData, map[string]any{
+						"tool_use_id": cbInner.ID,
+						"name":        cbInner.Name,
+						"input":       "",
+						"result":      nil,
+					})
 				}
 			case "content_block_delta":
 				var delta map[string]string
@@ -396,6 +439,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						slog.Info("SSE sent", "data", string(sseData))
 						fmt.Fprintf(w, "data: %s\n\n", sseData)
 						flusher.Flush()
+						if len(thinkingBlocks) == 0 {
+							thinkingBlocks = append(thinkingBlocks, "")
+						}
+						thinkingBlocks[len(thinkingBlocks)-1] += delta["thinking"]
 					}
 				case "input_json_delta":
 					if delta["partial_json"] != "" {
@@ -407,6 +454,13 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						slog.Info("SSE sent", "data", string(sseData))
 						fmt.Fprintf(w, "data: %s\n\n", sseData)
 						flusher.Flush()
+						if len(toolCallsData) > 0 {
+							last := toolCallsData[len(toolCallsData)-1]
+							if prev, ok := last["input"].(string); ok {
+								last["input"] = prev + delta["partial_json"]
+							}
+							toolCallsData[len(toolCallsData)-1] = last
+						}
 					}
 				}
 			}
@@ -457,8 +511,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	slog.Info("message streaming completed", "conversation_id", convIDStr)
 	// assistant メッセージを DB に保存（session_id を metadata に含める）
 	metadata := map[string]interface{}{"session_id": newSessionID}
-	if thinkingContent != "" {
-		metadata["thinking"] = thinkingContent
+	if len(thinkingBlocks) > 0 {
+		metadata["thinking"] = thinkingBlocks
+	} else if thinkingContent != "" {
+		metadata["thinking"] = []string{thinkingContent}
 	}
 	if modelName != "" {
 		metadata["model"] = modelName
@@ -471,6 +527,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 	if len(hookEventsList) > 0 {
 		metadata["hook_events"] = hookEventsList
+	}
+	if len(toolCallsData) > 0 {
+		metadata["tool_calls"] = toolCallsData
 	}
 	if _, err := h.repo.CreateMessage(r.Context(), convIDStr, "assistant", assistantContent, metadata); err != nil {
 		slog.Error("failed to save assistant message", "err", err, "conversation_id", convIDStr)
