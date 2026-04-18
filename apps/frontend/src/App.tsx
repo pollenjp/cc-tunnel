@@ -242,6 +242,20 @@ function App() {
     } catch (err) {
       console.error('Failed to send message:', err);
     } finally {
+      const completedThinkings = streamThinkingRef.current.filter(s => s !== '');
+      if (completedThinkings.length > 0) {
+        setMessages(prev => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last?.role === 'assistant') {
+            copy[copy.length - 1] = {
+              ...last,
+              metadata: { ...(last.metadata as Record<string, unknown> ?? {}), thinking: completedThinkings.join('\n') },
+            };
+          }
+          return copy;
+        });
+      }
       setSending(false);
       await refreshConversations();
     }

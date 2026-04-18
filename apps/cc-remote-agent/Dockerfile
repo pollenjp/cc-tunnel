@@ -14,13 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
+RUN npm install -g @anthropic-ai/claude-code
+
 # 非rootユーザー作成（--dangerously-skip-permissions は root では動作しないため）
 RUN useradd -m -s /bin/bash user \
     && echo "user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
     && mkdir -p /home/user/.claude \
     && chown -R user:user /home/user/.claude
-
-RUN npm install -g @anthropic-ai/claude-code
 
 COPY --from=builder /cc-remote-agent /usr/local/bin/cc-remote-agent
 

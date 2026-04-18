@@ -43,9 +43,9 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
                 <MessageBubble
                   message={msg}
                   isStreaming={isStreamingMsg}
-                  streamingThinkings={isStreamingMsg ? streamingThinkings : undefined}
+                  streamingThinkings={isLast && msg.role === 'assistant' ? streamingThinkings : undefined}
                 />
-                {isStreamingMsg && toolCalls && toolCalls.length > 0 && (
+                {isLast && msg.role === 'assistant' && toolCalls && toolCalls.length > 0 && (
                   <div className="mt-1 space-y-1">
                     {toolCalls.map((tc, i) => (
                       <ToolCallCard key={i} toolCall={tc} />

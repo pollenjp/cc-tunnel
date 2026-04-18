@@ -70,6 +70,11 @@ export function AuthTerminal({ onLoginComplete: _onLoginComplete }: Props) {
 
   return (
     <div className="flex flex-col items-center gap-2">
+      <div
+        ref={terminalRef}
+        className="rounded-lg overflow-hidden border border-[var(--color-border)]"
+        style={{ width: '640px', height: '384px' }}
+      />
       {authUrl && (
         <a
           href={authUrl}
@@ -80,11 +85,6 @@ export function AuthTerminal({ onLoginComplete: _onLoginComplete }: Props) {
           認証URLを開く →
         </a>
       )}
-      <div
-        ref={terminalRef}
-        className="rounded-lg overflow-hidden border border-[var(--color-border)]"
-        style={{ width: '640px', height: '384px' }}
-      />
       <div className="flex gap-2">
         <button
           onClick={async () => {
