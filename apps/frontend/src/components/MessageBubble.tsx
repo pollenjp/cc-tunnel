@@ -8,35 +8,54 @@ import type { Message } from '../api/client';
 interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
-  streamingThinking?: string;
+  streamingThinkings?: string[];
 }
 
-export function MessageBubble({ message, isStreaming, streamingThinking }: MessageBubbleProps) {
+function ThinkingAccordion({ content }: { content: string }) {
+  const [open, setOpen] = useState(false);
+  const preview = content.slice(0, 40).replace(/\n/g, ' ');
+  return (
+    <div className="my-1 rounded border border-[var(--color-border)] text-[12px]">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-1.5 bg-[var(--color-bg-tertiary)] text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors text-left"
+      >
+        <span>🤔</span>
+        {!open && (
+          <span className="opacity-60 truncate">{preview}{content.length > 40 ? '...' : ''}</span>
+        )}
+        {open && <span className="opacity-60">思考過程</span>}
+        <span className="ml-auto opacity-50">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="px-3 py-2 bg-[var(--color-bg)]">
+          <pre className="text-[11px] font-mono text-[var(--color-text)] opacity-70 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+            {content}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function MessageBubble({ message, isStreaming, streamingThinkings }: MessageBubbleProps) {
   const isUser = message.role === 'user';
-  const thinking = streamingThinking ?? (message.metadata?.thinking as string | undefined);
-  const [thinkingOpen, setThinkingOpen] = useState(false);
+
+  const thinkings: string[] = streamingThinkings && streamingThinkings.length > 0
+    ? streamingThinkings
+    : message.metadata?.thinkings as string[] | undefined
+      ?? (message.metadata?.thinking
+          ? [message.metadata.thinking as string]
+          : []);
 
   return (
     <div className={`flex flex-col gap-1 max-w-[75%] ${isUser ? 'self-end' : 'self-start'}`}>
       <div className={`text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text)] px-1 ${isUser ? 'text-right' : ''}`}>
         {isUser ? 'You' : 'Assistant'}
       </div>
-      {!isUser && thinking && (
-        <div className="text-xs rounded-lg overflow-hidden border border-[var(--color-border)]">
-          <button
-            onClick={() => setThinkingOpen(o => !o)}
-            className="w-full flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-tertiary)] text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors text-left"
-          >
-            <span className="text-[10px]">{thinkingOpen ? '▾' : '▸'}</span>
-            思考過程
-          </button>
-          {thinkingOpen && (
-            <div className="px-3 py-2 bg-[var(--color-bg)] text-[var(--color-text)] italic whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
-              {thinking}
-            </div>
-          )}
-        </div>
-      )}
+      {!isUser && thinkings.map((t, i) => (
+        <ThinkingAccordion key={i} content={t} />
+      ))}
       <div
         className={[
           'px-[14px] py-[10px] text-[14px] leading-relaxed prose-chat',

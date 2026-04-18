@@ -47,8 +47,9 @@ function App() {
   const [streamMeta, setStreamMeta] = useState<StreamMeta | null>(null);
   const [hookEvents, setHookEvents] = useState<SSEHookEvent[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [streamingThinkings, setStreamingThinkings] = useState<string[]>([]);
   const streamContentRef = useRef('');
-  const streamThinkingRef = useRef('');
+  const streamThinkingRef = useRef<string[]>([]);
   const rafIdRef = useRef<number>(0);
   const streamMetaRef = useRef<StreamMeta>({});
 
@@ -70,7 +71,7 @@ function App() {
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = 0;
       const content = streamContentRef.current;
-      const thinking = streamThinkingRef.current;
+      setStreamingThinkings([...streamThinkingRef.current.filter(s => s !== '')]);
       setMessages(prev => {
         const copy = [...prev];
         const last = copy[copy.length - 1];
@@ -78,10 +79,6 @@ function App() {
           copy[copy.length - 1] = {
             ...last,
             content: content || last.content,
-            metadata: {
-              ...(last.metadata ?? {}),
-              ...(thinking ? { thinking } : {}),
-            },
           };
         }
         return copy;
@@ -93,11 +90,12 @@ function App() {
     setSelectedId(id);
     setMessages([]);
     streamContentRef.current = '';
-    streamThinkingRef.current = '';
+    streamThinkingRef.current = [];
     streamMetaRef.current = {};
     setStreamMeta(null);
     setHookEvents([]);
     setToolCalls([]);
+    setStreamingThinkings([]);
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = 0;
@@ -140,11 +138,12 @@ function App() {
     setInput('');
     setSending(true);
     streamContentRef.current = '';
-    streamThinkingRef.current = '';
+    streamThinkingRef.current = [];
     streamMetaRef.current = {};
     setStreamMeta(null);
     setHookEvents([]);
     setToolCalls([]);
+    setStreamingThinkings([]);
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = 0;
@@ -180,23 +179,21 @@ function App() {
             return copy;
           });
         } else if (event.type === 'thinking') {
-          streamThinkingRef.current += event.content;
-          setMessages(prev => {
-            const copy = [...prev];
-            const last = copy[copy.length - 1];
-            if (last?.role === 'assistant') {
-              copy[copy.length - 1] = {
-                ...last,
-                metadata: { ...(last.metadata ?? {}), thinking: streamThinkingRef.current },
-              };
-            }
-            return copy;
-          });
+          const arr = streamThinkingRef.current;
+          if (arr.length === 0) arr.push('');
+          arr[arr.length - 1] += event.content;
+          setStreamingThinkings([...arr.filter(s => s !== '')]);
         } else if (event.type === 'text_delta') {
+          const arr = streamThinkingRef.current;
+          if (arr.length > 0 && arr[arr.length - 1] !== '') {
+            arr.push('');
+          }
           streamContentRef.current += event.content;
           scheduleRafUpdate();
         } else if (event.type === 'thinking_delta') {
-          streamThinkingRef.current += event.content;
+          const arr = streamThinkingRef.current;
+          if (arr.length === 0) arr.push('');
+          arr[arr.length - 1] += event.content;
           scheduleRafUpdate();
         } else if (event.type === 'init') {
           streamMetaRef.current = {
@@ -274,6 +271,7 @@ function App() {
               streamMeta={streamMeta}
               hookEvents={hookEvents}
               toolCalls={toolCalls}
+              streamingThinkings={streamingThinkings}
               input={input}
               onInputChange={setInput}
               onHamburger={() => setSidebarOpen(true)}

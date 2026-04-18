@@ -12,12 +12,13 @@ interface ChatViewProps {
   streamMeta?: StreamMeta | null;
   hookEvents?: SSEHookEvent[];
   toolCalls?: ToolCall[];
+  streamingThinkings?: string[];
   input: string;
   onInputChange: (value: string) => void;
   onHamburger: () => void;
 }
 
-export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents, toolCalls, input, onInputChange, onHamburger }: ChatViewProps) {
+export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents, toolCalls, streamingThinkings, input, onInputChange, onHamburger }: ChatViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
                 <MessageBubble
                   message={msg}
                   isStreaming={isStreamingMsg}
+                  streamingThinkings={isStreamingMsg ? streamingThinkings : undefined}
                 />
                 {isStreamingMsg && toolCalls && toolCalls.length > 0 && (
                   <div className="mt-1 space-y-1">
