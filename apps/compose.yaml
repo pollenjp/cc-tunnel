@@ -23,7 +23,7 @@ services:
       PORT: "${CC_REMOTE_AGENT_ENV_PORT:-9091}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
     volumes:
-      - claude-sessions:/root/.claude
+      - claude-sessions:/home/user/.claude
     expose:
       - "${CC_REMOTE_AGENT_ENV_PORT:-9091}"
 
