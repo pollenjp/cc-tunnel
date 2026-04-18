@@ -3,11 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { getAuthOutput, submitAuthInput } from '../api/client';
 
-interface Props {
-  onLoginComplete?: () => void;
-}
-
-export function AuthTerminal({ onLoginComplete: _onLoginComplete }: Props) {
+export function AuthTerminal() {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const cursorRef = useRef(0);

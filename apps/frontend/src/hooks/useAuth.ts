@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { getAuthStatus, initiateLogin, logout as apiLogout, cancelLogin } from '../api/client';
 import type { AuthStatus } from '../api/client';
 
@@ -15,14 +15,14 @@ export function useAuth(): UseAuthReturn {
   const [isLoading, setIsLoading] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const stopPolling = () => {
+  const stopPolling = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-  };
+  }, []);
 
-  const fetchStatus = async () => {
+  const fetchStatus = useCallback(async () => {
     try {
       const s = await getAuthStatus();
       setStatus(s);
@@ -33,14 +33,14 @@ export function useAuth(): UseAuthReturn {
     } catch {
       return null;
     }
-  };
+  }, [stopPolling]);
 
   useEffect(() => {
     fetchStatus().finally(() => setIsLoading(false));
     return () => {
       stopPolling();
     };
-  }, []);
+  }, [fetchStatus, stopPolling]);
 
   const login = async () => {
     setIsLoading(true);

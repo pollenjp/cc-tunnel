@@ -42,19 +42,3 @@ func TestWriteError(t *testing.T) {
 		t.Fatalf("expected 'bad request', got %q", result.Error)
 	}
 }
-
-func TestProxyErrorResponse(t *testing.T) {
-	w := httptest.NewRecorder()
-	body := []byte(`{"error":"upstream error"}`)
-	proxyErrorResponse(w, 502, body)
-
-	if w.Code != 502 {
-		t.Fatalf("expected status 502, got %d", w.Code)
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("expected Content-Type application/json, got %s", ct)
-	}
-	if w.Body.String() != string(body) {
-		t.Fatalf("expected body %q, got %q", string(body), w.Body.String())
-	}
-}

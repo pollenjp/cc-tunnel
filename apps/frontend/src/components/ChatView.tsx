@@ -5,6 +5,13 @@ import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { ToolCallCard } from './ToolCallCard';
 
+interface StoredToolCall {
+  tool_use_id: string;
+  tool_name: string;
+  input_json?: string;
+  result?: string;
+}
+
 interface ChatViewProps {
   messages: Message[];
   onSend: (content: string) => void;
@@ -41,7 +48,7 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
             const msgToolCalls: ToolCall[] = msg.role === 'assistant'
               ? isStreamingMsg
                 ? (toolCalls ?? [])
-                : ((msg.metadata as any)?.tool_calls ?? []).map((tc: any) => ({
+                : ((msg.metadata as { tool_calls?: StoredToolCall[] })?.tool_calls ?? []).map((tc: StoredToolCall) => ({
                     index: 0,
                     toolUseId: tc.tool_use_id,
                     toolName: tc.tool_name,
