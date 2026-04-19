@@ -33,8 +33,6 @@ depends = ["test", "lint"]
 
 [tasks."docker:up"]
 description = "Start all services with docker compose"
-sources = ["**/*"]
-outputs = { auto = true }
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail

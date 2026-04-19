@@ -13,6 +13,7 @@ import { useAuth } from './hooks/useAuth';
 import { AuthGuard } from './components/AuthGuard';
 import { useSSEAbort } from './hooks/useSSEAbort';
 import { useConversationPoller } from './hooks/useConversationPoller';
+import { useConversationListPoller } from './hooks/useConversationListPoller';
 
 import './App.css';
 
@@ -158,11 +159,23 @@ function App() {
     },
   });
 
+  // running な会話がある間、3秒ごとに conversations を更新してサイドバーのスピナーを維持する
+  const hasRunning = conversations.some(c => c.status === 'running');
+  useConversationListPoller({
+    hasRunning,
+    onPoll: refreshConversations,
+  });
+
   const handleSend = async (content: string) => {
     if (!content.trim() || !selectedId || sending) return;
     setInput('');
     setSending(true);
     setIsPolling(false); // SSE送信中はポーリング不要
+
+    // 楽観的に status を 'running' に更新（サイドバーのスピナーを即時表示）
+    setConversations(prev =>
+      prev.map(c => c.id === selectedId ? { ...c, status: 'running' as const } : c)
+    );
 
     // このsend操作のセッションIDを固定し、AbortControllerを取得
     const mySessionId = selectedId;

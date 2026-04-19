@@ -76,11 +76,23 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, streamMeta,
               // DB polling streaming: use content_blocks from message_data
               const meta = msg.message_data as Record<string, unknown> | undefined;
               const contentBlocks = meta?.content_blocks as ContentBlockEntry[] | undefined;
+              const toolCallsData = (meta?.tool_calls as ToolCallData[] | undefined) ?? [];
+              const toolCallMap = new Map(toolCallsData.map(tc => [tc.tool_use_id, tc]));
               blocks = contentBlocks && contentBlocks.length > 0
                 ? contentBlocks.flatMap((cb): AssistantBlock[] => {
                     if (cb.type === 'thinking') return [{ type: 'thinking', content: cb.content }];
                     if (cb.type === 'text') return [{ type: 'text', content: cb.content }];
-                    return [];
+                    const tc = toolCallMap.get(cb.tool_use_id);
+                    if (!tc) return [];
+                    const toolCall: ToolCall = {
+                      index: 0,
+                      toolUseId: tc.tool_use_id,
+                      toolName: tc.tool_name,
+                      inputJson: tc.input_json,
+                      result: tc.result ?? undefined,
+                      isRunning: true,
+                    };
+                    return [{ type: 'tool', toolCall }];
                   })
                 : [{ type: 'text', content: '' }];
             } else {
@@ -155,6 +167,14 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, streamMeta,
                     return <ToolCallCard key={bi} toolCall={block.toolCall} />;
                   }
                 })}
+                {isPollingStreamingMsg && (
+                  <div className="flex items-center gap-1 px-4 py-1 text-xs text-[var(--color-text)]">
+                    <span className="animate-pulse">●</span>
+                    <span className="animate-pulse" style={{ animationDelay: '0.2s' }}>●</span>
+                    <span className="animate-pulse" style={{ animationDelay: '0.4s' }}>●</span>
+                    <span className="ml-1 text-[var(--color-text-muted)]">生成中...</span>
+                  </div>
+                )}
               </div>
             );
           })}

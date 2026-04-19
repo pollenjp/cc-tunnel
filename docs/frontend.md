@@ -91,6 +91,18 @@ type ContentBlockEntry =
 
 会話リストの表示・選択・削除、新規会話作成ボタン、認証情報表示・ログアウトボタンを提供するサイドバー。モバイルではオーバーレイ形式でスライドイン表示される。
 
+#### スピナー表示仕様
+
+会話リストの各アイテムで、`conversation.status === 'running'` の場合にタイトル左側にスピナーを表示する。
+
+| status | スピナー |
+| ------ | -------- |
+| `running` | 表示（`animate-spin` CSS アニメーション） |
+| `idle` | 非表示 |
+| `completed` | 非表示 |
+
+スピナーは `h-3 w-3` の円形ボーダー要素（`border-[var(--color-accent)] border-t-transparent animate-spin`）で、Tailwind CSS の `animate-spin` クラスで回転アニメーションを実現する。
+
 ### `ChatView`
 
 選択中会話のメッセージ一覧と入力欄を表示する。メッセージ追加時に最下部へ自動スクロールする (`messagesEndRef`)。アシスタントメッセージは `AssistantBlock` の配列を順番にレンダリングする。
@@ -298,6 +310,61 @@ AuthTerminal 画面のキャンセルボタンから `useAuth.cancelLogin()` →
 
 ---
 
+## サイドバースピナー制御
+
+### 楽観的 status 更新 (handleSend)
+
+`handleSend` の冒頭で、送信対象会話の status を即座に `'running'` に更新する。
+これにより、バックエンドが DB を更新するより先にサイドバーのスピナーが表示される。
+
+```ts
+// App.tsx handleSend より
+setConversations(prev =>
+  prev.map(c => c.id === selectedId ? { ...c, status: 'running' as const } : c)
+);
+```
+
+送信完了後の `refreshConversations()` で DB の実際の値（`'completed'`）に戻る。
+
+### conversations ポーリング (useConversationListPoller)
+
+`status === 'running'` の会話がある間、3 秒ごとに `listConversations` を呼んで
+サイドバーの会話リストを最新状態に保つ。
+
+```ts
+// hooks/useConversationListPoller.ts
+export function useConversationListPoller({
+  hasRunning,
+  onPoll,
+  intervalMs = 3000,
+}: {
+  hasRunning: boolean;
+  onPoll: () => void;
+  intervalMs?: number;
+}): void {
+  useEffect(() => {
+    if (!hasRunning) return;
+    const id = setInterval(onPoll, intervalMs);
+    return () => clearInterval(id);
+  }, [hasRunning, onPoll, intervalMs]);
+}
+```
+
+**App.tsx での使用:**
+
+```ts
+const hasRunning = conversations.some(c => c.status === 'running');
+useConversationListPoller({
+  hasRunning,
+  onPoll: refreshConversations,
+});
+```
+
+`hasRunning` が `false` になった瞬間にポーリングが停止する。
+DB から `status === 'completed'` が返ると `conversations` が更新され `hasRunning` が `false` になる。
+
+---
+
 ## DB駆動状態管理 (useConversationPoller)
 
 ### 概要
@@ -349,6 +416,17 @@ useConversationPoller({
 - `message_data.content_blocks` があればDBの部分コンテンツを表示
 - `content_blocks` が空なら空テキストブロックを表示
 - ストリーミングアニメーション（カーソル）を付与する
+- `text` / `thinking` ブロックはそのまま表示
+- `tool_use` ブロックは `message_data.tool_calls` の `tool_use_id` マップから復元し `ToolCallCard` で表示（`isRunning: true`）
+  - `tool_calls` にエントリがない場合（バッチ保存前の未確定状態）はそのブロックをスキップ
+- メッセージバブルの下部にパルスインジケータ（`生成中...` テキスト + animate-pulse ドット）を表示
+  - `isPollingStreamingMsg` のときのみ表示。`isPolling=false` の場合は非表示。
+
+### バックエンド: dbMsgToAPI の status マッピング
+
+`handler.go` の `dbMsgToAPI` 関数は `db.Message.Status` を `Message.Status` にマッピングする。
+これにより、`GetConversation` で取得したメッセージの `status` フィールドが正しくフロントエンドに返される。
+`status` が空文字の場合（旧データ）は `Status` フィールドを設定しない（omitempty）。
 
 ### ChatView のエラー表示
 

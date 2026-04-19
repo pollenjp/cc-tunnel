@@ -145,4 +145,95 @@ describe('ChatView', () => {
     const bubble = screen.getByTestId('message-bubble-msg-streaming-no-poll');
     expect(bubble.getAttribute('data-streaming')).toBe('false');
   });
+
+  it('shows pulse indicator with 生成中... text in message bubble for status=streaming when isPolling is true', () => {
+    const msg = makeMsg({
+      id: 'msg-pulse',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'text', content: '部分テキスト' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={true}
+      />,
+    );
+
+    expect(screen.getByText('生成中...')).toBeTruthy();
+  });
+
+  it('does not show pulse indicator for status=streaming when isPolling is false', () => {
+    const msg = makeMsg({
+      id: 'msg-no-pulse',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'text', content: '部分テキスト' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={false}
+      />,
+    );
+
+    expect(screen.queryByText('生成中...')).toBeNull();
+  });
+
+  it('renders ToolCallCard for tool_use block when status=streaming and isPolling is true', () => {
+    const msg = makeMsg({
+      id: 'msg-tool-polling',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'tool_use', tool_use_id: 'tu-1' }],
+        tool_calls: [
+          {
+            tool_use_id: 'tu-1',
+            tool_name: 'bash',
+            input_json: '{"command":"ls"}',
+          },
+        ],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={true}
+      />,
+    );
+
+    expect(screen.getByTestId('tool-call-card')).toBeTruthy();
+  });
+
+  it('does not render ToolCallCard for tool_use when tool_calls data is missing during polling', () => {
+    const msg = makeMsg({
+      id: 'msg-tool-no-data',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'tool_use', tool_use_id: 'tu-missing' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={true}
+      />,
+    );
+
+    expect(screen.queryByTestId('tool-call-card')).toBeNull();
+  });
 });

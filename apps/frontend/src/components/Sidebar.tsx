@@ -73,8 +73,13 @@ export function Sidebar({
               ].join(' ')}
               onClick={() => onSelect(conv.id)}
             >
-              <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-[var(--color-text-bright)]">
-                {getTitle(conv)}
+              <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-[var(--color-text-bright)] flex items-center gap-1.5 min-w-0">
+                {conv.status === 'running' && (
+                  <span className="shrink-0 inline-block h-3 w-3 rounded-full border-2 border-[var(--color-accent)] border-t-transparent animate-spin" />
+                )}
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                  {getTitle(conv)}
+                </span>
               </span>
               <button
                 className="shrink-0 px-1.5 py-0.5 text-xs text-[var(--color-danger)] bg-transparent rounded cursor-pointer opacity-60 hover:opacity-100 hover:bg-[rgba(247,118,142,0.15)] transition-opacity"

@@ -731,6 +731,10 @@ func dbMsgToAPI(m *db.Message) Message {
 		Role:           MessageRole(m.Role),
 		CreatedAt:      m.CreatedAt,
 	}
+	if m.Status != "" {
+		status := MessageStatus(m.Status)
+		msg.Status = &status
+	}
 	if len(m.MessageData) > 0 {
 		msg.MessageData = &m.MessageData
 	}
