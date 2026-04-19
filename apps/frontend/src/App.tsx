@@ -24,6 +24,7 @@ export interface ToolCall {
 }
 
 export type AssistantBlock =
+  | { type: 'thinking'; content: string }
   | { type: 'text'; content: string }
   | { type: 'tool'; toolCall: ToolCall }
 
@@ -51,8 +52,6 @@ function App() {
   const [streamMeta, setStreamMeta] = useState<StreamMeta | null>(null);
   const [hookEvents, setHookEvents] = useState<SSEHookEvent[]>([]);
   const [streamBlocks, setStreamBlocks] = useState<AssistantBlock[]>([]);
-  const [streamingThinkings, setStreamingThinkings] = useState<string[]>([]);
-  const streamThinkingRef = useRef<string[]>([]);
   const rafIdRef = useRef<number>(0);
   const streamMetaRef = useRef<StreamMeta>({});
   const hookEventsRef = useRef<SSEHookEvent[]>([]);
@@ -75,7 +74,6 @@ function App() {
     if (rafIdRef.current) return;
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = 0;
-      setStreamingThinkings([...streamThinkingRef.current.filter(s => s !== '')]);
       setStreamBlocks([...streamBlocksRef.current]);
     });
   }
@@ -84,13 +82,11 @@ function App() {
     setSelectedId(id);
     setMessages([]);
     streamBlocksRef.current = [];
-    streamThinkingRef.current = [];
     streamMetaRef.current = {};
     hookEventsRef.current = [];
     setStreamMeta(null);
     setHookEvents([]);
     setStreamBlocks([]);
-    setStreamingThinkings([]);
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = 0;
@@ -133,13 +129,11 @@ function App() {
     setInput('');
     setSending(true);
     streamBlocksRef.current = [];
-    streamThinkingRef.current = [];
     streamMetaRef.current = {};
     hookEventsRef.current = [];
     setStreamMeta(null);
     setHookEvents([]);
     setStreamBlocks([]);
-    setStreamingThinkings([]);
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = 0;
@@ -175,15 +169,15 @@ function App() {
           }
           scheduleRafUpdate();
         } else if (event.type === 'thinking') {
-          const arr = streamThinkingRef.current;
-          if (arr.length === 0) arr.push('');
-          arr[arr.length - 1] += event.content;
-          setStreamingThinkings([...arr.filter(s => s !== '')]);
-        } else if (event.type === 'text_delta') {
-          const arr = streamThinkingRef.current;
-          if (arr.length > 0 && arr[arr.length - 1] !== '') {
-            arr.push('');
+          const blocks = streamBlocksRef.current;
+          const last = blocks[blocks.length - 1];
+          if (last?.type === 'thinking') {
+            streamBlocksRef.current = [...blocks.slice(0, -1), { type: 'thinking', content: last.content + event.content }];
+          } else {
+            streamBlocksRef.current = [...blocks, { type: 'thinking', content: event.content }];
           }
+          scheduleRafUpdate();
+        } else if (event.type === 'text_delta') {
           const blocks = streamBlocksRef.current;
           const last = blocks[blocks.length - 1];
           if (last?.type === 'text') {
@@ -193,9 +187,13 @@ function App() {
           }
           scheduleRafUpdate();
         } else if (event.type === 'thinking_delta') {
-          const arr = streamThinkingRef.current;
-          if (arr.length === 0) arr.push('');
-          arr[arr.length - 1] += event.content;
+          const blocks = streamBlocksRef.current;
+          const last = blocks[blocks.length - 1];
+          if (last?.type === 'thinking') {
+            streamBlocksRef.current = [...blocks.slice(0, -1), { type: 'thinking', content: last.content + event.content }];
+          } else {
+            streamBlocksRef.current = [...blocks, { type: 'thinking', content: event.content }];
+          }
           scheduleRafUpdate();
         } else if (event.type === 'init') {
           streamMetaRef.current = {
@@ -249,7 +247,6 @@ function App() {
     } catch (err) {
       console.error('Failed to send message:', err);
     } finally {
-      const completedThinkings = streamThinkingRef.current.filter(s => s !== '');
       const finalBlocks = streamBlocksRef.current;
       const finalText = finalBlocks
         .filter((b): b is { type: 'text'; content: string } => b.type === 'text')
@@ -258,11 +255,12 @@ function App() {
       const toolCallsList = finalBlocks
         .filter((b): b is { type: 'tool'; toolCall: ToolCall } => b.type === 'tool')
         .map(b => b.toolCall);
-      const contentBlocks = finalBlocks.map(b =>
-        b.type === 'text'
-          ? { type: 'text' as const, content: b.content }
-          : { type: 'tool_use' as const, tool_use_id: b.toolCall.toolUseId }
-      );
+      const hasThinkingOrTool = finalBlocks.some(b => b.type === 'thinking' || b.type === 'tool');
+      const contentBlocks = finalBlocks.map(b => {
+        if (b.type === 'text') return { type: 'text' as const, content: b.content };
+        if (b.type === 'thinking') return { type: 'thinking' as const, content: b.content };
+        return { type: 'tool_use' as const, tool_use_id: b.toolCall.toolUseId };
+      });
 
       setMessages(prev => {
         const copy = [...prev];
@@ -273,7 +271,6 @@ function App() {
             content: finalText,
             metadata: {
               ...(last.metadata as Record<string, unknown> ?? {}),
-              ...(completedThinkings.length > 0 ? { thinking: completedThinkings.join('\n') } : {}),
               ...(streamMetaRef.current.model ? { model: streamMetaRef.current.model } : {}),
               ...(streamMetaRef.current.totalCostUSD ? { cost_usd: streamMetaRef.current.totalCostUSD } : {}),
               ...(streamMetaRef.current.durationMs ? { duration_ms: streamMetaRef.current.durationMs } : {}),
@@ -285,8 +282,8 @@ function App() {
                   input_json: tc.inputJson,
                   result: tc.result ?? null,
                 })),
-                content_blocks: contentBlocks,
               } : {}),
+              ...(hasThinkingOrTool ? { content_blocks: contentBlocks } : {}),
             },
           };
         }
@@ -321,7 +318,6 @@ function App() {
               streamMeta={streamMeta}
               hookEvents={hookEvents}
               streamBlocks={streamBlocks}
-              streamingThinkings={streamingThinkings}
               input={input}
               onInputChange={setInput}
               onHamburger={() => setSidebarOpen(true)}

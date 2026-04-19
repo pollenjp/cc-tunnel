@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Message, SSEHookEvent, ToolCallData } from '../api/client';
 import type { StreamMeta, ToolCall, AssistantBlock } from '../App';
-import { MessageBubble } from './MessageBubble';
+import { MessageBubble, ThinkingAccordion } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { ToolCallCard } from './ToolCallCard';
 
@@ -12,17 +12,17 @@ interface ChatViewProps {
   streamMeta?: StreamMeta | null;
   hookEvents?: SSEHookEvent[];
   streamBlocks?: AssistantBlock[];
-  streamingThinkings?: string[];
   input: string;
   onInputChange: (value: string) => void;
   onHamburger: () => void;
 }
 
 type ContentBlockEntry =
+  | { type: 'thinking'; content: string }
   | { type: 'text'; content: string }
   | { type: 'tool_use'; tool_use_id: string }
 
-export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents, streamBlocks, streamingThinkings, input, onInputChange, onHamburger }: ChatViewProps) {
+export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents, streamBlocks, input, onInputChange, onHamburger }: ChatViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,6 +69,9 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
               if (contentBlocks && contentBlocks.length > 0) {
                 // New format: reconstruct interleaved blocks
                 blocks = contentBlocks.flatMap((cb): AssistantBlock[] => {
+                  if (cb.type === 'thinking') {
+                    return [{ type: 'thinking', content: cb.content }];
+                  }
                   if (cb.type === 'text') {
                     return [{ type: 'text', content: cb.content }];
                   }
@@ -104,21 +107,21 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
             }
 
             // Indices for metadata placement
-            const firstTextIdx = blocks.findIndex(b => b.type === 'text');
             const lastTextIdx = blocks.map((b, i) => b.type === 'text' ? i : -1).filter(i => i >= 0).pop() ?? -1;
             const lastBlockIdx = blocks.length - 1;
 
             return (
               <div key={msg.id} className="flex flex-col gap-1">
                 {blocks.map((block, bi) => {
-                  if (block.type === 'text') {
+                  if (block.type === 'thinking') {
+                    return <ThinkingAccordion key={bi} content={block.content} />;
+                  } else if (block.type === 'text') {
                     return (
                       <MessageBubble
                         key={bi}
                         message={msg}
                         textContent={block.content}
                         isStreaming={isStreamingMsg && bi === lastBlockIdx}
-                        streamingThinkings={isLast && bi === firstTextIdx ? streamingThinkings : undefined}
                         streamMeta={isStreamingMsg && bi === lastTextIdx ? streamMeta : undefined}
                         hookEvents={isLast && bi === lastTextIdx ? hookEvents : undefined}
                       />

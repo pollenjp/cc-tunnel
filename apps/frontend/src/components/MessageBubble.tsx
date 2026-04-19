@@ -10,12 +10,11 @@ interface MessageBubbleProps {
   message: Message;
   textContent?: string;
   isStreaming?: boolean;
-  streamingThinkings?: string[];
   streamMeta?: StreamMeta | null;
   hookEvents?: SSEHookEvent[];
 }
 
-function ThinkingAccordion({ content }: { content: string }) {
+export function ThinkingAccordion({ content }: { content: string }) {
   const [open, setOpen] = useState(false);
   const preview = content.slice(0, 40).replace(/\n/g, ' ');
   return (
@@ -42,19 +41,17 @@ function ThinkingAccordion({ content }: { content: string }) {
   );
 }
 
-export function MessageBubble({ message, textContent, isStreaming, streamingThinkings, streamMeta, hookEvents }: MessageBubbleProps) {
+export function MessageBubble({ message, textContent, isStreaming, streamMeta, hookEvents }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
-  const thinkings: string[] = streamingThinkings && streamingThinkings.length > 0
-    ? streamingThinkings
-    : (() => {
-        const arr = message.metadata?.thinkings;
-        if (Array.isArray(arr)) return arr as string[];
-        const t = message.metadata?.thinking;
-        if (Array.isArray(t)) return t as string[];
-        if (typeof t === 'string') return [t];
-        return [];
-      })();
+  const thinkings: string[] = (() => {
+    const arr = message.metadata?.thinkings;
+    if (Array.isArray(arr)) return arr as string[];
+    const t = message.metadata?.thinking;
+    if (Array.isArray(t)) return t as string[];
+    if (typeof t === 'string') return [t];
+    return [];
+  })();
 
   const model = streamMeta?.model ?? (message.metadata as Record<string, unknown> | undefined)?.model as string | undefined;
   const costUSD = streamMeta?.totalCostUSD ?? (message.metadata as Record<string, unknown> | undefined)?.cost_usd as number | undefined;
