@@ -158,25 +158,7 @@ function App() {
 
     try {
       await sendMessage(selectedId, content.trim(), (event) => {
-        if (event.type === 'text') {
-          const blocks = streamBlocksRef.current;
-          const last = blocks[blocks.length - 1];
-          if (last?.type === 'text') {
-            streamBlocksRef.current = [...blocks.slice(0, -1), { type: 'text', content: last.content + event.content }];
-          } else {
-            streamBlocksRef.current = [...blocks, { type: 'text', content: event.content }];
-          }
-          scheduleRafUpdate();
-        } else if (event.type === 'thinking') {
-          const blocks = streamBlocksRef.current;
-          const last = blocks[blocks.length - 1];
-          if (last?.type === 'thinking') {
-            streamBlocksRef.current = [...blocks.slice(0, -1), { type: 'thinking', content: last.content + event.content }];
-          } else {
-            streamBlocksRef.current = [...blocks, { type: 'thinking', content: event.content }];
-          }
-          scheduleRafUpdate();
-        } else if (event.type === 'text_delta') {
+        if (event.type === 'text_delta') {
           const blocks = streamBlocksRef.current;
           const last = blocks[blocks.length - 1];
           if (last?.type === 'text') {
