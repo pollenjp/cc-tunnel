@@ -185,6 +185,40 @@ openapi.yaml に定義された 13 種の SSE イベント型 + ToolCallData:
 - ツール実行がある場合は必ず `content_blocks` を保存
 - 旧メッセージ（`content_blocks` なし）との後方互換を維持
 
+## アーキテクチャパターン分類
+
+### 結論
+
+cc-tunnel の内部アーキテクチャは **Transaction Script + 二層構成（Handler-Repository）** に分類される。
+
+### パターン名と根拠
+
+| 観点 | パターン名 | 根拠 |
+|------|-----------|------|
+| ビジネスロジック構成 | **Transaction Script** | 各 HTTP ハンドラーメソッドが「1リクエスト = 1手続き」として完結。`SendMessage()` に会話履歴取得→保存→リモート実行→SSE変換→保存が手続き的に記述される。ドメインモデル層は存在せず、`Conversation`/`Message` はメソッドを持たない純粋な DTO |
+| サービス内部構造 | **二層（Handler + Repository）** | Presentation 層（api/handler.go）と Data Access 層（db/repository.go）は分離されているが、Business Logic 層（service/usecase）は独立パッケージとして存在しない。三層アーキテクチャの中間層が欠落 |
+| デプロイメント | **軽量マイクロサービス** | cc-tunnel と cc-remote-agent が独立した go.mod・Docker コンテナを持ち、HTTP で通信。共有コードなし |
+| データアクセス | **Repository / Table Data Gateway** | `db.Repository` が SQL クエリを集約。構造体はテーブルと 1:1 マッピング |
+| フロントエンド | **コンポーネントベース SPA** | React useState/useRef のみ。外部状態管理なし。App.tsx に全状態集約 |
+| API 設計 | **OpenAPI-First（Contract-First）** | openapi.yaml が型の Single Source of Truth。Go/TypeScript 双方の型を自動生成 |
+
+### 該当しないパターン
+
+| パターン | 不一致理由 |
+|---------|-----------|
+| クリーンアーキテクチャ | 依存性逆転原則（DIP）未適用。handler が具象型に直接依存。ポート/アダプターの概念なし |
+| 三層アーキテクチャ | Presentation と Data Access は分離されているが、Business Logic 層が独立していない |
+| ヘキサゴナル（Ports & Adapters） | インターフェース（Port）が未定義 |
+| DDD | ドメインモデル・集約・値オブジェクトなし |
+
+### 強みと弱み
+
+**強み**: シンプルさ（Go ソース計 10 ファイル）、開発速度（handler に直接記述で完了）、OpenAPI 駆動の型安全性、依存の軽量さ（cc-remote-agent の外部依存は creack/pty のみ）
+
+**弱み**: テスタビリティ（具象型依存でモック注入困難、`handler_test.go` はヘルパーのみ）、Handler 肥大化（`SendMessage` 230 行超）、ビジネスロジックの再利用不可（handler 内インライン）
+
+詳細分析は `logs/2026-04-19T082423JST_cmd_cctunnel_arch_analysis_001/report.md` を参照。
+
 ## ErrorStackHandler（構造化ログ）
 
 `internal/logging/handler.go` で `slog.Handler` インターフェースをラップした `ErrorStackHandler` を実装。
