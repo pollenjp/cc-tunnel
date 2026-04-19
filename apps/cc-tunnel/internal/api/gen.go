@@ -81,6 +81,201 @@ func (e MessageRole) Valid() bool {
 	}
 }
 
+// Defines values for SSECostEventType.
+const (
+	Cost SSECostEventType = "cost"
+)
+
+// Valid indicates whether the value is a known member of the SSECostEventType enum.
+func (e SSECostEventType) Valid() bool {
+	switch e {
+	case Cost:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEDoneEventType.
+const (
+	Done SSEDoneEventType = "done"
+)
+
+// Valid indicates whether the value is a known member of the SSEDoneEventType enum.
+func (e SSEDoneEventType) Valid() bool {
+	switch e {
+	case Done:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEErrorEventType.
+const (
+	SSEErrorEventTypeError SSEErrorEventType = "error"
+)
+
+// Valid indicates whether the value is a known member of the SSEErrorEventType enum.
+func (e SSEErrorEventType) Valid() bool {
+	switch e {
+	case SSEErrorEventTypeError:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEHookEventType.
+const (
+	HookEvent SSEHookEventType = "hook_event"
+)
+
+// Valid indicates whether the value is a known member of the SSEHookEventType enum.
+func (e SSEHookEventType) Valid() bool {
+	switch e {
+	case HookEvent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEInitEventType.
+const (
+	Init SSEInitEventType = "init"
+)
+
+// Valid indicates whether the value is a known member of the SSEInitEventType enum.
+func (e SSEInitEventType) Valid() bool {
+	switch e {
+	case Init:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSERateLimitEventType.
+const (
+	RateLimit SSERateLimitEventType = "rate_limit"
+)
+
+// Valid indicates whether the value is a known member of the SSERateLimitEventType enum.
+func (e SSERateLimitEventType) Valid() bool {
+	switch e {
+	case RateLimit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSETextDeltaEventType.
+const (
+	TextDelta SSETextDeltaEventType = "text_delta"
+)
+
+// Valid indicates whether the value is a known member of the SSETextDeltaEventType enum.
+func (e SSETextDeltaEventType) Valid() bool {
+	switch e {
+	case TextDelta:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSETextEventType.
+const (
+	Text SSETextEventType = "text"
+)
+
+// Valid indicates whether the value is a known member of the SSETextEventType enum.
+func (e SSETextEventType) Valid() bool {
+	switch e {
+	case Text:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEThinkingDeltaEventType.
+const (
+	ThinkingDelta SSEThinkingDeltaEventType = "thinking_delta"
+)
+
+// Valid indicates whether the value is a known member of the SSEThinkingDeltaEventType enum.
+func (e SSEThinkingDeltaEventType) Valid() bool {
+	switch e {
+	case ThinkingDelta:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEThinkingEventType.
+const (
+	Thinking SSEThinkingEventType = "thinking"
+)
+
+// Valid indicates whether the value is a known member of the SSEThinkingEventType enum.
+func (e SSEThinkingEventType) Valid() bool {
+	switch e {
+	case Thinking:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEToolInputDeltaEventType.
+const (
+	ToolInputDelta SSEToolInputDeltaEventType = "tool_input_delta"
+)
+
+// Valid indicates whether the value is a known member of the SSEToolInputDeltaEventType enum.
+func (e SSEToolInputDeltaEventType) Valid() bool {
+	switch e {
+	case ToolInputDelta:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEToolResultEventType.
+const (
+	ToolResult SSEToolResultEventType = "tool_result"
+)
+
+// Valid indicates whether the value is a known member of the SSEToolResultEventType enum.
+func (e SSEToolResultEventType) Valid() bool {
+	switch e {
+	case ToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSEToolUseStartEventType.
+const (
+	ToolUseStart SSEToolUseStartEventType = "tool_use_start"
+)
+
+// Valid indicates whether the value is a known member of the SSEToolUseStartEventType enum.
+func (e SSEToolUseStartEventType) Valid() bool {
+	switch e {
+	case ToolUseStart:
+		return true
+	default:
+		return false
+	}
+}
+
 // AuthCancelResponse defines model for AuthCancelResponse.
 type AuthCancelResponse struct {
 	Message string `json:"message"`
@@ -183,6 +378,136 @@ type Message struct {
 // MessageRole defines model for Message.Role.
 type MessageRole string
 
+// SSECostEvent defines model for SSECostEvent.
+type SSECostEvent struct {
+	DurationMs   int64            `json:"duration_ms"`
+	TotalCostUsd float64          `json:"total_cost_usd"`
+	Type         SSECostEventType `json:"type"`
+}
+
+// SSECostEventType defines model for SSECostEvent.Type.
+type SSECostEventType string
+
+// SSEDoneEvent defines model for SSEDoneEvent.
+type SSEDoneEvent struct {
+	CostUsd   float64          `json:"cost_usd"`
+	SessionId string           `json:"session_id"`
+	Type      SSEDoneEventType `json:"type"`
+}
+
+// SSEDoneEventType defines model for SSEDoneEvent.Type.
+type SSEDoneEventType string
+
+// SSEErrorEvent defines model for SSEErrorEvent.
+type SSEErrorEvent struct {
+	Message string            `json:"message"`
+	Type    SSEErrorEventType `json:"type"`
+}
+
+// SSEErrorEventType defines model for SSEErrorEvent.Type.
+type SSEErrorEventType string
+
+// SSEHookEvent defines model for SSEHookEvent.
+type SSEHookEvent struct {
+	HookEvent *string          `json:"hook_event,omitempty"`
+	HookId    *string          `json:"hook_id,omitempty"`
+	HookName  *string          `json:"hook_name,omitempty"`
+	SessionId *string          `json:"session_id,omitempty"`
+	Subtype   string           `json:"subtype"`
+	Type      SSEHookEventType `json:"type"`
+}
+
+// SSEHookEventType defines model for SSEHookEvent.Type.
+type SSEHookEventType string
+
+// SSEInitEvent defines model for SSEInitEvent.
+type SSEInitEvent struct {
+	Model     string           `json:"model"`
+	SessionId string           `json:"session_id"`
+	Type      SSEInitEventType `json:"type"`
+}
+
+// SSEInitEventType defines model for SSEInitEvent.Type.
+type SSEInitEventType string
+
+// SSERateLimitEvent defines model for SSERateLimitEvent.
+type SSERateLimitEvent struct {
+	RateLimitType string                `json:"rate_limit_type"`
+	ResetsAt      int                   `json:"resets_at"`
+	Status        string                `json:"status"`
+	Type          SSERateLimitEventType `json:"type"`
+}
+
+// SSERateLimitEventType defines model for SSERateLimitEvent.Type.
+type SSERateLimitEventType string
+
+// SSETextDeltaEvent defines model for SSETextDeltaEvent.
+type SSETextDeltaEvent struct {
+	Content string                `json:"content"`
+	Type    SSETextDeltaEventType `json:"type"`
+}
+
+// SSETextDeltaEventType defines model for SSETextDeltaEvent.Type.
+type SSETextDeltaEventType string
+
+// SSETextEvent defines model for SSETextEvent.
+type SSETextEvent struct {
+	Content string           `json:"content"`
+	Type    SSETextEventType `json:"type"`
+}
+
+// SSETextEventType defines model for SSETextEvent.Type.
+type SSETextEventType string
+
+// SSEThinkingDeltaEvent defines model for SSEThinkingDeltaEvent.
+type SSEThinkingDeltaEvent struct {
+	Content string                    `json:"content"`
+	Type    SSEThinkingDeltaEventType `json:"type"`
+}
+
+// SSEThinkingDeltaEventType defines model for SSEThinkingDeltaEvent.Type.
+type SSEThinkingDeltaEventType string
+
+// SSEThinkingEvent defines model for SSEThinkingEvent.
+type SSEThinkingEvent struct {
+	Content string               `json:"content"`
+	Type    SSEThinkingEventType `json:"type"`
+}
+
+// SSEThinkingEventType defines model for SSEThinkingEvent.Type.
+type SSEThinkingEventType string
+
+// SSEToolInputDeltaEvent defines model for SSEToolInputDeltaEvent.
+type SSEToolInputDeltaEvent struct {
+	Index       int                        `json:"index"`
+	PartialJson string                     `json:"partial_json"`
+	Type        SSEToolInputDeltaEventType `json:"type"`
+}
+
+// SSEToolInputDeltaEventType defines model for SSEToolInputDeltaEvent.Type.
+type SSEToolInputDeltaEventType string
+
+// SSEToolResultEvent defines model for SSEToolResultEvent.
+type SSEToolResultEvent struct {
+	Content   string                 `json:"content"`
+	ToolUseId string                 `json:"tool_use_id"`
+	Type      SSEToolResultEventType `json:"type"`
+}
+
+// SSEToolResultEventType defines model for SSEToolResultEvent.Type.
+type SSEToolResultEventType string
+
+// SSEToolUseStartEvent defines model for SSEToolUseStartEvent.
+type SSEToolUseStartEvent struct {
+	Index     int                      `json:"index"`
+	ToolName  string                   `json:"tool_name"`
+	ToolUseId string                   `json:"tool_use_id"`
+	Type      SSEToolUseStartEventType `json:"type"`
+}
+
+// SSEToolUseStartEventType defines model for SSEToolUseStartEvent.Type.
+type SSEToolUseStartEventType string
+
 // SendMessageRequest defines model for SendMessageRequest.
 type SendMessageRequest struct {
 	// Content User message content
@@ -192,6 +517,15 @@ type SendMessageRequest struct {
 // StatusResponse defines model for StatusResponse.
 type StatusResponse struct {
 	Status string `json:"status"`
+}
+
+// ToolCallData defines model for ToolCallData.
+type ToolCallData struct {
+	InputJson string  `json:"input_json"`
+	IsRunning *bool   `json:"is_running,omitempty"`
+	Result    *string `json:"result,omitempty"`
+	ToolName  string  `json:"tool_name"`
+	ToolUseId string  `json:"tool_use_id"`
 }
 
 // ConversationId defines model for ConversationId.
@@ -599,35 +933,42 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

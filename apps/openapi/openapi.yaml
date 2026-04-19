@@ -402,3 +402,181 @@ components:
       properties:
         error:
           type: string
+
+    ToolCallData:
+      type: object
+      required:
+        - tool_use_id
+        - tool_name
+        - input_json
+      properties:
+        tool_use_id:
+          type: string
+        tool_name:
+          type: string
+        input_json:
+          type: string
+        result:
+          type: string
+          nullable: true
+        is_running:
+          type: boolean
+
+    SSETextEvent:
+      type: object
+      required: [type, content]
+      properties:
+        type:
+          type: string
+          enum: [text]
+        content:
+          type: string
+
+    SSEThinkingEvent:
+      type: object
+      required: [type, content]
+      properties:
+        type:
+          type: string
+          enum: [thinking]
+        content:
+          type: string
+
+    SSETextDeltaEvent:
+      type: object
+      required: [type, content]
+      properties:
+        type:
+          type: string
+          enum: [text_delta]
+        content:
+          type: string
+
+    SSEThinkingDeltaEvent:
+      type: object
+      required: [type, content]
+      properties:
+        type:
+          type: string
+          enum: [thinking_delta]
+        content:
+          type: string
+
+    SSEToolUseStartEvent:
+      type: object
+      required: [type, index, tool_use_id, tool_name]
+      properties:
+        type:
+          type: string
+          enum: [tool_use_start]
+        index:
+          type: integer
+        tool_use_id:
+          type: string
+        tool_name:
+          type: string
+
+    SSEToolInputDeltaEvent:
+      type: object
+      required: [type, index, partial_json]
+      properties:
+        type:
+          type: string
+          enum: [tool_input_delta]
+        index:
+          type: integer
+        partial_json:
+          type: string
+
+    SSEToolResultEvent:
+      type: object
+      required: [type, tool_use_id, content]
+      properties:
+        type:
+          type: string
+          enum: [tool_result]
+        tool_use_id:
+          type: string
+        content:
+          type: string
+
+    SSEInitEvent:
+      type: object
+      required: [type, model, session_id]
+      properties:
+        type:
+          type: string
+          enum: [init]
+        model:
+          type: string
+        session_id:
+          type: string
+
+    SSEHookEvent:
+      type: object
+      required: [type, subtype]
+      properties:
+        type:
+          type: string
+          enum: [hook_event]
+        subtype:
+          type: string
+        hook_id:
+          type: string
+        hook_name:
+          type: string
+        hook_event:
+          type: string
+        session_id:
+          type: string
+
+    SSERateLimitEvent:
+      type: object
+      required: [type, status, resets_at, rate_limit_type]
+      properties:
+        type:
+          type: string
+          enum: [rate_limit]
+        status:
+          type: string
+        resets_at:
+          type: integer
+        rate_limit_type:
+          type: string
+
+    SSECostEvent:
+      type: object
+      required: [type, total_cost_usd, duration_ms]
+      properties:
+        type:
+          type: string
+          enum: [cost]
+        total_cost_usd:
+          type: number
+          format: double
+        duration_ms:
+          type: integer
+          format: int64
+
+    SSEDoneEvent:
+      type: object
+      required: [type, session_id, cost_usd]
+      properties:
+        type:
+          type: string
+          enum: [done]
+        session_id:
+          type: string
+        cost_usd:
+          type: number
+          format: double
+
+    SSEErrorEvent:
+      type: object
+      required: [type, message]
+      properties:
+        type:
+          type: string
+          enum: [error]
+        message:
+          type: string

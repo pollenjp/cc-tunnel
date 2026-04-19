@@ -251,7 +251,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		durationMs       int64
 		hookEventsList   []map[string]any
 		thinkingBlocks   []string
-		toolCallsData    []map[string]any
+		toolCallsData    []ToolCallData
 	)
 	executeReq := remoteclient.Request{
 		Prompt:                 req.Content,
@@ -274,7 +274,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 				for _, block := range event.Message.Content {
 					if block.Type == "thinking" && block.Thinking != "" {
 						thinkingContent += block.Thinking
-						sseEvent := map[string]string{"type": "thinking", "content": block.Thinking}
+						sseEvent := SSEThinkingEvent{Type: Thinking, Content: block.Thinking}
 						data, _ := json.Marshal(sseEvent)
 						slog.Info("SSE sent", "data", string(data))
 						if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
@@ -285,7 +285,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					}
 					if block.Type == "text" && block.Text != "" {
 						assistantContent += block.Text
-						sseEvent := map[string]string{"type": "text", "content": block.Text}
+						sseEvent := SSETextEvent{Type: Text, Content: block.Text}
 						data, _ := json.Marshal(sseEvent)
 						slog.Info("SSE sent", "data", string(data))
 						if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
@@ -309,10 +309,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						if len(content) > 1000 {
 							content = content[:1000] + "...[truncated]"
 						}
-						sseData, _ := json.Marshal(map[string]any{
-							"type":        "tool_result",
-							"tool_use_id": block.ToolUseID,
-							"content":     content,
+						sseData, _ := json.Marshal(SSEToolResultEvent{
+							Type:      ToolResult,
+							ToolUseId: block.ToolUseID,
+							Content:   content,
 						})
 						slog.Info("SSE sent", "data", string(sseData))
 						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -341,10 +341,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						if len(content) > 2000 {
 							content = content[:2000] + "...[truncated]"
 						}
-						sseData, _ := json.Marshal(map[string]any{
-							"type":        "tool_result",
-							"tool_use_id": block.ToolUseID,
-							"content":     content,
+						sseData, _ := json.Marshal(SSEToolResultEvent{
+							Type:      ToolResult,
+							ToolUseId: block.ToolUseID,
+							Content:   content,
 						})
 						slog.Info("SSE sent", "data", string(sseData))
 						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -353,8 +353,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						}
 						flusher.Flush()
 						for i, tc := range toolCallsData {
-							if tc["tool_use_id"] == block.ToolUseID {
-								toolCallsData[i]["result"] = content
+							if tc.ToolUseId == block.ToolUseID {
+								result := content
+								toolCallsData[i].Result = &result
 								break
 							}
 						}
@@ -366,10 +367,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 			case "init":
 				if event.Model != "" {
 					modelName = event.Model
-					sseData, _ := json.Marshal(map[string]any{
-						"type":       "init",
-						"model":      event.Model,
-						"session_id": event.SessionID,
+					sseData, _ := json.Marshal(SSEInitEvent{
+						Type:      Init,
+						Model:     event.Model,
+						SessionId: event.SessionID,
 					})
 					slog.Info("SSE sent", "data", string(sseData))
 					if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -385,13 +386,17 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					"hook_name":  event.HookName,
 					"hook_event": event.HookEvent,
 				})
-				sseData, _ := json.Marshal(map[string]any{
-					"type":       "hook_event",
-					"subtype":    event.SubType,
-					"hook_id":    event.HookID,
-					"hook_name":  event.HookName,
-					"hook_event": event.HookEvent,
-					"session_id": event.SessionID,
+				hookID := event.HookID
+				hookName := event.HookName
+				hookEventStr := event.HookEvent
+				sessionID := event.SessionID
+				sseData, _ := json.Marshal(SSEHookEvent{
+					Type:      HookEvent,
+					Subtype:   event.SubType,
+					HookId:    &hookID,
+					HookName:  &hookName,
+					HookEvent: &hookEventStr,
+					SessionId: &sessionID,
 				})
 				slog.Info("SSE sent", "data", string(sseData))
 				if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -416,11 +421,11 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					break
 				}
 				if cbInner.Type == "tool_use" && cbInner.Name != "" {
-					sseData, _ := json.Marshal(map[string]any{
-						"type":        "tool_use_start",
-						"index":       inner.Index,
-						"tool_use_id": cbInner.ID,
-						"tool_name":   cbInner.Name,
+					sseData, _ := json.Marshal(SSEToolUseStartEvent{
+						Type:      ToolUseStart,
+						Index:     inner.Index,
+						ToolUseId: cbInner.ID,
+						ToolName:  cbInner.Name,
 					})
 					slog.Info("SSE sent", "data", string(sseData))
 					if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -428,11 +433,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						return
 					}
 					flusher.Flush()
-					toolCallsData = append(toolCallsData, map[string]any{
-						"tool_use_id": cbInner.ID,
-						"tool_name":   cbInner.Name,
-						"input_json":  "",
-						"result":      nil,
+					toolCallsData = append(toolCallsData, ToolCallData{
+						ToolUseId: cbInner.ID,
+						ToolName:  cbInner.Name,
+						InputJson: "",
 					})
 				}
 			case "content_block_delta":
@@ -443,9 +447,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 				switch delta["type"] {
 				case "text_delta":
 					if delta["text"] != "" {
-						sseData, _ := json.Marshal(map[string]string{
-							"type":    "text_delta",
-							"content": delta["text"],
+						sseData, _ := json.Marshal(SSETextDeltaEvent{
+							Type:    TextDelta,
+							Content: delta["text"],
 						})
 						slog.Info("SSE sent", "data", string(sseData))
 						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -456,9 +460,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					}
 				case "thinking_delta":
 					if delta["thinking"] != "" {
-						sseData, _ := json.Marshal(map[string]string{
-							"type":    "thinking_delta",
-							"content": delta["thinking"],
+						sseData, _ := json.Marshal(SSEThinkingDeltaEvent{
+							Type:    ThinkingDelta,
+							Content: delta["thinking"],
 						})
 						slog.Info("SSE sent", "data", string(sseData))
 						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -473,10 +477,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					}
 				case "input_json_delta":
 					if delta["partial_json"] != "" {
-						sseData, _ := json.Marshal(map[string]any{
-							"type":         "tool_input_delta",
-							"index":        inner.Index,
-							"partial_json": delta["partial_json"],
+						sseData, _ := json.Marshal(SSEToolInputDeltaEvent{
+							Type:        ToolInputDelta,
+							Index:       inner.Index,
+							PartialJson: delta["partial_json"],
 						})
 						slog.Info("SSE sent", "data", string(sseData))
 						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -485,22 +489,18 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						}
 						flusher.Flush()
 						if len(toolCallsData) > 0 {
-							last := toolCallsData[len(toolCallsData)-1]
-							if prev, ok := last["input_json"].(string); ok {
-								last["input_json"] = prev + delta["partial_json"]
-							}
-							toolCallsData[len(toolCallsData)-1] = last
+							toolCallsData[len(toolCallsData)-1].InputJson += delta["partial_json"]
 						}
 					}
 				}
 			}
 		case "rate_limit_event":
 			if event.RateLimitInfo != nil {
-				sseData, _ := json.Marshal(map[string]any{
-					"type":            "rate_limit",
-					"status":          event.RateLimitInfo.Status,
-					"resets_at":       event.RateLimitInfo.ResetsAt,
-					"rate_limit_type": event.RateLimitInfo.Type,
+				sseData, _ := json.Marshal(SSERateLimitEvent{
+					Type:          RateLimit,
+					Status:        event.RateLimitInfo.Status,
+					ResetsAt:      int(event.RateLimitInfo.ResetsAt),
+					RateLimitType: event.RateLimitInfo.Type,
 				})
 				slog.Info("SSE sent", "data", string(sseData))
 				if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
@@ -512,10 +512,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		case "result":
 			costUSD = event.CostUSD
 			durationMs = event.DurationMs
-			costData, _ := json.Marshal(map[string]any{
-				"type":           "cost",
-				"total_cost_usd": event.CostUSD,
-				"duration_ms":    event.DurationMs,
+			costData, _ := json.Marshal(SSECostEvent{
+				Type:         Cost,
+				TotalCostUsd: event.CostUSD,
+				DurationMs:   event.DurationMs,
 			})
 			slog.Info("SSE sent", "data", string(costData))
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", costData); err != nil {
@@ -523,12 +523,11 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 				return
 			}
 			flusher.Flush()
-			doneEvent := map[string]interface{}{
-				"type":       "done",
-				"session_id": event.SessionID,
-				"cost_usd":   event.CostUSD,
-			}
-			data, _ := json.Marshal(doneEvent)
+			data, _ := json.Marshal(SSEDoneEvent{
+				Type:      Done,
+				SessionId: event.SessionID,
+				CostUsd:   event.CostUSD,
+			})
 			slog.Info("SSE sent", "data", string(data))
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 				slog.Warn("SSE write failed", "error", err)
@@ -540,8 +539,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 
 	if err != nil {
 		slog.Error("message streaming error", "conversation_id", convIDStr, "err", err)
-		errEvent := map[string]string{"type": "error", "message": err.Error()}
-		data, _ := json.Marshal(errEvent)
+		data, _ := json.Marshal(SSEErrorEvent{
+			Type:    SSEErrorEventTypeError,
+			Message: err.Error(),
+		})
 		if _, werr := fmt.Fprintf(w, "data: %s\n\n", data); werr != nil {
 			slog.Warn("SSE write failed", "error", werr)
 		}

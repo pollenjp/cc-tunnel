@@ -15,76 +15,37 @@ export type ConversationDetail = components['schemas']['ConversationDetail'];
 export type Message = components['schemas']['Message'];
 export type CreateConversationRequest = components['schemas']['CreateConversationRequest'];
 export type SendMessageRequest = components['schemas']['SendMessageRequest'];
+export type ToolCallData = components['schemas']['ToolCallData'];
 
-// SSE イベントの型（バックエンドが送信するイベント）
-export type SSETextEvent = { type: 'text'; content: string };
-export type SSEThinkingEvent = { type: 'thinking'; content: string };
-export type SSEDoneEvent = { type: 'done'; session_id: string; cost_usd: number };
-export type SSEErrorEvent = { type: 'error'; message: string };
-
-// デルタイベント（リアルタイム表示用）
-export type SSETextDeltaEvent    = { type: 'text_delta';     content: string };
-export type SSEThinkingDeltaEvent = { type: 'thinking_delta'; content: string };
-
-// メタ情報イベント
-export type SSEInitEvent = {
-  type: 'init';
-  model: string;
-  session_id: string;
-  tools?: string[];
-};
-export type SSERateLimitEvent = {
-  type: 'rate_limit';
-  status: string;
-  resets_at: number;
-  rate_limit_type: string;
-};
-export type SSECostEvent = {
-  type: 'cost';
-  total_cost_usd: number;
-  duration_ms: number;
-};
-
-export type SSEHookEvent = {
-  type: 'hook_event';
-  subtype: string;
-  hook_id?: string;
-  hook_name?: string;
-  hook_event?: string;
-  session_id?: string;
-};
-
-export type SSEToolUseStartEvent = {
-  type: 'tool_use_start';
-  index: number;
-  tool_use_id: string;
-  tool_name: string;
-};
-export type SSEToolInputDeltaEvent = {
-  type: 'tool_input_delta';
-  index: number;
-  partial_json: string;
-};
-export type SSEToolResultEvent = {
-  type: 'tool_result';
-  tool_use_id: string;
-  content: string;
-};
+// SSE イベントの型（openapi.yaml から生成）
+export type SSETextEvent = components['schemas']['SSETextEvent'];
+export type SSEThinkingEvent = components['schemas']['SSEThinkingEvent'];
+export type SSETextDeltaEvent = components['schemas']['SSETextDeltaEvent'];
+export type SSEThinkingDeltaEvent = components['schemas']['SSEThinkingDeltaEvent'];
+export type SSEToolUseStartEvent = components['schemas']['SSEToolUseStartEvent'];
+export type SSEToolInputDeltaEvent = components['schemas']['SSEToolInputDeltaEvent'];
+export type SSEToolResultEvent = components['schemas']['SSEToolResultEvent'];
+export type SSEInitEvent = components['schemas']['SSEInitEvent'];
+export type SSEHookEvent = components['schemas']['SSEHookEvent'];
+export type SSERateLimitEvent = components['schemas']['SSERateLimitEvent'];
+export type SSECostEvent = components['schemas']['SSECostEvent'];
+export type SSEDoneEvent = components['schemas']['SSEDoneEvent'];
+export type SSEErrorEvent = components['schemas']['SSEErrorEvent'];
 
 export type SSEEvent =
   | SSETextEvent
   | SSEThinkingEvent
   | SSETextDeltaEvent
   | SSEThinkingDeltaEvent
-  | SSEDoneEvent
-  | SSEErrorEvent
-  | SSEInitEvent
-  | SSERateLimitEvent
-  | SSECostEvent
-  | SSEHookEvent
   | SSEToolUseStartEvent
   | SSEToolInputDeltaEvent
-  | SSEToolResultEvent;
+  | SSEToolResultEvent
+  | SSEInitEvent
+  | SSEHookEvent
+  | SSERateLimitEvent
+  | SSECostEvent
+  | SSEDoneEvent
+  | SSEErrorEvent;
 
 function throwOnError<T>(result: { data?: T; error?: unknown }): T {
   if (result.error) throw result.error;

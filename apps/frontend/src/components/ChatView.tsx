@@ -1,18 +1,9 @@
 import { useEffect, useRef } from 'react';
-import type { Message, SSEHookEvent } from '../api/client';
+import type { Message, SSEHookEvent, ToolCallData } from '../api/client';
 import type { StreamMeta, ToolCall } from '../App';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { ToolCallCard } from './ToolCallCard';
-
-interface StoredToolCall {
-  tool_use_id: string;
-  tool_name?: string;
-  name?: string;
-  input_json?: string;
-  input?: string;
-  result?: string;
-}
 
 interface ChatViewProps {
   messages: Message[];
@@ -50,11 +41,11 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
             const msgToolCalls: ToolCall[] = msg.role === 'assistant'
               ? isStreamingMsg
                 ? (toolCalls ?? [])
-                : ((msg.metadata as { tool_calls?: StoredToolCall[] })?.tool_calls ?? []).map((tc: StoredToolCall) => ({
+                : ((msg.metadata as { tool_calls?: ToolCallData[] })?.tool_calls ?? []).map((tc: ToolCallData) => ({
                     index: 0,
                     toolUseId: tc.tool_use_id,
-                    toolName: tc.tool_name ?? tc.name ?? 'Tool',
-                    inputJson: tc.input_json ?? tc.input ?? '',
+                    toolName: tc.tool_name,
+                    inputJson: tc.input_json,
                     result: tc.result ?? undefined,
                     isRunning: false,
                   }))
