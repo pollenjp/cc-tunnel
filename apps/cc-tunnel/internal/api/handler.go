@@ -430,8 +430,8 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 					flusher.Flush()
 					toolCallsData = append(toolCallsData, map[string]any{
 						"tool_use_id": cbInner.ID,
-						"name":        cbInner.Name,
-						"input":       "",
+						"tool_name":   cbInner.Name,
+						"input_json":  "",
 						"result":      nil,
 					})
 				}
@@ -486,8 +486,8 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						flusher.Flush()
 						if len(toolCallsData) > 0 {
 							last := toolCallsData[len(toolCallsData)-1]
-							if prev, ok := last["input"].(string); ok {
-								last["input"] = prev + delta["partial_json"]
+							if prev, ok := last["input_json"].(string); ok {
+								last["input_json"] = prev + delta["partial_json"]
 							}
 							toolCallsData[len(toolCallsData)-1] = last
 						}

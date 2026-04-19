@@ -7,8 +7,10 @@ import { ToolCallCard } from './ToolCallCard';
 
 interface StoredToolCall {
   tool_use_id: string;
-  tool_name: string;
+  tool_name?: string;
+  name?: string;
   input_json?: string;
+  input?: string;
   result?: string;
 }
 
@@ -51,8 +53,8 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
                 : ((msg.metadata as { tool_calls?: StoredToolCall[] })?.tool_calls ?? []).map((tc: StoredToolCall) => ({
                     index: 0,
                     toolUseId: tc.tool_use_id,
-                    toolName: tc.tool_name,
-                    inputJson: tc.input_json ?? '',
+                    toolName: tc.tool_name ?? tc.name ?? 'Tool',
+                    inputJson: tc.input_json ?? tc.input ?? '',
                     result: tc.result ?? undefined,
                     isRunning: false,
                   }))
