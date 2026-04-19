@@ -3,6 +3,7 @@ package api
 //go:generate go tool oapi-codegen -config ../../../openapi/oapi-codegen.yaml -o gen.go ../../../openapi/openapi.yaml
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -15,8 +16,8 @@ import (
 )
 
 type Server struct {
-	repo   *db.Repository
-	remote *remoteclient.Client
+	repo   repository
+	remote remoteClient
 }
 
 var _ ServerInterface = (*Server)(nil)
@@ -283,8 +284,12 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		executeReq.SystemPrompt = *conv.SystemPrompt
 	}
 
+	// execCtx is independent of r.Context() so that a frontend disconnect (which
+	// cancels r.Context()) does not abort the Claude CLI execution or the DB save.
+	execCtx := context.WithoutCancel(r.Context())
+
 	slog.Info("message streaming started", "conversation_id", convIDStr, "has_resume_session", resumeSessionID != "")
-	newSessionID, err := h.remote.Execute(r.Context(), executeReq, func(event remoteclient.StreamEvent) {
+	newSessionID, err := h.remote.Execute(execCtx, executeReq, func(event remoteclient.StreamEvent) {
 		slog.Info("stream event received", "type", event.Type, "subtype", event.SubType)
 		switch event.Type {
 		case "assistant":
@@ -611,10 +616,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	if len(contentBlocksList) > 0 {
 		messageData["content_blocks"] = contentBlocksList
 	}
-	if _, err := h.repo.CreateMessage(r.Context(), convIDStr, "assistant", messageData); err != nil {
+	if _, err := h.repo.CreateMessage(execCtx, convIDStr, "assistant", messageData); err != nil {
 		slog.Error("failed to save assistant message", "err", err, "conversation_id", convIDStr)
 	}
-	if err := h.repo.UpdateConversationUpdatedAt(r.Context(), convIDStr); err != nil {
+	if err := h.repo.UpdateConversationUpdatedAt(execCtx, convIDStr); err != nil {
 		slog.Error("failed to update conversation updated_at", "err", err, "conversation_id", convIDStr)
 	}
 }
