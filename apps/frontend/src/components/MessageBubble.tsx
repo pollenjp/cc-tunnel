@@ -46,10 +46,14 @@ export function MessageBubble({ message, isStreaming, streamingThinkings, stream
 
   const thinkings: string[] = streamingThinkings && streamingThinkings.length > 0
     ? streamingThinkings
-    : message.metadata?.thinkings as string[] | undefined
-      ?? (message.metadata?.thinking
-          ? [message.metadata.thinking as string]
-          : []);
+    : (() => {
+        const arr = message.metadata?.thinkings;
+        if (Array.isArray(arr)) return arr as string[];
+        const t = message.metadata?.thinking;
+        if (Array.isArray(t)) return t as string[];
+        if (typeof t === 'string') return [t];
+        return [];
+      })();
 
   const model = streamMeta?.model ?? (message.metadata as Record<string, unknown> | undefined)?.model as string | undefined;
   const costUSD = streamMeta?.totalCostUSD ?? (message.metadata as Record<string, unknown> | undefined)?.cost_usd as number | undefined;
