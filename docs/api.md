@@ -14,6 +14,11 @@ cc-remote-agent
 claude CLI
 ```
 
+## スキーマ参照
+
+REST エンドポイントの型定義は `apps/openapi/openapi.yaml` が正規ソース。
+フロントエンド TypeScript 型は `apps/frontend/src/api/schema.d.ts`（`openapi-typescript` で自動生成）が単一ソース。
+
 ---
 
 ## 1. External API (Browser → cc-tunnel)
@@ -322,17 +327,33 @@ data: {"type":"thinking_delta","content":"The user"}
 data: {"type":"tool_use_start","index":0,"tool_use_id":"toolu_01","tool_name":"bash"}
 ```
 
+| フィールド | 型 | 説明 |
+|------------|-----|------|
+| `index` | integer | コンテンツブロックのインデックス |
+| `tool_use_id` | string | ツール使用ID |
+| `tool_name` | string | ツール名 |
+
 **`tool_input_delta`** — ツール入力の差分
 
 ```
 data: {"type":"tool_input_delta","index":0,"partial_json":"{\"command\":\"ls"}
 ```
 
-**`tool_result`** — ツール実行結果（1000文字で切り捨て）
+| フィールド | 型 | 説明 |
+|------------|-----|------|
+| `index` | integer | コンテンツブロックのインデックス |
+| `partial_json` | string | ツール入力JSONの差分断片 |
+
+**`tool_result`** — ツール実行結果（アシスタント側1000文字、ユーザー側2000文字で切り捨て）
 
 ```
 data: {"type":"tool_result","tool_use_id":"toolu_01","content":"file1.txt\nfile2.txt"}
 ```
+
+| フィールド | 型 | 説明 |
+|------------|-----|------|
+| `tool_use_id` | string | 対応する `tool_use_start` のツール使用ID |
+| `content` | string | ツール実行結果テキスト |
 
 **`hook_event`** — Claude Code フックイベント
 
@@ -381,6 +402,35 @@ data: {"type":"error","message":"execution failed"}
 
 **Response 400**: リクエスト不正  
 **Response 404**: 会話が存在しない
+
+#### アシスタントメッセージのメタデータ
+
+アシスタント返信完了後、DB に保存されるメッセージの `metadata` フィールドには以下が格納される。
+
+| キー | 型 | 説明 |
+|------|----|------|
+| `session_id` | string | Claude CLI セッションID（次回 `--resume` に使用） |
+| `model` | string | 使用モデル名 |
+| `cost_usd` | number | コスト（USD） |
+| `duration_ms` | integer | 実行時間（ミリ秒） |
+| `tool_calls` | ToolCallData[] | ツール呼び出しデータ一覧 |
+| `thinking` | string[] | 思考ブロック一覧 |
+| `hook_events` | object[] | フックイベント一覧 |
+| `content_blocks` | object[] | コンテンツブロック一覧 |
+
+##### ToolCallData
+
+`metadata.tool_calls` の各要素。openapi.yaml の `ToolCallData` スキーマ参照。
+
+| フィールド | 型 | 必須 | 説明 |
+|------------|-----|:----:|------|
+| `tool_use_id` | string | ✓ | ツール使用ID（SSE `tool_use_start` の `tool_use_id` と対応） |
+| `tool_name` | string | ✓ | ツール名 |
+| `input_json` | string | ✓ | ツール入力JSON文字列（`input_json_delta` を結合したもの） |
+| `result` | string | - | ツール実行結果（`tool_result` イベント受信後に格納） |
+| `is_running` | boolean | - | 実行中フラグ |
+
+> **廃止フォーマット**: 旧バージョンでは `tool_calls` の各要素に `name`/`input` フィールドを使用していた。現行フォーマットでは `tool_name`/`input_json` に変更されている（後方互換性なし）。
 
 ---
 

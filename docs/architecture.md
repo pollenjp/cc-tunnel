@@ -62,7 +62,7 @@
    - type=rate_limit → レートリミット情報を表示
    - type=cost / done → 完了・コスト情報を streamMeta に記録
 9. cc-tunnel: "done" 受信後、アシスタントメッセージを PostgreSQL に保存
-   metadata に session_id と thinking を含める
+   metadata に session_id, thinking, content_blocks, tool_calls, model, cost_usd, duration_ms, hook_events を含める
 ```
 
 ## データフロー: 認証時 (PTY + xterm.js フロー)
@@ -122,3 +122,81 @@
 | コンテナ | Docker Compose (4 サービス) |
 | リバースプロキシ | nginx (frontend コンテナ内) |
 | データベース | PostgreSQL 18-alpine |
+
+## OpenAPI 型統一
+
+`apps/openapi/openapi.yaml` が型定義の single source of truth。
+
+| 生成先 | ツール | 出力ファイル |
+|--------|--------|-------------|
+| Go (サーバー型 + ルーティング) | oapi-codegen v2.6.1 | `apps/cc-tunnel/internal/api/gen.go` |
+| TypeScript (クライアント型) | openapi-typescript v7.13.0 | `apps/frontend/src/api/schema.d.ts` |
+
+Go 側の生成コマンド（`handler.go` に `//go:generate` ディレクティブとして記録）:
+
+```
+go tool oapi-codegen -config ../../../openapi/oapi-codegen.yaml -o gen.go ../../../openapi/openapi.yaml
+```
+
+### SSE イベント型一覧
+
+openapi.yaml に定義された 13 種の SSE イベント型 + ToolCallData:
+
+| 型名 | type 値 | 説明 |
+|------|---------|------|
+| SSEInitEvent | `init` | ストリーム開始・モデル名・session_id |
+| SSETextEvent | `text` | アシスタントテキスト（全体） |
+| SSEThinkingEvent | `thinking` | 拡張思考ブロック（全体） |
+| SSETextDeltaEvent | `text_delta` | テキストの差分ストリーム |
+| SSEThinkingDeltaEvent | `thinking_delta` | 思考の差分ストリーム |
+| SSEToolUseStartEvent | `tool_use_start` | ツール呼び出し開始 |
+| SSEToolInputDeltaEvent | `tool_input_delta` | ツール入力 JSON の差分 |
+| SSEToolResultEvent | `tool_result` | ツール実行結果 |
+| SSEHookEvent | `hook_event` | Claude Code フックイベント |
+| SSERateLimitEvent | `rate_limit` | レートリミット情報 |
+| SSECostEvent | `cost` | コスト・実行時間 |
+| SSEDoneEvent | `done` | ストリーム完了 |
+| SSEErrorEvent | `error` | エラー |
+
+`ToolCallData` 型もあわせて定義（`tool_use_id`, `tool_name`, `input_json`, `result`, `is_running`）。
+
+## content_blocks アーキテクチャ
+
+`SendMessage()` (handler.go) は SSE ストリームを処理しながら `contentBlocksList` を構築し、
+ストリーム完了後に `metadata["content_blocks"]` として DB に保存する。
+
+### ブロック構造
+
+```json
+[
+  { "type": "thinking", "content": "<thinking text>" },
+  { "type": "text",     "content": "<text content>" },
+  { "type": "tool_use", "tool_use_id": "<id>" }
+]
+```
+
+| type | 生成タイミング | 主なフィールド |
+|------|--------------|---------------|
+| `thinking` | `event.Type == "assistant"` の thinking ブロック | `content` |
+| `text` | `event.Type == "assistant"` の text ブロック | `content` |
+| `tool_use` | `event.Type == "assistant"` の tool_use ブロック | `tool_use_id` |
+
+- ブロック順序はストリーム受信順と一致（thinking → text → tool_use の自然な順序）
+- ツール実行がある場合は必ず `content_blocks` を保存
+- 旧メッセージ（`content_blocks` なし）との後方互換を維持
+
+## ErrorStackHandler（構造化ログ）
+
+`internal/logging/handler.go` で `slog.Handler` インターフェースをラップした `ErrorStackHandler` を実装。
+
+```go
+type ErrorStackHandler struct {
+    Next slog.Handler
+}
+```
+
+`slog.Error()` 等でエラー属性を含むレコードが渡されると、自動で `"stack"` 属性（`[]string` の `file:line` リスト）を付与する。
+
+- `extractStack()` が `runtime.Callers` でコールスタックを取得（最大 8 フレーム）
+- slog / runtime 内部フレームは自動スキップ
+- `Enabled`, `WithAttrs`, `WithGroup` も委譲して完全なハンドラーインターフェースを実装

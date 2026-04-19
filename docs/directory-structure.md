@@ -8,6 +8,7 @@ cc-tunnel/
 │   └── workflows/
 │       └── ci.yml                    # CI パイプライン (lint / test / build)
 ├── README.md                         # プロジェクト概要・セットアップ手順
+├── logs/                             # cmd 実行ログ記録ディレクトリ (git-ignored)
 ├── design/
 │   └── architecture.md               # 設計検討ドキュメント
 ├── docs/
@@ -37,8 +38,10 @@ cc-tunnel/
     │       │   └── handler.go        # HTTP ハンドラー (/execute, /health, /auth/*)
     │       ├── auth/
     │       │   └── manager.go        # PTY 認証フロー管理 (creack/pty, outputBuf)
-    │       └── claude/
-    │           └── executor.go       # claude CLI exec・ndjson ストリーム処理
+    │       ├── claude/
+    │       │   └── executor.go       # claude CLI exec・ndjson ストリーム処理
+    │       └── logging/
+    │           └── handler.go        # ErrorStackHandler: error 属性検出時にスタックトレース付与
     │
     ├── cc-tunnel/                    # API ゲートウェイ兼会話管理サービス (Go)
     │   ├── Dockerfile
@@ -61,6 +64,8 @@ cc-tunnel/
     │       │   └── migrations/
     │       │       ├── 001_create_conversations.sql  # conversations テーブル
     │       │       └── 002_create_messages.sql       # messages テーブル
+    │       ├── logging/
+    │       │   └── handler.go        # ErrorStackHandler: error 属性検出時にスタックトレース付与
     │       └── remoteclient/
     │           └── client.go         # cc-remote-agent HTTP クライアント (Execute / Auth*)
     │

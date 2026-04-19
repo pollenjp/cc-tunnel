@@ -21,12 +21,54 @@ App.tsx
    │   ├─ Sidebar
    │   └─ main
    │       └─ ChatView
-   │           ├─ MessageBubble (×N)
-   │           │   └─ ToolCallCard (×N, streaming 中)
+   │           ├─ (assistant メッセージごとにブロック順にレンダリング)
+   │           │   ├─ ThinkingAccordion (thinking ブロック)
+   │           │   ├─ MessageBubble (text ブロック)
+   │           │   └─ ToolCallCard (tool ブロック)
    │           └─ MessageInput
    └─ [ログイン待ち] 認証画面
        └─ AuthTerminal
 ```
+
+---
+
+## AssistantBlock 型とブロック分割表示
+
+アシスタントの応答は `AssistantBlock` の配列として管理される。
+
+```ts
+export type AssistantBlock =
+  | { type: 'thinking'; content: string }
+  | { type: 'text';    content: string }
+  | { type: 'tool';    toolCall: ToolCall }
+```
+
+### ストリーミング中
+
+`streamBlocksRef` がすべてのブロックをリアルタイムで蓄積する。RAF (requestAnimationFrame) バッチ更新で `streamBlocks` state に反映される。
+
+- `text` / `text_delta` イベント → 末尾が `text` ブロックなら追記、なければ新規追加
+- `thinking` / `thinking_delta` イベント → 末尾が `thinking` ブロックなら追記、なければ新規追加
+- `tool_use_start` イベント → `{ type: 'tool', toolCall: { isRunning: true } }` を末尾に追加
+- `tool_input_delta` イベント → 該当 `index` の tool ブロックの `inputJson` を追記
+- `tool_result` イベント → 該当 `toolUseId` の tool ブロックに `result` をセットし `isRunning: false`
+
+### DB 復元時 (新形式)
+
+`metadata.content_blocks` にブロック順序が保存されている場合:
+
+```ts
+type ContentBlockEntry =
+  | { type: 'thinking'; content: string }
+  | { type: 'text'; content: string }
+  | { type: 'tool_use'; tool_use_id: string }
+```
+
+`metadata.tool_calls` (ToolCallData[]) を `tool_use_id` でマップし、`tool_use` エントリを `ToolCall` に変換してブロック列を再構築する。
+
+### DB 復元時 (旧形式)
+
+`metadata.content_blocks` がない場合は `msg.content` を text ブロックとし、`metadata.tool_calls` を末尾に並べるフォールバック表示を行う。
 
 ---
 
@@ -51,35 +93,59 @@ App.tsx
 
 ### `ChatView`
 
-選択中会話のメッセージ一覧と入力欄を表示する。メッセージ追加時に最下部へ自動スクロールする (`messagesEndRef`)。
+選択中会話のメッセージ一覧と入力欄を表示する。メッセージ追加時に最下部へ自動スクロールする (`messagesEndRef`)。アシスタントメッセージは `AssistantBlock` の配列を順番にレンダリングする。
 
 **Props**
 
-| 名前            | 型                    | 用途                                         |
-| --------------- | --------------------- | -------------------------------------------- |
-| `messages`      | `Message[]`           | 表示するメッセージ一覧                       |
-| `onSend`        | `(content) => void`   | 送信ハンドラ                                 |
-| `isStreaming`   | `boolean`             | SSE 受信中フラグ                             |
-| `streamMeta`    | `StreamMeta \| null`  | モデル・コスト・所要時間などのメタ情報       |
-| `hookEvents`    | `SSEHookEvent[]`      | フックイベント一覧（フックイベントパネル用） |
-| `toolCalls`     | `ToolCall[]`          | ツール呼び出し一覧（ToolCallCard 表示用）    |
-| `input`         | `string`              | テキストエリアの入力値                       |
-| `onInputChange` | `(value) => void`     | 入力値変更ハンドラ                           |
-| `onHamburger`   | `() => void`          | モバイルでサイドバーを開くハンドラ           |
+| 名前            | 型                       | 用途                                         |
+| --------------- | ------------------------ | -------------------------------------------- |
+| `messages`      | `Message[]`              | 表示するメッセージ一覧                       |
+| `onSend`        | `(content) => void`      | 送信ハンドラ                                 |
+| `isStreaming`   | `boolean`                | SSE 受信中フラグ                             |
+| `streamMeta`    | `StreamMeta \| null`     | モデル・コスト・所要時間などのメタ情報       |
+| `hookEvents`    | `SSEHookEvent[]`         | フックイベント一覧（フックイベントパネル用） |
+| `streamBlocks`  | `AssistantBlock[]`       | ストリーミング中のブロック列                 |
+| `input`         | `string`                 | テキストエリアの入力値                       |
+| `onInputChange` | `(value) => void`        | 入力値変更ハンドラ                           |
+| `onHamburger`   | `() => void`             | モバイルでサイドバーを開くハンドラ           |
 
 ### `MessageBubble`
 
-1件のメッセージを描画するコンポーネント。ユーザー/アシスタントでスタイルを切り替える。アシスタントメッセージは ReactMarkdown でレンダリングし、コードブロックは react-syntax-highlighter でハイライト。思考ブロック (`thinking`) は折りたたみ UI で表示する。
+1件のテキストブロックを描画するコンポーネント。ユーザー/アシスタントでスタイルを切り替える。アシスタントメッセージは ReactMarkdown でレンダリングし、コードブロックは react-syntax-highlighter でハイライト。
+
+- `textContent` prop が渡された場合はそちらを優先して表示（ストリーミング中の部分テキスト）。
+- `ThinkingAccordion` も同ファイルからエクスポートされる。
+
+### `ThinkingAccordion`
+
+thinking ブロック 1 件を折りたたみ UI で表示するコンポーネント (`MessageBubble.tsx` からエクスポート)。
+
+- 閉じた状態: `🤔` + テキスト先頭 40 文字プレビュー + `▸`
+- 開いた状態: `🤔 思考過程` + 全テキスト (最大高さ 256px、スクロール可)
 
 ### `ToolCallCard`
 
-ツール呼び出し 1 件を表示するカードコンポーネント。ツール名に対応したアイコンとツール名を表示し、クリックで引数・結果を折りたたみ表示する。
+ツール呼び出し 1 件を表示するカードコンポーネント。
 
 - `open` (`useState<boolean>`) で展開/折りたたみ状態を管理する。
-- `toolCall.isRunning` が `true` のとき: 黄色の pulse インジケータを表示。
-- `toolCall.isRunning` が `false` のとき: 緑の ✓ マークを表示。
-- 展開時: 引数 (`inputJson`) を `pre` タグで、結果 (`result`) を `pre` タグで表示（最大高さあり、スクロール可）。
+- **閉じた状態 (ヘッダー行)**: アイコン + ツール名（太字）+ `getInputPreview()` によるインプットプレビュー（70 文字制限）+ 実行状態インジケータ。
+- **閉じた状態 (プレビュー行)**:
+  - 実行中 (`isRunning: true`、結果なし): `実行中...` テキスト
+  - 完了 (`isRunning: false`、結果あり): `getResultPreview()` による先頭 4 行プレビュー (`line-clamp-4`)
+- **開いた状態**: 全 `inputJson` + 全 `result` を `pre` タグで表示（最大高さあり、スクロール可）。
 - アイコンは `TOOL_ICONS` テーブルで管理し、未定義ツールは `🔧` にフォールバック。
+
+**`getInputPreview(toolName, inputJson)` のフィールド抽出ルール**
+
+| toolName | 抽出フィールド |
+| -------- | -------------- |
+| Bash | `command` |
+| Read / Edit / Write | `file_path` |
+| Glob | `pattern` |
+| Grep | `pattern` |
+| WebSearch | `query` |
+| WebFetch | `url` |
+| その他 | 最初のキーの値 |
 
 ### `MessageInput`
 
@@ -105,11 +171,11 @@ Claude CLI の認証フロー (OAuth) 用のターミナルエミュレータ。
 | `sidebarOpen`      | `useState<boolean>`         | モバイルでのサイドバー開閉状態                           |
 | `streamMeta`       | `useState<StreamMeta\|null>` | ストリーミング中のモデル・コスト等のメタ情報            |
 | `hookEvents`       | `useState<SSEHookEvent[]>`  | 受信したフックイベント一覧                               |
-| `toolCalls`        | `useState<ToolCall[]>`      | 受信したツール呼び出し一覧                               |
-| `streamContentRef` | `useRef<string>`            | ストリーミング中のテキスト累積 (RAF バッチ更新用)        |
-| `streamThinkingRef`| `useRef<string>`            | ストリーミング中の思考ブロック累積テキスト (RAF バッチ更新用) |
+| `streamBlocks`     | `useState<AssistantBlock[]>` | ストリーミング中のブロック列 (RAF 更新で反映)           |
 | `rafIdRef`         | `useRef<number>`            | `requestAnimationFrame` ID (重複スケジュール防止)        |
 | `streamMetaRef`    | `useRef<StreamMeta>`        | メタ情報の最新値を保持するバッファ (RAF 間の参照用)      |
+| `hookEventsRef`    | `useRef<SSEHookEvent[]>`    | フックイベントの最新値バッファ (finally で参照)          |
+| `streamBlocksRef`  | `useRef<AssistantBlock[]>`  | ブロック列の最新値バッファ (RAF バッチ更新用)            |
 
 ### `useAuth.ts`
 
@@ -139,19 +205,49 @@ Claude CLI の認証フロー (OAuth) 用のターミナルエミュレータ。
 3. レスポンスボディを `ReadableStream` として読み取り、`TextDecoder` で SSE テキストにデコードする。
 4. `\n\n` 区切りで各 SSE イベントを分割し、`data: {...}` の JSON をパースする。
 5. イベントタイプに応じた処理:
-   - `type: "text"` → `messages` の最後のアシスタントメッセージに `content` を追記する。
-   - `type: "thinking"` → `streamThinkingRef` に追記し、`messages` の `metadata.thinking` を更新する。
-   - `type: "text_delta"` → `streamContentRef` に追記し、`requestAnimationFrame` でバッチ更新する。
-   - `type: "thinking_delta"` → `streamThinkingRef` に追記し、`requestAnimationFrame` でバッチ更新する。
+   - `type: "text"` / `type: "text_delta"` → `streamBlocksRef` の末尾 text ブロックに追記（なければ新規）し RAF スケジュール。
+   - `type: "thinking"` / `type: "thinking_delta"` → `streamBlocksRef` の末尾 thinking ブロックに追記（なければ新規）し RAF スケジュール。
+   - `type: "tool_use_start"` → `streamBlocksRef` に `{ type: 'tool', toolCall: { isRunning: true } }` を追加し RAF スケジュール。
+   - `type: "tool_input_delta"` → `streamBlocksRef` の該当 `index` の tool ブロックの `inputJson` に追記し RAF スケジュール。
+   - `type: "tool_result"` → `streamBlocksRef` の該当 `toolUseId` の tool ブロックに `result` をセットし `isRunning: false`、RAF スケジュール。
    - `type: "init"` → `streamMetaRef` にモデル名・セッション ID を設定し `streamMeta` を更新する。
    - `type: "rate_limit"` → `streamMetaRef` にレートリミット状態を設定し `streamMeta` を更新する。
    - `type: "cost"` → `streamMetaRef` にコスト・所要時間を設定し `streamMeta` を更新する。
-   - `type: "hook_event"` → `hookEvents` に追加する。
-   - `type: "tool_use_start"` → `toolCalls` に新しい `ToolCall`（`isRunning: true`）を追加する。
-   - `type: "tool_input_delta"` → `toolCalls` の該当インデックスの `inputJson` に追記する。
-   - `type: "tool_result"` → `toolCalls` の該当 `toolUseId` に `result` をセットし `isRunning: false` にする。
-   - `type: "done"` / `type: "error"` → コールバックに渡されるが現状の UI では特別処理なし。
-6. ストリーミング完了後、`sending` を `false` にして会話リストを更新する。
+   - `type: "hook_event"` → `hookEventsRef` および `hookEvents` に追加する。
+   - `type: "done"` / `type: "error"` → 現状の UI では特別処理なし。
+6. ストリーミング完了後 (`finally` ブロック):
+   - `streamBlocksRef` から `finalText`（text ブロックの結合）と `toolCallsList` を抽出する。
+   - thinking または tool ブロックが存在する場合、`metadata.content_blocks` に全ブロックを保存する。
+   - `metadata.tool_calls` に ToolCallData リストを保存する。
+   - `sending` を `false` にして会話リストを更新する。
+
+---
+
+## content_blocks 保存（ストリーミング完了時）
+
+ストリーミング完了後の `finally` ブロックで、ブロック情報を `metadata` に保存する。
+
+- **保存条件**: `finalBlocks` に `thinking` または `tool` ブロックが含まれる場合。
+- **`metadata.content_blocks`**: ブロック順序を保持した配列。
+  ```ts
+  [
+    { type: 'text', content: '...' },
+    { type: 'thinking', content: '...' },
+    { type: 'tool_use', tool_use_id: '...' },
+  ]
+  ```
+- **`metadata.tool_calls`**: ToolCallData の配列（`tool_use_id`, `tool_name`, `input_json`, `result`）。
+- DB 復元時は `content_blocks` を使って順序通りのブロック列を再構築する。
+
+---
+
+## OpenAPI 生成型の使用
+
+- **`api/schema.d.ts`**: `openapi-typescript` で `apps/openapi/openapi.yaml` から自動生成。**手動編集禁止**。
+- **`api/client.ts`**: `components['schemas'][...]` 型エイリアスを定義し、`openapi-fetch` ベースの API クライアントを実装。手書きの型定義を廃止し、生成型に統一。
+  - `ToolCallData`: `components['schemas']['ToolCallData']` のエイリアス
+  - 各 SSE イベント型: `components['schemas']['SSE*Event']` のエイリアス
+- **`ChatView.tsx`**: `StoredToolCall` 型を廃止し、`ToolCallData` を `api/client.ts` からインポートして使用。
 
 ---
 
@@ -186,30 +282,19 @@ AuthTerminal 画面のキャンセルボタンから `useAuth.cancelLogin()` →
 
 ## フックイベントパネル
 
-ストリーミング中に受信した `hook_event` を `ChatView` 下部の `<details>` 要素に折りたたみ表示する。
+ストリーミング中に受信した `hook_event` をアシスタントメッセージのメタデータ行に `<details>` 要素で折りたたみ表示する。
 
-- `hookEvents.length > 0` のとき表示される。
-- `<summary>` に件数 (`Hook Events (N)`) を表示。
-- 展開すると各イベントを `[subtype] hook_name` 形式で一覧表示する（最大高さ 160px、スクロール可）。
+- `msgHookEvents.length > 0` のとき表示される。
+- `<summary>` に件数 (`▸ Hook Events (N)`) を表示。
+- 展開すると各イベントを `subtype — hook_name` 形式で一覧表示する。
 
 ---
 
 ## ツール使用可視化
 
-SSE ストリーミング中にアシスタントがツールを呼び出すと、最後のアシスタントメッセージの直下に `ToolCallCard` のリストが表示される。
+ストリーミング中・DB 復元時ともに、アシスタントメッセージのブロック列に `ToolCallCard` が順番にレンダリングされる。
 
-- 表示条件: `isStreaming && isLast && msg.role === 'assistant' && toolCalls.length > 0`
-- 各カードはツール名・実行状態（実行中/完了）・引数・結果を表示する。
+- ストリーミング中: `streamBlocks` の `type === 'tool'` ブロックとして表示される。
+- DB 復元時: `metadata.content_blocks` から `type === 'tool_use'` エントリを `ToolCallData` に紐付けて再構築。
 - `tool_use_start` → `tool_input_delta` → `tool_result` の順で状態が遷移する。
-- ストリーミング完了後は `toolCalls` がリセット (`setToolCalls([])`) され、カードは非表示になる。
-
----
-
-## 思考ブロック（thinkingOpen 折りたたみ UI）
-
-アシスタントメッセージに `metadata.thinking` が存在する場合、`MessageBubble` はメッセージ本文の上部に折りたたみ可能な「思考過程」セクションを表示する。
-
-- `thinkingOpen` (`useState<boolean>`) で開閉状態を管理する。
-- 閉じた状態: `▸ 思考過程` ボタンのみ表示。
-- 開いた状態: `▾ 思考過程` ボタン + 思考テキスト (最大高さ 256px、スクロール可) を表示。
-- ストリーミング中は `streamThinkingRef` を通じてリアルタイムに `metadata.thinking` が更新されるため、開いていれば逐次表示される。
+- ストリーミング完了後は `streamBlocks` がリセット (`setStreamBlocks([])`) され、履歴は `metadata.content_blocks` として `messages` に保持される。
