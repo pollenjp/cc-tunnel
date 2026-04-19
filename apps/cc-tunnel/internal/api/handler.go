@@ -205,18 +205,18 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 
 	// ユーザーメッセージを DB に保存
-	_, err = h.repo.CreateMessage(r.Context(), convIDStr, "user", req.Content, nil)
+	_, err = h.repo.CreateMessage(r.Context(), convIDStr, "user", map[string]interface{}{"content": req.Content})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	// 過去メッセージから --resume 用 session_id を取得
-	// 最新の assistant メッセージの metadata["session_id"] を使う
+	// 最新の assistant メッセージの message_data["session_id"] を使う
 	var resumeSessionID string
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role == "assistant" {
-			if sid, ok := history[i].Metadata["session_id"].(string); ok && sid != "" {
+			if sid, ok := history[i].MessageData["session_id"].(string); ok && sid != "" {
 				resumeSessionID = sid
 				break
 			}
@@ -226,9 +226,25 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	// cc-remote-agent への会話履歴（フォールバック用）
 	var convHistory []remoteclient.Message
 	for _, m := range history {
+		content := ""
+		if m.Role == "user" {
+			content, _ = m.MessageData["content"].(string)
+		} else if m.Role == "assistant" {
+			if cbs, ok := m.MessageData["content_blocks"].([]interface{}); ok {
+				for _, cb := range cbs {
+					if block, ok := cb.(map[string]interface{}); ok {
+						if block["type"] == "text" {
+							if t, ok := block["content"].(string); ok {
+								content += t
+							}
+						}
+					}
+				}
+			}
+		}
 		convHistory = append(convHistory, remoteclient.Message{
 			Role:    m.Role,
-			Content: m.Content,
+			Content: content,
 		})
 	}
 
@@ -566,32 +582,35 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 
 	slog.Info("message streaming completed", "conversation_id", convIDStr)
-	// assistant メッセージを DB に保存（session_id を metadata に含める）
-	metadata := map[string]interface{}{"session_id": newSessionID}
+	// assistant メッセージを DB に保存（session_id を message_data に含める）
+	messageData := map[string]interface{}{"session_id": newSessionID}
+	if assistantContent != "" {
+		messageData["content"] = assistantContent
+	}
 	if len(thinkingBlocks) > 0 {
-		metadata["thinking"] = thinkingBlocks
+		messageData["thinking"] = thinkingBlocks
 	} else if thinkingContent != "" {
-		metadata["thinking"] = []string{thinkingContent}
+		messageData["thinking"] = []string{thinkingContent}
 	}
 	if modelName != "" {
-		metadata["model"] = modelName
+		messageData["model"] = modelName
 	}
 	if costUSD > 0 {
-		metadata["cost_usd"] = costUSD
+		messageData["cost_usd"] = costUSD
 	}
 	if durationMs > 0 {
-		metadata["duration_ms"] = durationMs
+		messageData["duration_ms"] = durationMs
 	}
 	if len(hookEventsList) > 0 {
-		metadata["hook_events"] = hookEventsList
+		messageData["hook_events"] = hookEventsList
 	}
 	if len(toolCallsData) > 0 {
-		metadata["tool_calls"] = toolCallsData
+		messageData["tool_calls"] = toolCallsData
 	}
 	if len(contentBlocksList) > 0 {
-		metadata["content_blocks"] = contentBlocksList
+		messageData["content_blocks"] = contentBlocksList
 	}
-	if _, err := h.repo.CreateMessage(r.Context(), convIDStr, "assistant", assistantContent, metadata); err != nil {
+	if _, err := h.repo.CreateMessage(r.Context(), convIDStr, "assistant", messageData); err != nil {
 		slog.Error("failed to save assistant message", "err", err, "conversation_id", convIDStr)
 	}
 	if err := h.repo.UpdateConversationUpdatedAt(r.Context(), convIDStr); err != nil {
@@ -635,11 +654,10 @@ func dbMsgToAPI(m *db.Message) Message {
 		Id:             msgID,
 		ConversationId: convID,
 		Role:           MessageRole(m.Role),
-		Content:        m.Content,
 		CreatedAt:      m.CreatedAt,
 	}
-	if len(m.Metadata) > 0 {
-		msg.Metadata = &m.Metadata
+	if len(m.MessageData) > 0 {
+		msg.MessageData = &m.MessageData
 	}
 	return msg
 }

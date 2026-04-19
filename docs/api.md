@@ -233,16 +233,14 @@ Claude CLI の認証状態を返す。
       "id": "msg-uuid",
       "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
       "role": "user",
-      "content": "Hello",
-      "metadata": null,
+      "message_data": { "content": "Hello" },
       "created_at": "2026-04-18T01:01:00Z"
     },
     {
       "id": "msg-uuid-2",
       "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
       "role": "assistant",
-      "content": "Hi! How can I help?",
-      "metadata": { "session_id": "abc123" },
+      "message_data": { "session_id": "abc123", "content": "Hi! How can I help?" },
       "created_at": "2026-04-18T01:01:05Z"
     }
   ]
@@ -403,12 +401,13 @@ data: {"type":"error","message":"execution failed"}
 **Response 400**: リクエスト不正  
 **Response 404**: 会話が存在しない
 
-#### アシスタントメッセージのメタデータ
+#### アシスタントメッセージの message_data
 
-アシスタント返信完了後、DB に保存されるメッセージの `metadata` フィールドには以下が格納される。
+アシスタント返信完了後、DB に保存されるメッセージの `message_data` フィールドには以下が格納される。
 
 | キー | 型 | 説明 |
 |------|----|------|
+| `content` | string | アシスタント応答のテキスト全文 |
 | `session_id` | string | Claude CLI セッションID（次回 `--resume` に使用） |
 | `model` | string | 使用モデル名 |
 | `cost_usd` | number | コスト（USD） |

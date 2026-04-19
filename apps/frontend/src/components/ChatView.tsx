@@ -61,7 +61,7 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
                 : [{ type: 'text', content: '' }];
             } else {
               // Loaded from DB
-              const meta = msg.metadata as Record<string, unknown> | undefined;
+              const meta = msg.message_data as Record<string, unknown> | undefined;
               const contentBlocks = meta?.content_blocks as ContentBlockEntry[] | undefined;
               const toolCallsData = (meta?.tool_calls as ToolCallData[] | undefined) ?? [];
               const toolCallMap = new Map(toolCallsData.map(tc => [tc.tool_use_id, tc]));
@@ -90,7 +90,7 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
               } else {
                 // Old format: single text block + all tool calls below
                 blocks = [
-                  { type: 'text', content: msg.content },
+                  { type: 'text', content: (meta?.content as string | undefined) ?? '' },
                   ...toolCallsData.map((tc): AssistantBlock => ({
                     type: 'tool',
                     toolCall: {

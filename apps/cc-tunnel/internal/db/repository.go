@@ -92,29 +92,31 @@ type Message struct {
 	ID             string                 `json:"id"`
 	ConversationID string                 `json:"conversation_id"`
 	Role           string                 `json:"role"`
-	Content        string                 `json:"content"`
-	Metadata       map[string]interface{} `json:"metadata"`
+	MessageData    map[string]interface{} `json:"message_data"`
 	CreatedAt      time.Time              `json:"created_at"`
 }
 
-func (r *Repository) CreateMessage(ctx context.Context, conversationID, role, content string, metadata map[string]interface{}) (*Message, error) {
-	metaBytes, err := json.Marshal(metadata)
+func (r *Repository) CreateMessage(ctx context.Context, conversationID, role string, messageData map[string]interface{}) (*Message, error) {
+	if messageData == nil {
+		messageData = map[string]interface{}{}
+	}
+	dataBytes, err := json.Marshal(messageData)
 	if err != nil {
 		return nil, err
 	}
 
 	const q = `
-		INSERT INTO messages (conversation_id, role, content, metadata)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, conversation_id, role, content, metadata, created_at
+		INSERT INTO messages (conversation_id, role, message_data)
+		VALUES ($1, $2, $3)
+		RETURNING id, conversation_id, role, message_data, created_at
 	`
-	row := r.pool.QueryRow(ctx, q, conversationID, role, content, metaBytes)
+	row := r.pool.QueryRow(ctx, q, conversationID, role, dataBytes)
 	m := &Message{}
-	var metaRaw []byte
-	if err := row.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &metaRaw, &m.CreatedAt); err != nil {
+	var dataRaw []byte
+	if err := row.Scan(&m.ID, &m.ConversationID, &m.Role, &dataRaw, &m.CreatedAt); err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(metaRaw, &m.Metadata); err != nil {
+	if err := json.Unmarshal(dataRaw, &m.MessageData); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -122,7 +124,7 @@ func (r *Repository) CreateMessage(ctx context.Context, conversationID, role, co
 
 func (r *Repository) ListMessages(ctx context.Context, conversationID string) ([]*Message, error) {
 	const q = `
-		SELECT id, conversation_id, role, content, metadata, created_at
+		SELECT id, conversation_id, role, message_data, created_at
 		FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC
 	`
 	rows, err := r.pool.Query(ctx, q, conversationID)
@@ -134,11 +136,11 @@ func (r *Repository) ListMessages(ctx context.Context, conversationID string) ([
 	var result []*Message
 	for rows.Next() {
 		m := &Message{}
-		var metaRaw []byte
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &metaRaw, &m.CreatedAt); err != nil {
+		var dataRaw []byte
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &dataRaw, &m.CreatedAt); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(metaRaw, &m.Metadata); err != nil {
+		if err := json.Unmarshal(dataRaw, &m.MessageData); err != nil {
 			return nil, err
 		}
 		result = append(result, m)

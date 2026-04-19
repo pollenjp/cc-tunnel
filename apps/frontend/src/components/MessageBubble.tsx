@@ -44,19 +44,21 @@ export function ThinkingAccordion({ content }: { content: string }) {
 export function MessageBubble({ message, textContent, isStreaming, streamMeta, hookEvents }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
+  const msgData = message.message_data as Record<string, unknown> | undefined;
+
   const thinkings: string[] = (() => {
-    const arr = message.metadata?.thinkings;
+    const arr = msgData?.thinkings;
     if (Array.isArray(arr)) return arr as string[];
-    const t = message.metadata?.thinking;
+    const t = msgData?.thinking;
     if (Array.isArray(t)) return t as string[];
     if (typeof t === 'string') return [t];
     return [];
   })();
 
-  const model = streamMeta?.model ?? (message.metadata as Record<string, unknown> | undefined)?.model as string | undefined;
-  const costUSD = streamMeta?.totalCostUSD ?? (message.metadata as Record<string, unknown> | undefined)?.cost_usd as number | undefined;
-  const durationMs = streamMeta?.durationMs ?? (message.metadata as Record<string, unknown> | undefined)?.duration_ms as number | undefined;
-  const msgHookEvents = hookEvents ?? (message.metadata as Record<string, unknown> | undefined)?.hook_events as SSEHookEvent[] | undefined;
+  const model = streamMeta?.model ?? msgData?.model as string | undefined;
+  const costUSD = streamMeta?.totalCostUSD ?? msgData?.cost_usd as number | undefined;
+  const durationMs = streamMeta?.durationMs ?? msgData?.duration_ms as number | undefined;
+  const msgHookEvents = hookEvents ?? msgData?.hook_events as SSEHookEvent[] | undefined;
 
   return (
     <div className={`flex flex-col gap-1 max-w-[75%] ${isUser ? 'self-end' : 'self-start'}`}>
@@ -101,7 +103,7 @@ export function MessageBubble({ message, textContent, isStreaming, streamMeta, h
             },
           }}
         >
-          {textContent ?? message.content}
+          {textContent ?? (msgData?.content as string | undefined) ?? ''}
         </ReactMarkdown>
       </div>
       {!isUser && (model || costUSD != null || msgHookEvents && msgHookEvents.length > 0) && (

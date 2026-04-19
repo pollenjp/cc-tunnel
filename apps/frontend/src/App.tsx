@@ -143,7 +143,7 @@ function App() {
       id: crypto.randomUUID(),
       conversation_id: selectedId,
       role: 'user' as Message['role'],
-      content: content.trim(),
+      message_data: { content: content.trim() },
       created_at: new Date().toISOString(),
     };
     setMessages(prev => [...prev, userMsg]);
@@ -152,7 +152,6 @@ function App() {
       id: crypto.randomUUID(),
       conversation_id: selectedId,
       role: 'assistant' as Message['role'],
-      content: '',
       created_at: new Date().toISOString(),
     };
     setMessages(prev => [...prev, assistantMsg]);
@@ -268,9 +267,9 @@ function App() {
         if (last?.role === 'assistant') {
           copy[copy.length - 1] = {
             ...last,
-            content: finalText,
-            metadata: {
-              ...(last.metadata as Record<string, unknown> ?? {}),
+            message_data: {
+              ...((last.message_data as Record<string, unknown>) ?? {}),
+              content: finalText,
               ...(streamMetaRef.current.model ? { model: streamMetaRef.current.model } : {}),
               ...(streamMetaRef.current.totalCostUSD ? { cost_usd: streamMetaRef.current.totalCostUSD } : {}),
               ...(streamMetaRef.current.durationMs ? { duration_ms: streamMetaRef.current.durationMs } : {}),

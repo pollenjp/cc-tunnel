@@ -232,8 +232,7 @@ export interface components {
             conversation_id: string;
             /** @enum {string} */
             role: "user" | "assistant" | "system";
-            content: string;
-            metadata?: {
+            message_data?: {
                 [key: string]: unknown;
             };
             /** Format: date-time */

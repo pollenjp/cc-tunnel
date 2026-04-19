@@ -344,7 +344,6 @@ components:
         - id
         - conversation_id
         - role
-        - content
         - created_at
       properties:
         id:
@@ -356,9 +355,7 @@ components:
         role:
           type: string
           enum: [user, assistant, system]
-        content:
-          type: string
-        metadata:
+        message_data:
           type: object
           additionalProperties: true
         created_at:
