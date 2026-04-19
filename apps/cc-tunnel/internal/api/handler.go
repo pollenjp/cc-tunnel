@@ -227,9 +227,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	var convHistory []remoteclient.Message
 	for _, m := range history {
 		content := ""
-		if m.Role == "user" {
+		switch m.Role {
+		case "user":
 			content, _ = m.MessageData["content"].(string)
-		} else if m.Role == "assistant" {
+		case "assistant":
 			if cbs, ok := m.MessageData["content_blocks"].([]interface{}); ok {
 				for _, cb := range cbs {
 					if block, ok := cb.(map[string]interface{}); ok {
