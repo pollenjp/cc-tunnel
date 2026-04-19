@@ -244,14 +244,15 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 
 	// cc-remote-agent に実行依頼
 	var (
-		assistantContent string
-		thinkingContent  string
-		modelName        string
-		costUSD          float64
-		durationMs       int64
-		hookEventsList   []map[string]any
-		thinkingBlocks   []string
-		toolCallsData    []ToolCallData
+		assistantContent  string
+		thinkingContent   string
+		modelName         string
+		costUSD           float64
+		durationMs        int64
+		hookEventsList    []map[string]any
+		thinkingBlocks    []string
+		toolCallsData     []ToolCallData
+		contentBlocksList []map[string]interface{}
 	)
 	executeReq := remoteclient.Request{
 		Prompt:                 req.Content,
@@ -273,6 +274,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 			if event.Message != nil {
 				for _, block := range event.Message.Content {
 					if block.Type == "thinking" && block.Thinking != "" {
+						contentBlocksList = append(contentBlocksList, map[string]interface{}{
+							"type":    "thinking",
+							"content": block.Thinking,
+						})
 						thinkingContent += block.Thinking
 						sseEvent := SSEThinkingEvent{Type: Thinking, Content: block.Thinking}
 						data, _ := json.Marshal(sseEvent)
@@ -284,6 +289,10 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						flusher.Flush()
 					}
 					if block.Type == "text" && block.Text != "" {
+						contentBlocksList = append(contentBlocksList, map[string]interface{}{
+							"type":    "text",
+							"content": block.Text,
+						})
 						assistantContent += block.Text
 						sseEvent := SSETextEvent{Type: Text, Content: block.Text}
 						data, _ := json.Marshal(sseEvent)
@@ -293,6 +302,12 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 							return
 						}
 						flusher.Flush()
+					}
+					if block.Type == "tool_use" && block.ID != "" {
+						contentBlocksList = append(contentBlocksList, map[string]interface{}{
+							"type":        "tool_use",
+							"tool_use_id": block.ID,
+						})
 					}
 					if block.Type == "tool_result" {
 						content := ""
@@ -572,6 +587,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 	if len(toolCallsData) > 0 {
 		metadata["tool_calls"] = toolCallsData
+	}
+	if len(contentBlocksList) > 0 {
+		metadata["content_blocks"] = contentBlocksList
 	}
 	if _, err := h.repo.CreateMessage(r.Context(), convIDStr, "assistant", assistantContent, metadata); err != nil {
 		slog.Error("failed to save assistant message", "err", err, "conversation_id", convIDStr)
