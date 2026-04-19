@@ -219,7 +219,7 @@ describe('ChatView', () => {
     expect(screen.getByTestId('tool-call-card')).toBeTruthy();
   });
 
-  it('does not render ToolCallCard for tool_use when tool_calls data is missing during polling', () => {
+  it('renders placeholder ToolCallCard for tool_use block when tool_calls data is missing during polling', () => {
     const msg = makeMsg({
       id: 'msg-tool-no-data',
       role: 'assistant',
@@ -237,7 +237,8 @@ describe('ChatView', () => {
       />,
     );
 
-    expect(screen.queryByTestId('tool-call-card')).toBeNull();
+    // Even without tool_calls data, a placeholder ToolCallCard should be rendered.
+    expect(screen.getByTestId('tool-call-card')).toBeTruthy();
   });
 
   it('shows TypingIndicator instead of empty bubble when isPolling=true and content_blocks is empty', () => {
@@ -298,6 +299,72 @@ describe('ChatView', () => {
         messages={[msg]}
         isPolling={false}
         isStreaming={false}
+      />,
+    );
+
+    expect(screen.queryByTestId('typing-indicator')).toBeNull();
+  });
+
+  it('shows TypingIndicator when isRunning=true even if isPolling=false (reconnect race condition)', () => {
+    const msg = makeMsg({
+      id: 'msg-reconnect-race',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'text', content: '途中テキスト' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={false}
+        isStreaming={false}
+        isRunning={true}
+      />,
+    );
+
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
+  });
+
+  it('shows TypingIndicator when isRunning=true with empty message_data', () => {
+    const msg = makeMsg({
+      id: 'msg-isrunning-empty',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {},
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={false}
+        isRunning={true}
+      />,
+    );
+
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
+  });
+
+  it('does not show TypingIndicator when isRunning=false and isPolling=false and isStreaming=false', () => {
+    const msg = makeMsg({
+      id: 'msg-no-running',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'text', content: '完了テキスト' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={false}
+        isStreaming={false}
+        isRunning={false}
       />,
     );
 

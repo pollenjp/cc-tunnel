@@ -125,7 +125,9 @@ ChatView での使用:
 | `isInProgress` + ブロックにコンテンツあり | コンテンツを通常描画 + 末尾に TypingIndicator |
 | `isInProgress=false` | TypingIndicator 非表示 |
 
-`isInProgress` = `isStreamingMsg || isPollingStreamingMsg`（SSE・DBポーリング両方に適用）。
+`isInProgress` = `isStreamingMsg || isPollingStreamingMsg || isRunning === true`（SSE・DBポーリング両方に適用）。
+
+`isRunning` prop は App.tsx から `sending || hasStreamingMessage` として渡される。`hasStreamingMessage = messages.some(m => m.status === 'streaming')` により、ポーリング復帰時の `isPolling` 更新タイミングのズレ（race condition）でも TypingIndicator が確実に表示される。
 
 ### `ChatView`
 
@@ -139,6 +141,7 @@ ChatView での使用:
 | `onSend`        | `(content) => void`      | 送信ハンドラ                                 |
 | `isStreaming`   | `boolean`                | SSE 受信中フラグ                             |
 | `isPolling`     | `boolean \| undefined`   | ポーリング中フラグ（DB駆動状態管理）         |
+| `isRunning`     | `boolean \| undefined`   | 実行中フラグ（`sending \|\| hasStreamingMessage`）TypingIndicator 表示制御用 |
 | `streamMeta`    | `StreamMeta \| null`     | モデル・コスト・所要時間などのメタ情報       |
 | `hookEvents`    | `SSEHookEvent[]`         | フックイベント一覧（フックイベントパネル用） |
 | `streamBlocks`  | `AssistantBlock[]`       | ストリーミング中のブロック列                 |

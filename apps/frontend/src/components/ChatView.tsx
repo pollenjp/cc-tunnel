@@ -11,6 +11,7 @@ interface ChatViewProps {
   onSend: (content: string) => void;
   isStreaming: boolean;
   isPolling?: boolean;
+  isRunning?: boolean;
   streamMeta?: StreamMeta | null;
   hookEvents?: SSEHookEvent[];
   streamBlocks?: AssistantBlock[];
@@ -24,7 +25,7 @@ type ContentBlockEntry =
   | { type: 'text'; content: string }
   | { type: 'tool_use'; tool_use_id: string }
 
-export function ChatView({ messages, onSend, isStreaming, isPolling, streamMeta, hookEvents, streamBlocks, input, onInputChange, onHamburger }: ChatViewProps) {
+export function ChatView({ messages, onSend, isStreaming, isPolling, isRunning, streamMeta, hookEvents, streamBlocks, input, onInputChange, onHamburger }: ChatViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -84,15 +85,23 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, streamMeta,
                     if (cb.type === 'thinking') return [{ type: 'thinking', content: cb.content }];
                     if (cb.type === 'text') return [{ type: 'text', content: cb.content }];
                     const tc = toolCallMap.get(cb.tool_use_id);
-                    if (!tc) return [];
-                    const toolCall: ToolCall = {
-                      index: 0,
-                      toolUseId: tc.tool_use_id,
-                      toolName: tc.tool_name,
-                      inputJson: tc.input_json,
-                      result: tc.result ?? undefined,
-                      isRunning: true,
-                    };
+                    const toolCall: ToolCall = tc
+                      ? {
+                          index: 0,
+                          toolUseId: tc.tool_use_id,
+                          toolName: tc.tool_name,
+                          inputJson: tc.input_json,
+                          result: tc.result ?? undefined,
+                          isRunning: true,
+                        }
+                      : {
+                          // tool_calls 未保存時のフォールバック
+                          index: 0,
+                          toolUseId: cb.tool_use_id,
+                          toolName: '',
+                          inputJson: '',
+                          isRunning: true,
+                        };
                     return [{ type: 'tool', toolCall }];
                   })
                 : [{ type: 'text', content: '' }];
@@ -147,7 +156,7 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, streamMeta,
             const lastTextIdx = blocks.map((b, i) => b.type === 'text' ? i : -1).filter(i => i >= 0).pop() ?? -1;
             const lastBlockIdx = blocks.length - 1;
             const isShowingStreaming = isStreamingMsg || isPollingStreamingMsg;
-            const isInProgress = isStreamingMsg || isPollingStreamingMsg;
+            const isInProgress = isStreamingMsg || isPollingStreamingMsg || isRunning === true;
             const isEmptyBlocks =
               blocks.length === 1 && blocks[0].type === 'text' && blocks[0].content === '';
 

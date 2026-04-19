@@ -334,6 +334,8 @@ function App() {
     }
   };
 
+  const hasStreamingMessage = messages.some(m => m.status === 'streaming');
+
   return (
     <AuthGuard auth={auth}>
       <div className="flex flex-row h-screen overflow-hidden bg-[var(--color-bg)]">
@@ -356,6 +358,7 @@ function App() {
               onSend={handleSend}
               isStreaming={sending}
               isPolling={isPolling}
+              isRunning={sending || hasStreamingMessage}
               streamMeta={streamMeta}
               hookEvents={hookEvents}
               streamBlocks={streamBlocks}

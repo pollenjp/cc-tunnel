@@ -173,6 +173,8 @@ WHERE id = $2
 
 `UpdateMessageContentBlocks(ctx, messageID, contentBlocks)` で呼び出す。5秒 ticker による定期バッチ保存と、実行完了時の最終保存に使用。
 
+> **バッチ保存における tool_calls**: 5秒 ticker の goroutine は `UpdateMessageContentBlocks` に加えて `MergeMessageData({tool_calls: snapshotTools})` も呼び出す。これにより、フロントエンドがポーリング（`isPolling=true`）で会話を復元した際、SSE完了前でも `tool_calls` を参照できる。
+
 **メッセージステータス更新**
 
 ```sql
@@ -190,7 +192,10 @@ SET message_data = message_data || $1::jsonb,
 WHERE id = $2
 ```
 
-`MergeMessageData(ctx, messageID, extra)` で呼び出す。実行完了後に session_id / model / cost_usd / duration_ms 等を既存 message_data にマージする。
+`MergeMessageData(ctx, messageID, extra)` で呼び出す。2つの用途で使用される:
+
+1. **バッチ保存（5秒 ticker）**: `{tool_calls: snapshotTools}` をマージ。ポーリング中のフロントエンドがtool_calls情報を取得できるようにする。
+2. **実行完了時**: session_id / model / cost_usd / duration_ms / hook_events / tool_calls 等を一括マージ。
 
 **実行状態更新**
 

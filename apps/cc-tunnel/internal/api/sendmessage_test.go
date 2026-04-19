@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,7 @@ type mockRepoCheckCtx struct {
 	streamingMsgCreated        bool
 	updateContentBlocksCalled  bool
 	msgStatusHistory           []string
+	mergeDataHistory           []map[string]interface{}
 }
 
 func (m *mockRepoCheckCtx) CreateConversation(_ context.Context, _, _ string, _ *string) (*db.Conversation, error) {
@@ -112,7 +114,8 @@ func (m *mockRepoCheckCtx) UpdateMessageStatus(_ context.Context, _ string, stat
 	return nil
 }
 
-func (m *mockRepoCheckCtx) MergeMessageData(_ context.Context, _ string, _ map[string]interface{}) error {
+func (m *mockRepoCheckCtx) MergeMessageData(_ context.Context, _ string, data map[string]interface{}) error {
+	m.mergeDataHistory = append(m.mergeDataHistory, data)
 	return nil
 }
 
@@ -541,5 +544,119 @@ func TestSendMessage_MessageStatusCompletedOnSuccess(t *testing.T) {
 	last := repo.msgStatusHistory[len(repo.msgStatusHistory)-1]
 	if last != "completed" {
 		t.Errorf("FAIL: last message status = %q, want %q", last, "completed")
+	}
+}
+
+// =============================================================================
+// TDD Cycle (polling_tool_display): バッチ ticker が tool_calls も保存すること
+// =============================================================================
+
+// mockRemoteSlowExec fires events then sleeps so that the batch ticker goroutine
+// has time to fire multiple times before Execute returns.
+type mockRemoteSlowExec struct {
+	events    []remoteclient.StreamEvent
+	sessionID string
+	sleepDur  time.Duration
+}
+
+func (m *mockRemoteSlowExec) GetAuthStatus(_ context.Context) (*remoteclient.AuthStatus, error) {
+	return &remoteclient.AuthStatus{}, nil
+}
+func (m *mockRemoteSlowExec) InitiateLogin(_ context.Context, _ string) (*remoteclient.LoginResponse, error) {
+	return &remoteclient.LoginResponse{}, nil
+}
+func (m *mockRemoteSlowExec) Logout(_ context.Context) (*remoteclient.AuthStatus, error) {
+	return &remoteclient.AuthStatus{}, nil
+}
+func (m *mockRemoteSlowExec) CancelLogin(_ context.Context) (*remoteclient.AuthCancelResponse, error) {
+	return &remoteclient.AuthCancelResponse{}, nil
+}
+func (m *mockRemoteSlowExec) SubmitAuthInput(_ context.Context, _ string) (*remoteclient.AuthInputResponse, error) {
+	return &remoteclient.AuthInputResponse{}, nil
+}
+func (m *mockRemoteSlowExec) GetAuthOutput(_ context.Context, _ int) (*remoteclient.AuthOutputResponse, error) {
+	return &remoteclient.AuthOutputResponse{}, nil
+}
+func (m *mockRemoteSlowExec) Execute(_ context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
+	for _, e := range m.events {
+		onEvent(e)
+	}
+	time.Sleep(m.sleepDur)
+	return m.sessionID, nil
+}
+
+// makeToolUseStartStreamEvent builds a stream_event/content_block_start event
+// that triggers tool_use processing in SendMessage.
+func makeToolUseStartStreamEvent(id, name string) remoteclient.StreamEvent {
+	cbInner, _ := json.Marshal(map[string]string{
+		"type": "tool_use",
+		"id":   id,
+		"name": name,
+	})
+	innerEvent, _ := json.Marshal(map[string]interface{}{
+		"type":          "content_block_start",
+		"index":         0,
+		"content_block": json.RawMessage(cbInner),
+	})
+	return remoteclient.StreamEvent{
+		Type:  "stream_event",
+		Event: json.RawMessage(innerEvent),
+	}
+}
+
+// TestSendMessage_BatchTickerSavesToolCalls verifies that the batch ticker goroutine
+// calls MergeMessageData with "tool_calls" in addition to UpdateMessageContentBlocks.
+//
+// Without the fix: the batch goroutine only calls UpdateMessageContentBlocks.
+//   → MergeMessageData with "tool_calls" is called exactly once (at completion only).
+// With the fix: the batch goroutine also calls MergeMessageData with "tool_calls".
+//   → MergeMessageData with "tool_calls" is called >= 2 times (batch + completion).
+func TestSendMessage_BatchTickerSavesToolCalls(t *testing.T) {
+	const convIDStr = "ffff0001-ffff-ffff-ffff-ffffffffffff"
+	ctx := context.Background()
+
+	repo := &mockRepoCheckCtx{
+		conv: makeConv(convIDStr),
+		msgs: []*db.Message{},
+	}
+	// mockRemoteSlowExec fires events then sleeps 30ms so that the 1ms batch ticker
+	// has time to fire multiple times before Execute returns.
+	remote := &mockRemoteSlowExec{
+		events: []remoteclient.StreamEvent{
+			makeToolUseStartStreamEvent("toolu_001", "bash"),
+			makeResultEvent("sess-batch-tool"),
+		},
+		sessionID: "sess-batch-tool",
+		sleepDur:  30 * time.Millisecond,
+	}
+
+	w := httptest.NewRecorder()
+	body := strings.NewReader(`{"content":"batch tool test"}`)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server := &Server{
+		repo:          repo,
+		remote:        remote,
+		batchInterval: 1 * time.Millisecond,
+	}
+	convID := ConversationId(uuid.MustParse(convIDStr))
+	server.SendMessage(w, req, convID)
+
+	// Count how many MergeMessageData calls included "tool_calls" key.
+	toolCallsMergeCount := 0
+	for _, data := range repo.mergeDataHistory {
+		if _, ok := data["tool_calls"]; ok {
+			toolCallsMergeCount++
+		}
+	}
+
+	// With the fix: batch ticker also calls MergeMessageData(tool_calls), so count >= 2.
+	// Without the fix: only completion saves tool_calls → count == 1.
+	if toolCallsMergeCount < 2 {
+		t.Errorf("FAIL: MergeMessageData with 'tool_calls' called %d time(s), want >= 2\n"+
+			"Expected: batch ticker calls MergeMessageData(tool_calls) during streaming\n"+
+			"Got: MergeMessageData(tool_calls) called only at completion (not in batch)",
+			toolCallsMergeCount)
 	}
 }

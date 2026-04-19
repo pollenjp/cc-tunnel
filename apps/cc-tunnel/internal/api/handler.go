@@ -17,8 +17,9 @@ import (
 )
 
 type Server struct {
-	repo   repository
-	remote remoteClient
+	repo          repository
+	remote        remoteClient
+	batchInterval time.Duration // 0 = default 5s; override for testing
 }
 
 var _ ServerInterface = (*Server)(nil)
@@ -298,17 +299,27 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		assistantMsg = nil
 	}
 
-	// 5秒バッチ: contentBlocksList を定期的に DB 保存
+	// 5秒バッチ: contentBlocksList と toolCallsData を定期的に DB 保存
 	if assistantMsg != nil {
-		ticker := time.NewTicker(5 * time.Second)
+		batchInterval := h.batchInterval
+		if batchInterval <= 0 {
+			batchInterval = 5 * time.Second
+		}
+		ticker := time.NewTicker(batchInterval)
 		defer ticker.Stop()
 		go func() {
 			for range ticker.C {
 				mu.Lock()
 				snapshot := cloneBlocks(contentBlocksList)
+				snapshotTools := cloneToolCalls(toolCallsData)
 				mu.Unlock()
 				if err := h.repo.UpdateMessageContentBlocks(execCtx, assistantMsg.ID, snapshot); err != nil {
 					slog.Warn("batch content_blocks update failed", "err", err, "message_id", assistantMsg.ID)
+				}
+				if err := h.repo.MergeMessageData(execCtx, assistantMsg.ID, map[string]interface{}{
+					"tool_calls": snapshotTools,
+				}); err != nil {
+					slog.Warn("batch tool_calls update failed", "err", err, "message_id", assistantMsg.ID)
 				}
 			}
 		}()
@@ -739,6 +750,15 @@ func dbMsgToAPI(m *db.Message) Message {
 		msg.MessageData = &m.MessageData
 	}
 	return msg
+}
+
+func cloneToolCalls(calls []ToolCallData) []ToolCallData {
+	if calls == nil {
+		return nil
+	}
+	clone := make([]ToolCallData, len(calls))
+	copy(clone, calls)
+	return clone
 }
 
 func cloneBlocks(blocks []map[string]interface{}) []map[string]interface{} {

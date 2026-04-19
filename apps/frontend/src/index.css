@@ -6,6 +6,7 @@
   --color-bg-tertiary: #2f3050;
   --color-text: #a9b1d6;
   --color-text-bright: #c0caf5;
+  --color-text-muted: #565f89;
   --color-accent: #7aa2f7;
   --color-accent-hover: #89b4fa;
   --color-danger: #f7768e;
@@ -24,6 +25,26 @@ body {
 
 #root {
   height: 100vh;
+}
+
+/* Shimmer animation for TypingIndicator */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.typing-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-text-muted) 0%,
+    var(--color-text-bright) 50%,
+    var(--color-text-muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.5s ease-in-out infinite;
 }
 
 /* Streaming cursor animation */

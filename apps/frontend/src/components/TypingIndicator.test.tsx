@@ -1,19 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { TypingIndicator } from './TypingIndicator';
 
 describe('TypingIndicator', () => {
-  it('renders 3 dots with animate-pulse class', () => {
-    const { container } = render(<TypingIndicator />);
-    const dots = container.querySelectorAll('.animate-pulse');
-    expect(dots.length).toBe(3);
+  it("renders shimmer text '進行中...'", () => {
+    render(<TypingIndicator />);
+    expect(screen.getByText('進行中...')).toBeTruthy();
   });
 
-  it('sets staggered animation delays on each dot (0s, 0.2s, 0.4s)', () => {
+  it('has typing-shimmer class on the text element', () => {
     const { container } = render(<TypingIndicator />);
-    const dots = container.querySelectorAll('.animate-pulse');
-    expect((dots[0] as HTMLElement).style.animationDelay).toBe('0s');
-    expect((dots[1] as HTMLElement).style.animationDelay).toBe('0.2s');
-    expect((dots[2] as HTMLElement).style.animationDelay).toBe('0.4s');
+    const shimmer = container.querySelector('.typing-shimmer');
+    expect(shimmer).toBeTruthy();
+  });
+
+  it('is wrapped in a div with data-testid="typing-indicator"', () => {
+    render(<TypingIndicator />);
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
   });
 });
