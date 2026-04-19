@@ -42,6 +42,48 @@ func (e AuthStatusAuthMethod) Valid() bool {
 	}
 }
 
+// Defines values for ConversationStatus.
+const (
+	ConversationStatusCompleted ConversationStatus = "completed"
+	ConversationStatusIdle      ConversationStatus = "idle"
+	ConversationStatusRunning   ConversationStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ConversationStatus enum.
+func (e ConversationStatus) Valid() bool {
+	switch e {
+	case ConversationStatusCompleted:
+		return true
+	case ConversationStatusIdle:
+		return true
+	case ConversationStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConversationDetailStatus.
+const (
+	ConversationDetailStatusCompleted ConversationDetailStatus = "completed"
+	ConversationDetailStatusIdle      ConversationDetailStatus = "idle"
+	ConversationDetailStatusRunning   ConversationDetailStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ConversationDetailStatus enum.
+func (e ConversationDetailStatus) Valid() bool {
+	switch e {
+	case ConversationDetailStatusCompleted:
+		return true
+	case ConversationDetailStatusIdle:
+		return true
+	case ConversationDetailStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LoginRequestMethod.
 const (
 	Claudeai LoginRequestMethod = "claudeai"
@@ -75,6 +117,27 @@ func (e MessageRole) Valid() bool {
 	case System:
 		return true
 	case User:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MessageStatus.
+const (
+	MessageStatusCompleted MessageStatus = "completed"
+	MessageStatusError     MessageStatus = "error"
+	MessageStatusStreaming MessageStatus = "streaming"
+)
+
+// Valid indicates whether the value is a known member of the MessageStatus enum.
+func (e MessageStatus) Valid() bool {
+	switch e {
+	case MessageStatusCompleted:
+		return true
+	case MessageStatusError:
+		return true
+	case MessageStatusStreaming:
 		return true
 	default:
 		return false
@@ -319,24 +382,36 @@ type AuthStatusAuthMethod string
 
 // Conversation defines model for Conversation.
 type Conversation struct {
-	CreatedAt    time.Time          `json:"created_at"`
-	Id           openapi_types.UUID `json:"id"`
-	Model        string             `json:"model"`
+	CreatedAt time.Time          `json:"created_at"`
+	Id        openapi_types.UUID `json:"id"`
+	Model     string             `json:"model"`
+
+	// Status Execution status of the conversation
+	Status       ConversationStatus `json:"status"`
 	SystemPrompt *string            `json:"system_prompt,omitempty"`
 	Title        string             `json:"title"`
 	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
+// ConversationStatus Execution status of the conversation
+type ConversationStatus string
+
 // ConversationDetail defines model for ConversationDetail.
 type ConversationDetail struct {
-	CreatedAt    time.Time          `json:"created_at"`
-	Id           openapi_types.UUID `json:"id"`
-	Messages     []Message          `json:"messages"`
-	Model        string             `json:"model"`
-	SystemPrompt *string            `json:"system_prompt,omitempty"`
-	Title        string             `json:"title"`
-	UpdatedAt    time.Time          `json:"updated_at"`
+	CreatedAt time.Time          `json:"created_at"`
+	Id        openapi_types.UUID `json:"id"`
+	Messages  []Message          `json:"messages"`
+	Model     string             `json:"model"`
+
+	// Status Execution status of the conversation
+	Status       ConversationDetailStatus `json:"status"`
+	SystemPrompt *string                  `json:"system_prompt,omitempty"`
+	Title        string                   `json:"title"`
+	UpdatedAt    time.Time                `json:"updated_at"`
 }
+
+// ConversationDetailStatus Execution status of the conversation
+type ConversationDetailStatus string
 
 // CreateConversationRequest defines model for CreateConversationRequest.
 type CreateConversationRequest struct {
@@ -372,10 +447,15 @@ type Message struct {
 	Id             openapi_types.UUID      `json:"id"`
 	MessageData    *map[string]interface{} `json:"message_data,omitempty"`
 	Role           MessageRole             `json:"role"`
+	Status         *MessageStatus          `json:"status,omitempty"`
+	UpdatedAt      *time.Time              `json:"updated_at,omitempty"`
 }
 
 // MessageRole defines model for Message.Role.
 type MessageRole string
+
+// MessageStatus defines model for Message.Status.
+type MessageStatus string
 
 // SSECostEvent defines model for SSECostEvent.
 type SSECostEvent struct {
@@ -932,42 +1012,43 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/9RabW8buRH+KwTbDwmgtzRugAroh8Q2rkadnBE5Hw5RIFC7I4nnXXJDDh0Lrv57QXK1",
-	"r6Qsp/IdChxwznKW88wzw+HsjB5pIvNCChCo6fSRFkyxHBCU+9e5FPegNEMuxVVqn3BBp7RguKEDKlgO",
-	"dEqTttCAKvhuuIKUTlEZGFCdbCBn9u2VVDlDOqXGcCuJ28LuoFFxsaa73W4v7LS/N7g5ZyKB7DPoQgoN",
-	"DqGSBSjk4GRy0Jqt3UJ3syaQr5Xgt0qrXP4OCdLdwCm6EoXBz/DdgMa+Gm5X7R8p6ETxwtpKp9S9RFAS",
-	"DSK1/8cNkEyuuSCFkgloTTSmXJBXCRNkCQTyArfEQyQrqcilQFCvA1S00Xv9T2B/cY5+NXhQUWKUlqpP",
-	"0yf4QfwaKaTm9qkz3rIl4AGJKnmv9HKBsAZlFacMWX/LD0zDu7MhiESmkJKb29+IdOjIcougieYiAadg",
-	"ze9BlOqf5NkpG+wNifEwQ4ZG9+1nBf83bGfSqCTE9sAK3Ch5z1NQ4XWDm4+AG+nOGgiTW1BCCqDu5cUd",
-	"bC28jJkURow3ENabQM54Ftw+k+s1pFeisbiUMgMmylUubkCkVjou8UWFN5dq/cklhMCaNsvKebdu8alQ",
-	"rKC2SOmADPmnmbICEaqAIaQLhq10lDKEIfIcaIBPnh6RugY0lymEmdFbjZAvCiXzAoMSyDELM2eK9JmA",
-	"u5nDgXX77zEOmjS0VDxF6AVgGVssy35d0enXR/pXBSs6pX8Z1xfJuEzi45YzdoNIYvIZFiF3fxza72OZ",
-	"oHYVTqYU28YSmQ4Y9M2a5Mxvgosm/sqrKayYySz3/vQNtRQCcHg2fBeKhmf4vN456MyeQy6V8km2jRT2",
-	"jw/HgxcLOfraHq04Eb205Hlg3MaTFFpmEEhHu7ii2C1yRJaK5aCT3HQf6006yaMRMIsjs8JLJhyPc7G/",
-	"IFmauquVZTcN2L4E6xmppA++vTONBns7Mq25RiZsXvAhHPZpL8N0uSk1tAgIkT2bXZ5LjZf3IAJBlxrl",
-	"d/SpoaKEC3x3FqwWUCLLFonUuDC6zWMqzTJrEC5MvixfKq+kKrKlxqftdqs9jYMW6IjJF1JAxORnQteg",
-	"dR2O/STTsSy1pcSxljX2HtS4Iia5rBSxKX4s+wi7+ekwxEPneDa7/JeUdxFMGynvFrBf68FyyxFS3ZqI",
-	"1jqHPaLNEsMVUJ+LBsajfVZuHyHkSvDYWTtQvzwvxrjgx+PdVyQNHRHonxnCNc+j+BVDWGRWYBElWIEG",
-	"1GUy7icPXdX1TxpZazveNX73JopBD3XE+Ft4wAvIkEWzhsBYKHehIzzgIrWbHQ19v/0BdCcCdjJIGy7u",
-	"uFifjLRyvxMTV+56QoAngyZl5voKhxjkIoWH8FkqmELOssXvWorjDJAyW7g+xzM59iA6Gg9Y9Rm0yX4q",
-	"Xi1Co+HYROjkldP2jGqi1nGUj75omCFT+HwPOVXRa+ynjLXy2qJ5tvPadtfQgpaDSMsiPfq50vBju3H0",
-	"RYMiZdlA9lJPgT3oB5fW458z9aUCDywvMvf23ZMqy9dCGq3bz1mWXZSFf6BVGT92XC+UESLa4ynjdfpI",
-	"hckyZsvO9jdEJ0R+MoC60RBx/6BpTp8Luw0XK9l38/srkmwYkrKuIDkTbA05CCT3nBH/7UrOr6+q7siU",
-	"JskQjRCQkfc39rn9oPG7vRlNRhPX5CpAsILTKX07mozeuqyDG8f7mBncjBPXr3ZekT4urW+qBjr1/Wz3",
-	"BewrARc1boO/TSadyGVFkfHEvTzeO7Ruph9qlARa546sNkkOBvGQM0idV7TJc6a2FVTXQ+ViWCi5VqB1",
-	"2d6+uf1t3+J2r3nrqzZ52PiZWeYcq451OSoAjR9kuj2p7a1u/q4dbTaady/MfbsjH6DeTw60IwQt9QN6",
-	"NvlHoHUuS8L9SMG5oOMnzyrh+1lEZAbRcJNbjbvJfiRwW21XUXp6J7WaTbvSQy/kkHa/KXoOeGl29xzs",
-	"6ShJXWXyR5tLeSjmr/36C8dbOZEI2yZdpCU2FFYm61hX4qsN8mMUq3QNAXt+AaxHQb7qqgaGX7vRe94Z",
-	"+qAkrjwgKyVz8mpC/klYlpGMC9CvXbKnU/rdgNrW40U3yaHNKWLVMJ30O0C7by/MdGcGFmB8hqll3BlF",
-	"mEiJqMZfHe5/ASRLs1qBgtQeUvuaY6Z3hBv+qeuJQ/6ZNT42/4yws6sgsNya6L1g13wWlRs3W4pxe6+5",
-	"xvOW5P9o81GDiM5gozuN6J9CrpHIFWnb1DmJVsYeh47QIFZK9KYYL5Sr4+OSYOJ+czrFLZb7rDbXSdlo",
-	"tnz9/YRh7qctwRscQQmWEQ3qHhSBUrBVQjlMhPkU0LamG+Hjx/YPKXY+1WWA0Pf9hXve8X0nFYesqkXG",
-	"nd92vGji7HwjBdj0BpV10NnLe++TRLKSRnQve4+DsI63BtFk+3/jg8Ac96kj9YPjhlSz1D/bNfa6SGLw",
-	"yIZrlGp7zMEaN+fO+9zaucNBpJowYprdgrK2bmGw97tGBSzXbrEaoM3F3pOEaTJzOWI4s9+frlOjyavZ",
-	"7PL1aF4VpuTcszq83RYwJQgPOHa9/6Hffy4uWbIhs9klcY/JhmniJ0RTkjJkUzI3k8nbxLrB/QXzubD/",
-	"CaeR2DtKT8nj3N1Wczqdu47rnA7me4+6h6PRaE535D8tyVQKcJJ1o74Wdhv48dCcTiejyZvu6y45OsGS",
-	"zIamuT03nQ/FusNzmjN1+ksx0IT6qe/Mnp/bEAK/kOtE6uyyDEBbX1ThR1SVbO2x/QPuww8srX7H9Uel",
-	"ila2EpG8YT1FWHWK6xPbPrANxna73X8DAAD///GIfasYKQAA",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

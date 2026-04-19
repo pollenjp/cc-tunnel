@@ -319,6 +319,7 @@ components:
         - id
         - title
         - model
+        - status
         - created_at
         - updated_at
       properties:
@@ -329,6 +330,10 @@ components:
           type: string
         model:
           type: string
+        status:
+          type: string
+          enum: [idle, running, completed]
+          description: Execution status of the conversation
         system_prompt:
           type: string
         created_at:
@@ -358,7 +363,13 @@ components:
         message_data:
           type: object
           additionalProperties: true
+        status:
+          type: string
+          enum: [streaming, completed, error]
         created_at:
+          type: string
+          format: date-time
+        updated_at:
           type: string
           format: date-time
 

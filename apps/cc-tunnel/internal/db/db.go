@@ -13,7 +13,7 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-// NewPool creates a new pgxpool.Pool and runs goose migrations.
+// NewPool creates a new pgxpool.Pool, runs goose migrations, and cleans up orphaned streaming messages.
 func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -25,7 +25,21 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 		return nil, err
 	}
 
+	cleanupOrphanedStreamingMessages(ctx, pool)
+
 	return pool, nil
+}
+
+// cleanupOrphanedStreamingMessages marks streaming messages older than 30 minutes as error.
+// These are messages that were left in 'streaming' state due to a server crash.
+func cleanupOrphanedStreamingMessages(ctx context.Context, pool *pgxpool.Pool) {
+	const q = `
+		UPDATE messages SET status = 'error', updated_at = NOW()
+		WHERE status = 'streaming' AND created_at < NOW() - INTERVAL '30 minutes'
+	`
+	if _, err := pool.Exec(ctx, q); err != nil {
+		slog.Warn("failed to cleanup orphaned streaming messages", "error", err)
+	}
 }
 
 func runMigrations(pool *pgxpool.Pool) error {

@@ -219,6 +219,11 @@ export interface components {
             id: string;
             title: string;
             model: string;
+            /**
+             * @description Execution status of the conversation
+             * @enum {string}
+             */
+            status: "idle" | "running" | "completed";
             system_prompt?: string;
             /** Format: date-time */
             created_at: string;
@@ -235,8 +240,12 @@ export interface components {
             message_data?: {
                 [key: string]: unknown;
             };
+            /** @enum {string} */
+            status?: "streaming" | "completed" | "error";
             /** Format: date-time */
             created_at: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
         ConversationDetail: components["schemas"]["Conversation"] & {
             messages: components["schemas"]["Message"][];

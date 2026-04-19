@@ -109,18 +109,31 @@ export async function deleteConversation(id: string): Promise<void> {
   });
 }
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError';
+}
+
 // SSE ストリーミングでメッセージを送信する
 // onEvent: 各SSEイベントで呼ばれるコールバック
+// signal: AbortController.signal を渡すと途中でキャンセル可能
 export async function sendMessage(
   conversationId: string,
   content: string,
   onEvent: (event: SSEEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+      signal,
+    });
+  } catch (err) {
+    if (isAbortError(err)) return;
+    throw err;
+  }
 
   if (!res.ok) {
     throw new Error(`sendMessage failed: ${res.status}`);
@@ -130,26 +143,31 @@ export async function sendMessage(
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true });
 
-    // SSE形式: "data: {...}\n\n" をパース
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop() ?? '';
+      // SSE形式: "data: {...}\n\n" をパース
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
 
-    for (const part of parts) {
-      const line = part.trim();
-      if (line.startsWith('data: ')) {
-        try {
-          const event = JSON.parse(line.slice(6)) as SSEEvent;
-          onEvent(event);
-        } catch {
-          // パース失敗は無視
+      for (const part of parts) {
+        const line = part.trim();
+        if (line.startsWith('data: ')) {
+          try {
+            const event = JSON.parse(line.slice(6)) as SSEEvent;
+            onEvent(event);
+          } catch {
+            // パース失敗は無視
+          }
         }
       }
     }
+  } catch (err) {
+    if (isAbortError(err)) return;
+    throw err;
   }
 }

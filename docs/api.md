@@ -194,6 +194,7 @@ Claude CLI の認証状態を返す。
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "title": "My conversation",
   "model": "claude-sonnet-4-6",
+  "status": "idle",
   "system_prompt": "You are a helpful assistant.",
   "created_at": "2026-04-18T01:00:00Z",
   "updated_at": "2026-04-18T01:00:00Z"
@@ -214,7 +215,8 @@ Claude CLI の認証状態を返す。
 
 #### GET /conversations/{conversationId}
 
-会話とメッセージ履歴を返す。
+会話とメッセージ履歴を返す。`status` フィールドで CLI 実行状態を確認できる。
+フロントエンドはセッション選択時に `status === 'running'` を検知して、DBポーリングを開始する。
 
 **Path Parameters**: `conversationId` (UUID)
 
@@ -225,6 +227,7 @@ Claude CLI の認証状態を返す。
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "title": "My conversation",
   "model": "claude-sonnet-4-6",
+  "status": "idle",
   "system_prompt": null,
   "created_at": "2026-04-18T01:00:00Z",
   "updated_at": "2026-04-18T01:05:00Z",
@@ -400,6 +403,25 @@ data: {"type":"error","message":"execution failed"}
 
 **Response 400**: リクエスト不正  
 **Response 404**: 会話が存在しない
+
+#### 会話ステータス (`status` フィールド)
+
+`Conversation` オブジェクトには `status` フィールド（`idle` / `running` / `completed`）が含まれる。
+
+| 値 | 意味 |
+|----|------|
+| `idle` | 初期状態。メッセージ送信待ち |
+| `running` | CLI 実行中（`SendMessage` 処理中） |
+| `completed` | CLI 実行完了 |
+
+**SSE切断後の復帰フロー（DBポーリング方式）**:
+
+1. ユーザーが `POST /conversations/{id}/messages` でメッセージ送信 → SSEストリーミング開始
+2. ストリーミング中に別会話に切り替え（SSE切断） → バックエンドは `execCtx` で処理継続
+3. 元の会話に戻る → フロントエンドが `GET /conversations/{id}` で `status` を確認
+4. `status === 'running'` → `useConversationPoller` フックが 2 秒間隔で `GET /conversations/{id}` をポーリング
+5. 新しいメッセージが届いたら差分表示（「処理中...」インジケータ付き）
+6. `status === 'completed'` になったらポーリング停止
 
 #### タイトルの自動更新
 

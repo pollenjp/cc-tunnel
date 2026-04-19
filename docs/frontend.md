@@ -102,12 +102,20 @@ type ContentBlockEntry =
 | `messages`      | `Message[]`              | 表示するメッセージ一覧                       |
 | `onSend`        | `(content) => void`      | 送信ハンドラ                                 |
 | `isStreaming`   | `boolean`                | SSE 受信中フラグ                             |
+| `isPolling`     | `boolean \| undefined`   | ポーリング中フラグ（DB駆動状態管理）         |
 | `streamMeta`    | `StreamMeta \| null`     | モデル・コスト・所要時間などのメタ情報       |
 | `hookEvents`    | `SSEHookEvent[]`         | フックイベント一覧（フックイベントパネル用） |
 | `streamBlocks`  | `AssistantBlock[]`       | ストリーミング中のブロック列                 |
 | `input`         | `string`                 | テキストエリアの入力値                       |
 | `onInputChange` | `(value) => void`        | 入力値変更ハンドラ                           |
 | `onHamburger`   | `() => void`             | モバイルでサイドバーを開くハンドラ           |
+
+**メッセージ表示の優先順位**
+
+1. `isStreaming && isLast && role === 'assistant'` → SSE ライブストリーミング（`streamBlocks` を使用）
+2. `isPolling && msg.status === 'streaming'` → DBポーリングストリーミング（`message_data.content_blocks` を使用、ストリーミングアニメーション付き）
+3. `msg.status === 'error'` → エラーバッジ表示（「エラーが発生しました」）
+4. それ以外 → DB復元レンダリング（完了メッセージ）
 
 ### `MessageBubble`
 
@@ -287,6 +295,109 @@ AuthTerminal 画面のキャンセルボタンから `useAuth.cancelLogin()` →
 - `msgHookEvents.length > 0` のとき表示される。
 - `<summary>` に件数 (`▸ Hook Events (N)`) を表示。
 - 展開すると各イベントを `subtype — hook_name` 形式で一覧表示する。
+
+---
+
+## DB駆動状態管理 (useConversationPoller)
+
+### 概要
+
+`useConversationPoller` フックは、バックエンド処理が進行中の会話を定期ポーリングしてメッセージを全置換更新する。SSE では捕捉できない「既存メッセージのDB更新（streaming中のcontent_blocks更新）」に対応するために設計された。
+
+### インターフェース
+
+```ts
+export interface UseConversationPollerOptions {
+  conversationId: string | null;
+  isRunning: boolean;
+  onMessages: (messages: Message[]) => void;  // 全メッセージを受け取る（差分でなく全置換）
+  onCompleted: () => void;
+  intervalMs?: number;  // デフォルト 2000ms
+}
+```
+
+### 動作仕様
+
+| 状態 | 動作 |
+| ---- | ---- |
+| `status === 'running'` | 毎ポーリングで `onMessages(全メッセージ)` を呼ぶ |
+| `status === 'completed'` | `onMessages(全メッセージ)` を呼んだ後に `onCompleted()` を呼ぶ、ポーリング停止 |
+| エラー発生時 | 一時エラーは無視してポーリング継続 |
+
+### App.tsx での使用
+
+```ts
+useConversationPoller({
+  conversationId: isPolling ? selectedId : null,
+  isRunning: isPolling,
+  onMessages: (msgs) => {
+    setMessages(msgs);  // 全置換（差分でなく全上書き）
+    if (msgs.length > 0) {
+      lastMessageIdRef.current = msgs[msgs.length - 1].id;
+    }
+  },
+  onCompleted: () => {
+    setIsPolling(false);
+    refreshConversations();
+  },
+});
+```
+
+### ChatView のストリーミング表示拡張
+
+ポーリング中に `msg.status === 'streaming'` のメッセージを受け取った場合（`isPollingStreamingMsg`）:
+- `message_data.content_blocks` があればDBの部分コンテンツを表示
+- `content_blocks` が空なら空テキストブロックを表示
+- ストリーミングアニメーション（カーソル）を付与する
+
+### ChatView のエラー表示
+
+`msg.status === 'error'` のメッセージは赤いエラーバッジ（「エラーが発生しました」）を表示する。
+
+---
+
+## SSE 切断耐性設計
+
+### 概要
+
+セッション切替時・コンポーネントアンマウント時に、進行中の SSE ストリームを確実にクリーンアップする。
+
+### `useSSEAbort` フック (`src/hooks/useSSEAbort.ts`)
+
+SSE の AbortController ライフサイクルを管理するカスタムフック。
+
+| 関数 | 動作 |
+| ---- | ---- |
+| `startStream(sessionId)` | 既存のコントローラを abort し、新しい `AbortController` を作成して `{ signal }` を返す |
+| `switchSession(sessionId)` | 現在のコントローラを abort し、アクティブセッション ID を更新する |
+| `isActiveSession(sessionId)` | 現在アクティブなセッション ID と一致するか返す |
+
+コンポーネントアンマウント時は `useEffect` のクリーンアップで自動的に abort される。
+
+### `sendMessage` の AbortSignal 対応 (`src/api/client.ts`)
+
+`sendMessage(conversationId, content, onEvent, signal?)` に `signal` パラメータを追加。
+
+- `fetch()` に `signal` を渡す
+- `fetch` / `reader.read()` が `AbortError` を投げた場合は静かに return（throw しない）
+
+### `App.tsx` の統合
+
+`handleSend`:
+
+1. `startStream(mySessionId)` で `signal` を取得し SSE 開始
+2. コールバック内で `isActiveSession(mySessionId)` をチェック → 切替後は無視
+3. `finally` ブロックでも `isActiveSession` を確認し、切替後は state を更新しない
+
+`handleSelectConversation`:
+
+1. 先頭で `switchSession(id)` を呼び出し、進行中の SSE を abort
+2. ストリーミング state を全てリセット（`streamBlocks`, `streamMeta`, `hookEvents`, `sending`）
+3. RAF をキャンセル
+
+### リロード後の状態
+
+バックエンドは `context.WithoutCancel` でフロントエンド切断後も処理を継続する。処理完了後に DB へ保存するため、ユーザーが再度そのセッションを選択すると完了済みのメッセージが表示される。処理完了前に選択した場合は既存メッセージ（user メッセージまで）が表示され、リロードで最新状態を確認できる。
 
 ---
 

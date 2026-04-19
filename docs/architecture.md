@@ -279,6 +279,88 @@ type Server struct {
 `sendmessage_test.go` のテストはモック実装でコンテキストキャンセル挙動を再現し、
 切断耐性を単体テストで検証する。
 
+## SSE切断後の復帰メカニズム（DBポーリング方式）
+
+フロントエンドが別会話に切り替えた（SSE切断）後に元の会話に戻った際、CLI実行中ならリアルタイム更新を受け取り、完了済みならDBから結果を表示する設計。
+
+### 設計決定: DBポーリング方式
+
+SSE再接続（バッファリング）方式ではなく **DBポーリング方式** を採用した理由:
+- SSE再接続にはサーバー側でのイベントバッファリングが必要（複雑性増加）
+- ポーリング方式は既存の `GET /conversations/{id}` エンドポイントを再利用できる
+- 2秒間隔のポーリングは許容範囲のレイテンシ
+
+### 実装概要
+
+**バックエンド**:
+
+1. `conversations.status` カラム（`idle` / `running` / `completed`）を追加（migration 003）
+2. `SendMessage()` 実行時:
+   - 実行開始前に `status = 'running'` に更新
+   - 実行終了後（`defer`）に `status = 'completed'` に更新
+3. `GET /conversations/{id}` のレスポンスに `status` を含める
+
+**フロントエンド**:
+
+1. 会話選択時 (`handleSelectConversation`):
+   - `GET /conversations/{id}` で `status` を確認
+   - `status === 'running'` → `isPolling = true` にしてポーリング開始
+2. `useConversationPoller` フック:
+   - 2秒間隔で `GET /conversations/{id}` を呼び出す
+   - 新しいメッセージを差分反映（最後のメッセージIDで比較）
+   - `status === 'completed'` になったらポーリング停止
+   - 「処理中...」インジケータを `ChatView` に表示
+
+### コンテキスト分離との連携
+
+| 処理 | context | 説明 |
+|------|---------|------|
+| status='running' 更新 | `execCtx` | SSE切断後も確実に更新される |
+| status='completed' 更新 | `execCtx` | `defer` で必ず実行される |
+| ポーリング (`GET /conversations/{id}`) | フロントエンド fetch | 独立したリクエスト |
+
+`execCtx = context.WithoutCancel(r.Context())` により、フロントエンド切断（r.Context() キャンセル）後も status 更新が確実に実行される。
+
+## DB駆動状態管理（Streaming Message Persistence）
+
+`SendMessage()` は Claude CLI 実行中に中間状態を DB に保存し、サーバークラッシュや長時間実行に対する耐性を持つ設計になっている。
+
+### 設計の核心
+
+1. **早期メッセージ作成**: Execute 前にアシスタントメッセージを `status='streaming'` で INSERT。サーバークラッシュ後も「ストリーム中だった」ことが DB に残る。
+2. **5秒バッチ保存**: goroutine + `time.Ticker(5s)` で `content_blocks` を定期的に UPDATE。イベントごとの UPDATE は JSONB 書き換えコストが高いため禁止。
+3. **mutex 排他制御**: `contentBlocksList` への書き込み（SSE コールバック）と読み取り（ticker goroutine）を `sync.Mutex` で保護。
+4. **完了時の最終保存**: Execute 完了後、`UpdateMessageContentBlocks`（最終 content_blocks）→ `MergeMessageData`（session_id / model 等）→ `UpdateMessageStatus("completed")` の順で更新。
+5. **エラー時**: `UpdateMessageStatus("error")` を設定して状態を確定させる。
+6. **孤児クリーンアップ**: 起動時に `status='streaming'` かつ 30 分以上前に作成されたメッセージを `status='error'` に更新（`NewPool()` 内で実行）。
+
+### タイムライン
+
+```
+SendMessage 開始
+  │
+  ├─ CreateStreamingMessage → status='streaming', message_data={}
+  │
+  ├─ ticker goroutine 起動（5秒ごと UpdateMessageContentBlocks）
+  │
+  ├─ UpdateConversationStatus → 'running'
+  │
+  ├─ remote.Execute (Claude CLI)
+  │   ├─ SSE callback: mu.Lock → contentBlocksList append → mu.Unlock
+  │   ├─ [5s] ticker fires → UpdateMessageContentBlocks(snapshot)
+  │   └─ ...
+  │
+  ├─ UpdateMessageContentBlocks (最終 content_blocks)
+  ├─ MergeMessageData (session_id, model, cost_usd, ...)
+  ├─ UpdateMessageStatus → 'completed'
+  │
+  └─ defer: UpdateConversationStatus → 'completed'
+```
+
+### コンテキスト分離との連携
+
+全ての DB 操作は `execCtx = context.WithoutCancel(r.Context())` を使用するため、フロントエンド切断後も継続される。
+
 ## ErrorStackHandler（構造化ログ）
 
 `internal/logging/handler.go` で `slog.Handler` インターフェースをラップした `ErrorStackHandler` を実装。

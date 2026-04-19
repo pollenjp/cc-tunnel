@@ -20,10 +20,14 @@ import (
 // UpdateConversationUpdatedAt to detect whether the caller passes a live vs.
 // cancelled context.
 type mockRepoCheckCtx struct {
-	conv              *db.Conversation
-	msgs              []*db.Message
-	assistantMsgSaved bool
-	updatedTitle      string
+	conv                       *db.Conversation
+	msgs                       []*db.Message
+	assistantMsgSaved          bool
+	updatedTitle               string
+	statusHistory              []string
+	streamingMsgCreated        bool
+	updateContentBlocksCalled  bool
+	msgStatusHistory           []string
 }
 
 func (m *mockRepoCheckCtx) CreateConversation(_ context.Context, _, _ string, _ *string) (*db.Conversation, error) {
@@ -59,6 +63,11 @@ func (m *mockRepoCheckCtx) UpdateConversationTitle(_ context.Context, _ string, 
 	return nil
 }
 
+func (m *mockRepoCheckCtx) UpdateConversationStatus(_ context.Context, _ string, status string) error {
+	m.statusHistory = append(m.statusHistory, status)
+	return nil
+}
+
 func (m *mockRepoCheckCtx) CreateMessage(ctx context.Context, _ string, role string, _ map[string]interface{}) (*db.Message, error) {
 	select {
 	case <-ctx.Done():
@@ -79,6 +88,32 @@ func (m *mockRepoCheckCtx) CreateMessage(ctx context.Context, _ string, role str
 
 func (m *mockRepoCheckCtx) ListMessages(_ context.Context, _ string) ([]*db.Message, error) {
 	return m.msgs, nil
+}
+
+func (m *mockRepoCheckCtx) CreateStreamingMessage(_ context.Context, convID, role string, _ map[string]interface{}) (*db.Message, error) {
+	m.streamingMsgCreated = true
+	return &db.Message{
+		ID:             uuid.New().String(),
+		ConversationID: convID,
+		Role:           role,
+		MessageData:    map[string]interface{}{},
+		Status:         "streaming",
+		CreatedAt:      time.Now(),
+	}, nil
+}
+
+func (m *mockRepoCheckCtx) UpdateMessageContentBlocks(_ context.Context, _ string, _ []map[string]interface{}) error {
+	m.updateContentBlocksCalled = true
+	return nil
+}
+
+func (m *mockRepoCheckCtx) UpdateMessageStatus(_ context.Context, _ string, status string) error {
+	m.msgStatusHistory = append(m.msgStatusHistory, status)
+	return nil
+}
+
+func (m *mockRepoCheckCtx) MergeMessageData(_ context.Context, _ string, _ map[string]interface{}) error {
+	return nil
 }
 
 // --- Test doubles for remoteClient ---
@@ -252,10 +287,12 @@ func TestSendMessage_ContextCancelledDuringExecution_AssistantMessageSaved(t *te
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 
-	if !repo.assistantMsgSaved {
+	// With the streaming approach, message is created at start via CreateStreamingMessage
+	// (before Execute), so it's always persisted regardless of frontend disconnect.
+	if !repo.streamingMsgCreated {
 		t.Error("FAIL: assistant message was NOT saved to DB after frontend disconnect\n" +
-			"Expected: CreateMessage(assistant) called with a non-cancelled execCtx\n" +
-			"Got: called with cancelled r.Context() — use context.WithoutCancel for DB ops after Execute")
+			"Expected: CreateStreamingMessage called before Execute with execCtx\n" +
+			"Got: CreateStreamingMessage never called")
 	}
 }
 
@@ -337,5 +374,172 @@ func TestSendMessage_AssistantResponse_TitleUpdated(t *testing.T) {
 	wantTitle := generateTitle("Hello from AI")
 	if repo.updatedTitle != wantTitle {
 		t.Errorf("FAIL: UpdateConversationTitle not called with expected title\nGot: %q\nWant: %q", repo.updatedTitle, wantTitle)
+	}
+}
+
+// =============================================================================
+// Cycle 1 (status): SendMessage が 'running' → 'completed' の順でステータスを更新すること
+// =============================================================================
+
+// TestSendMessage_StatusUpdatedToRunningThenCompleted verifies that SendMessage
+// calls UpdateConversationStatus("running") before Execute starts, and then
+// calls UpdateConversationStatus("completed") after Execute finishes (even on
+// a normal completion path).
+func TestSendMessage_StatusUpdatedToRunningThenCompleted(t *testing.T) {
+	const convIDStr = "77777777-7777-7777-7777-777777777777"
+	ctx := context.Background()
+
+	repo := &mockRepoCheckCtx{
+		conv: makeConv(convIDStr),
+		msgs: []*db.Message{},
+	}
+	remote := &mockRemoteWithCancel{
+		events: []remoteclient.StreamEvent{
+			makeTextEvent("Hello"),
+			makeResultEvent("sess-status"),
+		},
+		sessionID: "sess-status",
+		cancel:    func() {}, // no disconnect
+	}
+
+	w := httptest.NewRecorder()
+	body := strings.NewReader(`{"content":"status test"}`)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server := &Server{repo: repo, remote: remote}
+	convID := ConversationId(uuid.MustParse(convIDStr))
+	server.SendMessage(w, req, convID)
+
+	// Expect exactly: ["running", "completed"]
+	wantHistory := []string{"running", "completed"}
+	if len(repo.statusHistory) != len(wantHistory) {
+		t.Fatalf("FAIL: expected %d status updates, got %d: %v", len(wantHistory), len(repo.statusHistory), repo.statusHistory)
+	}
+	for i, want := range wantHistory {
+		if repo.statusHistory[i] != want {
+			t.Errorf("FAIL: statusHistory[%d] = %q, want %q", i, repo.statusHistory[i], want)
+		}
+	}
+}
+
+// =============================================================================
+// TDD Cycle 2: SendMessage 冒頭で assistant メッセージが streaming 状態で作成されること
+// =============================================================================
+
+// TestSendMessage_StreamingMessageCreatedAtStart verifies that SendMessage calls
+// CreateStreamingMessage before Execute (not after), so that a crash during
+// execution still leaves a 'streaming' record in the DB for recovery.
+func TestSendMessage_StreamingMessageCreatedAtStart(t *testing.T) {
+	const convIDStr = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	ctx := context.Background()
+
+	repo := &mockRepoCheckCtx{
+		conv: makeConv(convIDStr),
+		msgs: []*db.Message{},
+	}
+	remote := &mockRemoteWithCancel{
+		events: []remoteclient.StreamEvent{
+			makeTextEvent("Hello"),
+			makeResultEvent("sess-stream"),
+		},
+		sessionID: "sess-stream",
+		cancel:    func() {},
+	}
+
+	w := httptest.NewRecorder()
+	body := strings.NewReader(`{"content":"stream test"}`)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server := &Server{repo: repo, remote: remote}
+	convID := ConversationId(uuid.MustParse(convIDStr))
+	server.SendMessage(w, req, convID)
+
+	if !repo.streamingMsgCreated {
+		t.Error("FAIL: CreateStreamingMessage was NOT called\n" +
+			"Expected: assistant message created with status='streaming' before Execute\n" +
+			"Got: CreateStreamingMessage never called")
+	}
+}
+
+// =============================================================================
+// TDD Cycle 3: CLI実行中に UpdateMessageContentBlocks が呼ばれること
+// =============================================================================
+
+// TestSendMessage_UpdateContentBlocksCalledOnCompletion verifies that
+// UpdateMessageContentBlocks is called at least once (at completion) so that
+// content_blocks are persisted even if the ticker never fires in unit tests.
+func TestSendMessage_UpdateContentBlocksCalledOnCompletion(t *testing.T) {
+	const convIDStr = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	ctx := context.Background()
+
+	repo := &mockRepoCheckCtx{
+		conv: makeConv(convIDStr),
+		msgs: []*db.Message{},
+	}
+	remote := &mockRemoteWithCancel{
+		events: []remoteclient.StreamEvent{
+			makeTextEvent("Final answer"),
+			makeResultEvent("sess-batch"),
+		},
+		sessionID: "sess-batch",
+		cancel:    func() {},
+	}
+
+	w := httptest.NewRecorder()
+	body := strings.NewReader(`{"content":"batch test"}`)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server := &Server{repo: repo, remote: remote}
+	convID := ConversationId(uuid.MustParse(convIDStr))
+	server.SendMessage(w, req, convID)
+
+	if !repo.updateContentBlocksCalled {
+		t.Error("FAIL: UpdateMessageContentBlocks was NOT called\n" +
+			"Expected: content_blocks persisted at completion via UpdateMessageContentBlocks\n" +
+			"Got: UpdateMessageContentBlocks never called")
+	}
+}
+
+// TestSendMessage_MessageStatusCompletedOnSuccess verifies that
+// UpdateMessageStatus("completed") is called on the assistant message after
+// successful execution.
+func TestSendMessage_MessageStatusCompletedOnSuccess(t *testing.T) {
+	const convIDStr = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	ctx := context.Background()
+
+	repo := &mockRepoCheckCtx{
+		conv: makeConv(convIDStr),
+		msgs: []*db.Message{},
+	}
+	remote := &mockRemoteWithCancel{
+		events: []remoteclient.StreamEvent{
+			makeTextEvent("Done"),
+			makeResultEvent("sess-msgstatus"),
+		},
+		sessionID: "sess-msgstatus",
+		cancel:    func() {},
+	}
+
+	w := httptest.NewRecorder()
+	body := strings.NewReader(`{"content":"msg status test"}`)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server := &Server{repo: repo, remote: remote}
+	convID := ConversationId(uuid.MustParse(convIDStr))
+	server.SendMessage(w, req, convID)
+
+	if len(repo.msgStatusHistory) == 0 {
+		t.Error("FAIL: UpdateMessageStatus was NOT called on assistant message\n" +
+			"Expected: UpdateMessageStatus('completed') called after execution\n" +
+			"Got: msgStatusHistory is empty")
+		return
+	}
+	last := repo.msgStatusHistory[len(repo.msgStatusHistory)-1]
+	if last != "completed" {
+		t.Errorf("FAIL: last message status = %q, want %q", last, "completed")
 	}
 }

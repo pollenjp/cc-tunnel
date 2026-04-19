@@ -14,8 +14,13 @@ type repository interface {
 	DeleteConversation(ctx context.Context, id string) error
 	UpdateConversationUpdatedAt(ctx context.Context, id string) error
 	UpdateConversationTitle(ctx context.Context, id string, title string) error
+	UpdateConversationStatus(ctx context.Context, id, status string) error
 	CreateMessage(ctx context.Context, conversationID, role string, messageData map[string]interface{}) (*db.Message, error)
 	ListMessages(ctx context.Context, conversationID string) ([]*db.Message, error)
+	CreateStreamingMessage(ctx context.Context, conversationID, role string, messageData map[string]interface{}) (*db.Message, error)
+	UpdateMessageContentBlocks(ctx context.Context, messageID string, contentBlocks []map[string]interface{}) error
+	UpdateMessageStatus(ctx context.Context, messageID, status string) error
+	MergeMessageData(ctx context.Context, messageID string, extra map[string]interface{}) error
 }
 
 type remoteClient interface {

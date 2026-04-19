@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -261,6 +262,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 
 	// cc-remote-agent に実行依頼
+	var mu sync.Mutex
 	var (
 		assistantContent  string
 		thinkingContent   string
@@ -272,6 +274,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		toolCallsData     []ToolCallData
 		contentBlocksList []map[string]interface{}
 	)
+
 	executeReq := remoteclient.Request{
 		Prompt:                 req.Content,
 		SessionID:              resumeSessionID,
@@ -288,6 +291,40 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	// cancels r.Context()) does not abort the Claude CLI execution or the DB save.
 	execCtx := context.WithoutCancel(r.Context())
 
+	// 早期アシスタントメッセージ作成（streaming 状態）
+	assistantMsg, err := h.repo.CreateStreamingMessage(execCtx, convIDStr, "assistant", map[string]interface{}{})
+	if err != nil {
+		slog.Error("failed to create streaming assistant message", "err", err, "conversation_id", convIDStr)
+		assistantMsg = nil
+	}
+
+	// 5秒バッチ: contentBlocksList を定期的に DB 保存
+	if assistantMsg != nil {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		go func() {
+			for range ticker.C {
+				mu.Lock()
+				snapshot := cloneBlocks(contentBlocksList)
+				mu.Unlock()
+				if err := h.repo.UpdateMessageContentBlocks(execCtx, assistantMsg.ID, snapshot); err != nil {
+					slog.Warn("batch content_blocks update failed", "err", err, "message_id", assistantMsg.ID)
+				}
+			}
+		}()
+	}
+
+	// Mark conversation as running before CLI execution starts.
+	if err := h.repo.UpdateConversationStatus(execCtx, convIDStr, "running"); err != nil {
+		slog.Warn("failed to update conversation status to running", "err", err, "conversation_id", convIDStr)
+	}
+	// Ensure status is set to completed when execution finishes, regardless of outcome.
+	defer func() {
+		if err := h.repo.UpdateConversationStatus(execCtx, convIDStr, "completed"); err != nil {
+			slog.Warn("failed to update conversation status to completed", "err", err, "conversation_id", convIDStr)
+		}
+	}()
+
 	slog.Info("message streaming started", "conversation_id", convIDStr, "has_resume_session", resumeSessionID != "")
 	newSessionID, err := h.remote.Execute(execCtx, executeReq, func(event remoteclient.StreamEvent) {
 		slog.Info("stream event received", "type", event.Type, "subtype", event.SubType)
@@ -296,10 +333,12 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 			if event.Message != nil {
 				for _, block := range event.Message.Content {
 					if block.Type == "thinking" && block.Thinking != "" {
+						mu.Lock()
 						contentBlocksList = append(contentBlocksList, map[string]interface{}{
 							"type":    "thinking",
 							"content": block.Thinking,
 						})
+						mu.Unlock()
 						thinkingContent += block.Thinking
 						sseEvent := SSEThinkingEvent{Type: Thinking, Content: block.Thinking}
 						data, _ := json.Marshal(sseEvent)
@@ -311,10 +350,12 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						flusher.Flush()
 					}
 					if block.Type == "text" && block.Text != "" {
+						mu.Lock()
 						contentBlocksList = append(contentBlocksList, map[string]interface{}{
 							"type":    "text",
 							"content": block.Text,
 						})
+						mu.Unlock()
 						assistantContent += block.Text
 						sseEvent := SSETextEvent{Type: Text, Content: block.Text}
 						data, _ := json.Marshal(sseEvent)
@@ -326,10 +367,12 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 						flusher.Flush()
 					}
 					if block.Type == "tool_use" && block.ID != "" {
+						mu.Lock()
 						contentBlocksList = append(contentBlocksList, map[string]interface{}{
 							"type":        "tool_use",
 							"tool_use_id": block.ID,
 						})
+						mu.Unlock()
 					}
 					if block.Type == "tool_result" {
 						content := ""
@@ -576,6 +619,11 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 
 	if err != nil {
 		slog.Error("message streaming error", "conversation_id", convIDStr, "err", err)
+		if assistantMsg != nil {
+			if serr := h.repo.UpdateMessageStatus(execCtx, assistantMsg.ID, "error"); serr != nil {
+				slog.Error("failed to update message status to error", "err", serr, "message_id", assistantMsg.ID)
+			}
+		}
 		data, _ := json.Marshal(SSEErrorEvent{
 			Type:    SSEErrorEventTypeError,
 			Message: err.Error(),
@@ -588,37 +636,51 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 
 	slog.Info("message streaming completed", "conversation_id", convIDStr)
-	// assistant メッセージを DB に保存（session_id を message_data に含める）
-	messageData := map[string]interface{}{"session_id": newSessionID}
-	if assistantContent != "" {
-		messageData["content"] = assistantContent
+
+	// 最終 content_blocks 保存 + message_data マージ + status 更新
+	if assistantMsg != nil {
+		mu.Lock()
+		finalBlocks := cloneBlocks(contentBlocksList)
+		mu.Unlock()
+
+		if err := h.repo.UpdateMessageContentBlocks(execCtx, assistantMsg.ID, finalBlocks); err != nil {
+			slog.Error("failed to update final content_blocks", "err", err, "message_id", assistantMsg.ID)
+		}
+
+		// session_id, model 等のメタデータをマージ
+		extra := map[string]interface{}{"session_id": newSessionID}
+		if assistantContent != "" {
+			extra["content"] = assistantContent
+		}
+		if len(thinkingBlocks) > 0 {
+			extra["thinking"] = thinkingBlocks
+		} else if thinkingContent != "" {
+			extra["thinking"] = []string{thinkingContent}
+		}
+		if modelName != "" {
+			extra["model"] = modelName
+		}
+		if costUSD > 0 {
+			extra["cost_usd"] = costUSD
+		}
+		if durationMs > 0 {
+			extra["duration_ms"] = durationMs
+		}
+		if len(hookEventsList) > 0 {
+			extra["hook_events"] = hookEventsList
+		}
+		if len(toolCallsData) > 0 {
+			extra["tool_calls"] = toolCallsData
+		}
+		if err := h.repo.MergeMessageData(execCtx, assistantMsg.ID, extra); err != nil {
+			slog.Error("failed to merge assistant message data", "err", err, "message_id", assistantMsg.ID)
+		}
+
+		if err := h.repo.UpdateMessageStatus(execCtx, assistantMsg.ID, "completed"); err != nil {
+			slog.Error("failed to update message status to completed", "err", err, "message_id", assistantMsg.ID)
+		}
 	}
-	if len(thinkingBlocks) > 0 {
-		messageData["thinking"] = thinkingBlocks
-	} else if thinkingContent != "" {
-		messageData["thinking"] = []string{thinkingContent}
-	}
-	if modelName != "" {
-		messageData["model"] = modelName
-	}
-	if costUSD > 0 {
-		messageData["cost_usd"] = costUSD
-	}
-	if durationMs > 0 {
-		messageData["duration_ms"] = durationMs
-	}
-	if len(hookEventsList) > 0 {
-		messageData["hook_events"] = hookEventsList
-	}
-	if len(toolCallsData) > 0 {
-		messageData["tool_calls"] = toolCallsData
-	}
-	if len(contentBlocksList) > 0 {
-		messageData["content_blocks"] = contentBlocksList
-	}
-	if _, err := h.repo.CreateMessage(execCtx, convIDStr, "assistant", messageData); err != nil {
-		slog.Error("failed to save assistant message", "err", err, "conversation_id", convIDStr)
-	}
+
 	if assistantContent != "" {
 		title := generateTitle(assistantContent)
 		if err := h.repo.UpdateConversationTitle(execCtx, convIDStr, title); err != nil {
@@ -650,6 +712,7 @@ func dbConvToAPI(c *db.Conversation) Conversation {
 		Id:        id,
 		Title:     c.Title,
 		Model:     c.Model,
+		Status:    ConversationStatus(c.Status),
 		CreatedAt: c.CreatedAt,
 		UpdatedAt: c.UpdatedAt,
 	}
@@ -672,6 +735,21 @@ func dbMsgToAPI(m *db.Message) Message {
 		msg.MessageData = &m.MessageData
 	}
 	return msg
+}
+
+func cloneBlocks(blocks []map[string]interface{}) []map[string]interface{} {
+	if blocks == nil {
+		return nil
+	}
+	clone := make([]map[string]interface{}, len(blocks))
+	for i, b := range blocks {
+		m := make(map[string]interface{}, len(b))
+		for k, v := range b {
+			m[k] = v
+		}
+		clone[i] = m
+	}
+	return clone
 }
 
 type responseWriter struct {
