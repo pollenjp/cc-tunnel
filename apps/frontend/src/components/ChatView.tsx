@@ -4,6 +4,7 @@ import type { StreamMeta, ToolCall, AssistantBlock } from '../App';
 import { MessageBubble, ThinkingAccordion } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { ToolCallCard } from './ToolCallCard';
+import { TypingIndicator } from './TypingIndicator';
 
 interface ChatViewProps {
   messages: Message[];
@@ -146,10 +147,13 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, streamMeta,
             const lastTextIdx = blocks.map((b, i) => b.type === 'text' ? i : -1).filter(i => i >= 0).pop() ?? -1;
             const lastBlockIdx = blocks.length - 1;
             const isShowingStreaming = isStreamingMsg || isPollingStreamingMsg;
+            const isInProgress = isStreamingMsg || isPollingStreamingMsg;
+            const isEmptyBlocks =
+              blocks.length === 1 && blocks[0].type === 'text' && blocks[0].content === '';
 
             return (
               <div key={msg.id} className="flex flex-col gap-1">
-                {blocks.map((block, bi) => {
+                {!isEmptyBlocks && blocks.map((block, bi) => {
                   if (block.type === 'thinking') {
                     return <ThinkingAccordion key={bi} content={block.content} />;
                   } else if (block.type === 'text') {
@@ -167,14 +171,7 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, streamMeta,
                     return <ToolCallCard key={bi} toolCall={block.toolCall} />;
                   }
                 })}
-                {isPollingStreamingMsg && (
-                  <div className="flex items-center gap-1 px-4 py-1 text-xs text-[var(--color-text)]">
-                    <span className="animate-pulse">●</span>
-                    <span className="animate-pulse" style={{ animationDelay: '0.2s' }}>●</span>
-                    <span className="animate-pulse" style={{ animationDelay: '0.4s' }}>●</span>
-                    <span className="ml-1 text-[var(--color-text-muted)]">生成中...</span>
-                  </div>
-                )}
+                {isInProgress && <TypingIndicator />}
               </div>
             );
           })}

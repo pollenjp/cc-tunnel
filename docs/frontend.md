@@ -103,6 +103,30 @@ type ContentBlockEntry =
 
 スピナーは `h-3 w-3` の円形ボーダー要素（`border-[var(--color-accent)] border-t-transparent animate-spin`）で、Tailwind CSS の `animate-spin` クラスで回転アニメーションを実現する。
 
+### `TypingIndicator`
+
+ストリーミング進行中を示すパルスドットアニメーションコンポーネント。
+
+```tsx
+export function TypingIndicator() { ... }
+```
+
+- 3つのドット（`span`要素）を横並びで表示
+- 各ドットに `animate-pulse` クラスを付与
+- ストークドディレイ: 0s / 0.2s / 0.4s（`animationDelay` スタイル）
+- カラー: `var(--color-text-muted)`（Tokyo Night テーマに合わせたグレー系）
+- `data-testid="typing-indicator"` でテスト可能
+
+ChatView での使用:
+
+| 状態 | 表示内容 |
+| ---- | -------- |
+| `isInProgress` + ブロックが空テキストのみ | TypingIndicator のみ（MessageBubble は非表示） |
+| `isInProgress` + ブロックにコンテンツあり | コンテンツを通常描画 + 末尾に TypingIndicator |
+| `isInProgress=false` | TypingIndicator 非表示 |
+
+`isInProgress` = `isStreamingMsg || isPollingStreamingMsg`（SSE・DBポーリング両方に適用）。
+
 ### `ChatView`
 
 選択中会話のメッセージ一覧と入力欄を表示する。メッセージ追加時に最下部へ自動スクロールする (`messagesEndRef`)。アシスタントメッセージは `AssistantBlock` の配列を順番にレンダリングする。

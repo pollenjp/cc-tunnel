@@ -39,37 +39,37 @@ jobs:
           version: v2.11.4
           working-directory: apps/cc-tunnel
 
-  test-cc-remote-agent:
-    name: "cc-remote-agent: test"
+  test-cc-tmux-tunnel:
+    name: "cc-tmux-tunnel: test"
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/cc-remote-agent
+        working-directory: apps/cc-tmux-tunnel
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: apps/cc-remote-agent/go.mod
+          go-version-file: apps/cc-tmux-tunnel/go.mod
 
       - name: Test
         run: go test ./...
 
-  lint-cc-remote-agent:
-    name: "cc-remote-agent: lint"
+  lint-cc-tmux-tunnel:
+    name: "cc-tmux-tunnel: lint"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: apps/cc-remote-agent/go.mod
+          go-version-file: apps/cc-tmux-tunnel/go.mod
 
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
-          working-directory: apps/cc-remote-agent
+          working-directory: apps/cc-tmux-tunnel
 
   test-frontend:
     name: "frontend: test"

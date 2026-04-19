@@ -38,6 +38,10 @@ vi.mock('./ToolCallCard', () => ({
   ToolCallCard: () => <div data-testid="tool-call-card" />,
 }));
 
+vi.mock('./TypingIndicator', () => ({
+  TypingIndicator: () => <div data-testid="typing-indicator" />,
+}));
+
 import type { Message } from '../api/client';
 
 function makeMsg(overrides: Partial<Message> & { id: string }): Message {
@@ -82,7 +86,7 @@ describe('ChatView', () => {
     expect(bubble.getAttribute('data-streaming')).toBe('true');
   });
 
-  it('shows empty text block with streaming animation for status=streaming message with no content_blocks when isPolling is true', () => {
+  it('shows TypingIndicator (not empty bubble) for status=streaming message with no content_blocks when isPolling is true', () => {
     const msg = makeMsg({
       id: 'msg-streaming-empty',
       role: 'assistant',
@@ -98,9 +102,8 @@ describe('ChatView', () => {
       />,
     );
 
-    const bubble = screen.getByTestId('message-bubble-msg-streaming-empty');
-    expect(bubble).toBeTruthy();
-    expect(bubble.getAttribute('data-streaming')).toBe('true');
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
+    expect(screen.queryByTestId('message-bubble-msg-streaming-empty')).toBeNull();
   });
 
   it('shows error display for status=error message', () => {
@@ -146,7 +149,7 @@ describe('ChatView', () => {
     expect(bubble.getAttribute('data-streaming')).toBe('false');
   });
 
-  it('shows pulse indicator with 生成中... text in message bubble for status=streaming when isPolling is true', () => {
+  it('shows TypingIndicator for status=streaming when isPolling is true', () => {
     const msg = makeMsg({
       id: 'msg-pulse',
       role: 'assistant',
@@ -164,7 +167,7 @@ describe('ChatView', () => {
       />,
     );
 
-    expect(screen.getByText('生成中...')).toBeTruthy();
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
   });
 
   it('does not show pulse indicator for status=streaming when isPolling is false', () => {
@@ -235,5 +238,111 @@ describe('ChatView', () => {
     );
 
     expect(screen.queryByTestId('tool-call-card')).toBeNull();
+  });
+
+  it('shows TypingIndicator instead of empty bubble when isPolling=true and content_blocks is empty', () => {
+    const msg = makeMsg({
+      id: 'msg-typing-empty',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {},
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={true}
+      />,
+    );
+
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
+    expect(screen.queryByTestId('message-bubble-msg-typing-empty')).toBeNull();
+  });
+
+  it('shows text content and TypingIndicator when isPolling=true and content_blocks has text', () => {
+    const msg = makeMsg({
+      id: 'msg-typing-text',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'text', content: '途中のテキスト' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={true}
+      />,
+    );
+
+    expect(screen.getByText('途中のテキスト')).toBeTruthy();
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
+  });
+
+  it('does not show TypingIndicator when isPolling=false and isStreaming=false', () => {
+    const msg = makeMsg({
+      id: 'msg-no-typing',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'text', content: '完了テキスト' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={false}
+        isStreaming={false}
+      />,
+    );
+
+    expect(screen.queryByTestId('typing-indicator')).toBeNull();
+  });
+
+  it('shows TypingIndicator for SSE streaming with empty streamBlocks', () => {
+    const msg = makeMsg({
+      id: 'msg-sse-empty',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {},
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isStreaming={true}
+        streamBlocks={[]}
+      />,
+    );
+
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
+    expect(screen.queryByTestId('message-bubble-msg-sse-empty')).toBeNull();
+  });
+
+  it('shows content and TypingIndicator for SSE streaming with streamBlocks', () => {
+    const msg = makeMsg({
+      id: 'msg-sse-content',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {},
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isStreaming={true}
+        streamBlocks={[{ type: 'text', content: 'SSE途中テキスト' }]}
+      />,
+    );
+
+    expect(screen.getByText('SSE途中テキスト')).toBeTruthy();
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
   });
 });
