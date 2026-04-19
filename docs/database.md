@@ -139,6 +139,22 @@ UPDATE conversations SET updated_at = NOW() WHERE id = $1
 
 `UpdateConversationUpdatedAt(ctx, id)` で呼び出す。メッセージ送信後に会話のタイムスタンプを更新するために使用。
 
+**タイトル自動更新**
+
+```sql
+UPDATE conversations SET title = $1, updated_at = NOW() WHERE id = $2
+```
+
+`UpdateConversationTitle(ctx, id, title)` で呼び出す。アシスタントメッセージ保存後に、応答テキストから自動生成したタイトルで `title` カラムを更新する。
+
+タイトル生成ロジック（`generateTitle` 関数、`internal/api/title.go`）:
+
+- 最新アシスタント応答の text ブロックから先頭 60 文字を抽出
+- 改行は半角スペースに変換
+- Markdown 記法（`#`, `*`, `` ` `` 等）を除去して平文にする
+- 60 文字で切った場合は `...` を付加
+- 空の場合のフォールバック: `"New Conversation"`
+
 ## PostgreSQL バージョン要件
 
 Docker Compose では `postgres:18-alpine` を使用する。

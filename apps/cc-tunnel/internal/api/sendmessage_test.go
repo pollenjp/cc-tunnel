@@ -23,6 +23,7 @@ type mockRepoCheckCtx struct {
 	conv              *db.Conversation
 	msgs              []*db.Message
 	assistantMsgSaved bool
+	updatedTitle      string
 }
 
 func (m *mockRepoCheckCtx) CreateConversation(_ context.Context, _, _ string, _ *string) (*db.Conversation, error) {
@@ -50,6 +51,11 @@ func (m *mockRepoCheckCtx) UpdateConversationUpdatedAt(ctx context.Context, _ st
 		return ctx.Err()
 	default:
 	}
+	return nil
+}
+
+func (m *mockRepoCheckCtx) UpdateConversationTitle(_ context.Context, _ string, title string) error {
+	m.updatedTitle = title
 	return nil
 }
 
@@ -293,5 +299,43 @@ func TestSendMessage_ExecuteContextIsIndependentOfRequestContext(t *testing.T) {
 		t.Error("FAIL: Execute received a context that was already cancelled\n" +
 			"Expected: Execute receives context.WithoutCancel(r.Context()) — never cancelled\n" +
 			"Got: Execute received r.Context() which was cancelled by the simulated disconnect")
+	}
+}
+
+// =============================================================================
+// Cycle 3: アシスタント応答後にタイトルが自動更新されること
+// =============================================================================
+
+// TestSendMessage_AssistantResponse_TitleUpdated verifies that after the assistant
+// message is saved, UpdateConversationTitle is called with the generated title.
+func TestSendMessage_AssistantResponse_TitleUpdated(t *testing.T) {
+	const convIDStr = "55555555-5555-5555-5555-555555555555"
+	ctx := context.Background()
+
+	repo := &mockRepoCheckCtx{
+		conv: makeConv(convIDStr),
+		msgs: []*db.Message{},
+	}
+	remote := &mockRemoteWithCancel{
+		events: []remoteclient.StreamEvent{
+			makeTextEvent("Hello from AI"),
+			makeResultEvent("sess-title"),
+		},
+		sessionID: "sess-title",
+		cancel:    func() {}, // no-op: no disconnect simulation
+	}
+
+	w := httptest.NewRecorder()
+	body := strings.NewReader(`{"content":"hi"}`)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server := &Server{repo: repo, remote: remote}
+	convID := ConversationId(uuid.MustParse(convIDStr))
+	server.SendMessage(w, req, convID)
+
+	wantTitle := generateTitle("Hello from AI")
+	if repo.updatedTitle != wantTitle {
+		t.Errorf("FAIL: UpdateConversationTitle not called with expected title\nGot: %q\nWant: %q", repo.updatedTitle, wantTitle)
 	}
 }

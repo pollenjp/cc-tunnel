@@ -86,6 +86,11 @@ func (r *Repository) UpdateConversationUpdatedAt(ctx context.Context, id string)
 	return err
 }
 
+func (r *Repository) UpdateConversationTitle(ctx context.Context, id string, title string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE conversations SET title = $1, updated_at = NOW() WHERE id = $2`, title, id)
+	return err
+}
+
 // --- Message ---
 
 type Message struct {

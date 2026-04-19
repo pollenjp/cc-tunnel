@@ -13,6 +13,7 @@ type repository interface {
 	ListConversations(ctx context.Context) ([]*db.Conversation, error)
 	DeleteConversation(ctx context.Context, id string) error
 	UpdateConversationUpdatedAt(ctx context.Context, id string) error
+	UpdateConversationTitle(ctx context.Context, id string, title string) error
 	CreateMessage(ctx context.Context, conversationID, role string, messageData map[string]interface{}) (*db.Message, error)
 	ListMessages(ctx context.Context, conversationID string) ([]*db.Message, error)
 }

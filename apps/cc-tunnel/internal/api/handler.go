@@ -619,6 +619,12 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	if _, err := h.repo.CreateMessage(execCtx, convIDStr, "assistant", messageData); err != nil {
 		slog.Error("failed to save assistant message", "err", err, "conversation_id", convIDStr)
 	}
+	if assistantContent != "" {
+		title := generateTitle(assistantContent)
+		if err := h.repo.UpdateConversationTitle(execCtx, convIDStr, title); err != nil {
+			slog.Error("failed to update conversation title", "err", err, "conversation_id", convIDStr)
+		}
+	}
 	if err := h.repo.UpdateConversationUpdatedAt(execCtx, convIDStr); err != nil {
 		slog.Error("failed to update conversation updated_at", "err", err, "conversation_id", convIDStr)
 	}
