@@ -23,6 +23,10 @@ export interface ToolCall {
   isRunning: boolean;
 }
 
+export type AssistantBlock =
+  | { type: 'text'; content: string }
+  | { type: 'tool'; toolCall: ToolCall }
+
 export interface StreamMeta {
   model?: string;
   sessionId?: string;
@@ -46,14 +50,13 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [streamMeta, setStreamMeta] = useState<StreamMeta | null>(null);
   const [hookEvents, setHookEvents] = useState<SSEHookEvent[]>([]);
-  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [streamBlocks, setStreamBlocks] = useState<AssistantBlock[]>([]);
   const [streamingThinkings, setStreamingThinkings] = useState<string[]>([]);
-  const streamContentRef = useRef('');
   const streamThinkingRef = useRef<string[]>([]);
   const rafIdRef = useRef<number>(0);
   const streamMetaRef = useRef<StreamMeta>({});
   const hookEventsRef = useRef<SSEHookEvent[]>([]);
-  const toolCallsRef = useRef<ToolCall[]>([]);
+  const streamBlocksRef = useRef<AssistantBlock[]>([]);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -72,33 +75,21 @@ function App() {
     if (rafIdRef.current) return;
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = 0;
-      const content = streamContentRef.current;
       setStreamingThinkings([...streamThinkingRef.current.filter(s => s !== '')]);
-      setMessages(prev => {
-        const copy = [...prev];
-        const last = copy[copy.length - 1];
-        if (last?.role === 'assistant') {
-          copy[copy.length - 1] = {
-            ...last,
-            content: content || last.content,
-          };
-        }
-        return copy;
-      });
+      setStreamBlocks([...streamBlocksRef.current]);
     });
   }
 
   const handleSelectConversation = useCallback(async (id: string) => {
     setSelectedId(id);
     setMessages([]);
-    streamContentRef.current = '';
+    streamBlocksRef.current = [];
     streamThinkingRef.current = [];
     streamMetaRef.current = {};
     hookEventsRef.current = [];
     setStreamMeta(null);
     setHookEvents([]);
-    setToolCalls([]);
-    toolCallsRef.current = [];
+    setStreamBlocks([]);
     setStreamingThinkings([]);
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
@@ -141,14 +132,13 @@ function App() {
     if (!content.trim() || !selectedId || sending) return;
     setInput('');
     setSending(true);
-    streamContentRef.current = '';
+    streamBlocksRef.current = [];
     streamThinkingRef.current = [];
     streamMetaRef.current = {};
     hookEventsRef.current = [];
     setStreamMeta(null);
     setHookEvents([]);
-    setToolCalls([]);
-    toolCallsRef.current = [];
+    setStreamBlocks([]);
     setStreamingThinkings([]);
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
@@ -176,14 +166,14 @@ function App() {
     try {
       await sendMessage(selectedId, content.trim(), (event) => {
         if (event.type === 'text') {
-          setMessages(prev => {
-            const copy = [...prev];
-            const last = copy[copy.length - 1];
-            if (last?.role === 'assistant') {
-              copy[copy.length - 1] = { ...last, content: last.content + event.content };
-            }
-            return copy;
-          });
+          const blocks = streamBlocksRef.current;
+          const last = blocks[blocks.length - 1];
+          if (last?.type === 'text') {
+            streamBlocksRef.current = [...blocks.slice(0, -1), { type: 'text', content: last.content + event.content }];
+          } else {
+            streamBlocksRef.current = [...blocks, { type: 'text', content: event.content }];
+          }
+          scheduleRafUpdate();
         } else if (event.type === 'thinking') {
           const arr = streamThinkingRef.current;
           if (arr.length === 0) arr.push('');
@@ -194,7 +184,13 @@ function App() {
           if (arr.length > 0 && arr[arr.length - 1] !== '') {
             arr.push('');
           }
-          streamContentRef.current += event.content;
+          const blocks = streamBlocksRef.current;
+          const last = blocks[blocks.length - 1];
+          if (last?.type === 'text') {
+            streamBlocksRef.current = [...blocks.slice(0, -1), { type: 'text', content: last.content + event.content }];
+          } else {
+            streamBlocksRef.current = [...blocks, { type: 'text', content: event.content }];
+          }
           scheduleRafUpdate();
         } else if (event.type === 'thinking_delta') {
           const arr = streamThinkingRef.current;
@@ -232,42 +228,49 @@ function App() {
             inputJson: '',
             isRunning: true,
           };
-          toolCallsRef.current = [...toolCallsRef.current, newTc];
-          setToolCalls(prev => [...prev, newTc]);
+          streamBlocksRef.current = [...streamBlocksRef.current, { type: 'tool', toolCall: newTc }];
+          scheduleRafUpdate();
         } else if (event.type === 'tool_input_delta') {
-          toolCallsRef.current = toolCallsRef.current.map(tc =>
-            tc.index === event.index
-              ? { ...tc, inputJson: tc.inputJson + event.partial_json }
-              : tc
+          streamBlocksRef.current = streamBlocksRef.current.map(block =>
+            block.type === 'tool' && block.toolCall.index === event.index
+              ? { ...block, toolCall: { ...block.toolCall, inputJson: block.toolCall.inputJson + event.partial_json } }
+              : block
           );
-          setToolCalls(prev => prev.map(tc =>
-            tc.index === event.index
-              ? { ...tc, inputJson: tc.inputJson + event.partial_json }
-              : tc
-          ));
+          scheduleRafUpdate();
         } else if (event.type === 'tool_result') {
-          toolCallsRef.current = toolCallsRef.current.map(tc =>
-            tc.toolUseId === event.tool_use_id
-              ? { ...tc, result: event.content, isRunning: false }
-              : tc
+          streamBlocksRef.current = streamBlocksRef.current.map(block =>
+            block.type === 'tool' && block.toolCall.toolUseId === event.tool_use_id
+              ? { ...block, toolCall: { ...block.toolCall, result: event.content, isRunning: false } }
+              : block
           );
-          setToolCalls(prev => prev.map(tc =>
-            tc.toolUseId === event.tool_use_id
-              ? { ...tc, result: event.content, isRunning: false }
-              : tc
-          ));
+          scheduleRafUpdate();
         }
       });
     } catch (err) {
       console.error('Failed to send message:', err);
     } finally {
       const completedThinkings = streamThinkingRef.current.filter(s => s !== '');
+      const finalBlocks = streamBlocksRef.current;
+      const finalText = finalBlocks
+        .filter((b): b is { type: 'text'; content: string } => b.type === 'text')
+        .map(b => b.content)
+        .join('');
+      const toolCallsList = finalBlocks
+        .filter((b): b is { type: 'tool'; toolCall: ToolCall } => b.type === 'tool')
+        .map(b => b.toolCall);
+      const contentBlocks = finalBlocks.map(b =>
+        b.type === 'text'
+          ? { type: 'text' as const, content: b.content }
+          : { type: 'tool_use' as const, tool_use_id: b.toolCall.toolUseId }
+      );
+
       setMessages(prev => {
         const copy = [...prev];
         const last = copy[copy.length - 1];
         if (last?.role === 'assistant') {
           copy[copy.length - 1] = {
             ...last,
+            content: finalText,
             metadata: {
               ...(last.metadata as Record<string, unknown> ?? {}),
               ...(completedThinkings.length > 0 ? { thinking: completedThinkings.join('\n') } : {}),
@@ -275,13 +278,14 @@ function App() {
               ...(streamMetaRef.current.totalCostUSD ? { cost_usd: streamMetaRef.current.totalCostUSD } : {}),
               ...(streamMetaRef.current.durationMs ? { duration_ms: streamMetaRef.current.durationMs } : {}),
               ...(hookEventsRef.current?.length > 0 ? { hook_events: hookEventsRef.current } : {}),
-              ...(toolCallsRef.current.length > 0 ? {
-                tool_calls: toolCallsRef.current.map(tc => ({
+              ...(toolCallsList.length > 0 ? {
+                tool_calls: toolCallsList.map(tc => ({
                   tool_use_id: tc.toolUseId,
                   tool_name: tc.toolName,
                   input_json: tc.inputJson,
                   result: tc.result ?? null,
                 })),
+                content_blocks: contentBlocks,
               } : {}),
             },
           };
@@ -316,7 +320,7 @@ function App() {
               isStreaming={sending}
               streamMeta={streamMeta}
               hookEvents={hookEvents}
-              toolCalls={toolCalls}
+              streamBlocks={streamBlocks}
               streamingThinkings={streamingThinkings}
               input={input}
               onInputChange={setInput}

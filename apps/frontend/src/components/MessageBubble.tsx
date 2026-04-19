@@ -8,6 +8,7 @@ import type { StreamMeta } from '../App';
 
 interface MessageBubbleProps {
   message: Message;
+  textContent?: string;
   isStreaming?: boolean;
   streamingThinkings?: string[];
   streamMeta?: StreamMeta | null;
@@ -41,7 +42,7 @@ function ThinkingAccordion({ content }: { content: string }) {
   );
 }
 
-export function MessageBubble({ message, isStreaming, streamingThinkings, streamMeta, hookEvents }: MessageBubbleProps) {
+export function MessageBubble({ message, textContent, isStreaming, streamingThinkings, streamMeta, hookEvents }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
   const thinkings: string[] = streamingThinkings && streamingThinkings.length > 0
@@ -103,7 +104,7 @@ export function MessageBubble({ message, isStreaming, streamingThinkings, stream
             },
           }}
         >
-          {message.content}
+          {textContent ?? message.content}
         </ReactMarkdown>
       </div>
       {!isUser && (model || costUSD != null || msgHookEvents && msgHookEvents.length > 0) && (

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { Message, SSEHookEvent, ToolCallData } from '../api/client';
-import type { StreamMeta, ToolCall } from '../App';
+import type { StreamMeta, ToolCall, AssistantBlock } from '../App';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { ToolCallCard } from './ToolCallCard';
@@ -11,19 +11,23 @@ interface ChatViewProps {
   isStreaming: boolean;
   streamMeta?: StreamMeta | null;
   hookEvents?: SSEHookEvent[];
-  toolCalls?: ToolCall[];
+  streamBlocks?: AssistantBlock[];
   streamingThinkings?: string[];
   input: string;
   onInputChange: (value: string) => void;
   onHamburger: () => void;
 }
 
-export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents, toolCalls, streamingThinkings, input, onInputChange, onHamburger }: ChatViewProps) {
+type ContentBlockEntry =
+  | { type: 'text'; content: string }
+  | { type: 'tool_use'; tool_use_id: string }
+
+export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents, streamBlocks, streamingThinkings, input, onInputChange, onHamburger }: ChatViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, streamBlocks]);
 
   const isEmpty = messages.length === 0;
 
@@ -38,34 +42,91 @@ export function ChatView({ messages, onSend, isStreaming, streamMeta, hookEvents
           {messages.map((msg, idx) => {
             const isLast = idx === messages.length - 1;
             const isStreamingMsg = isStreaming && isLast && msg.role === 'assistant';
-            const msgToolCalls: ToolCall[] = msg.role === 'assistant'
-              ? isStreamingMsg
-                ? (toolCalls ?? [])
-                : ((msg.metadata as { tool_calls?: ToolCallData[] })?.tool_calls ?? []).map((tc: ToolCallData) => ({
+
+            if (msg.role !== 'assistant') {
+              return (
+                <div key={msg.id}>
+                  <MessageBubble message={msg} />
+                </div>
+              );
+            }
+
+            // Build ordered blocks for this assistant message
+            let blocks: AssistantBlock[];
+
+            if (isStreamingMsg) {
+              // Live streaming: use streamBlocks, fall back to empty text block
+              blocks = (streamBlocks && streamBlocks.length > 0)
+                ? streamBlocks
+                : [{ type: 'text', content: '' }];
+            } else {
+              // Loaded from DB
+              const meta = msg.metadata as Record<string, unknown> | undefined;
+              const contentBlocks = meta?.content_blocks as ContentBlockEntry[] | undefined;
+              const toolCallsData = (meta?.tool_calls as ToolCallData[] | undefined) ?? [];
+              const toolCallMap = new Map(toolCallsData.map(tc => [tc.tool_use_id, tc]));
+
+              if (contentBlocks && contentBlocks.length > 0) {
+                // New format: reconstruct interleaved blocks
+                blocks = contentBlocks.flatMap((cb): AssistantBlock[] => {
+                  if (cb.type === 'text') {
+                    return [{ type: 'text', content: cb.content }];
+                  }
+                  const tc = toolCallMap.get(cb.tool_use_id);
+                  if (!tc) return [];
+                  const toolCall: ToolCall = {
                     index: 0,
                     toolUseId: tc.tool_use_id,
                     toolName: tc.tool_name,
                     inputJson: tc.input_json,
                     result: tc.result ?? undefined,
                     isRunning: false,
-                  }))
-              : [];
+                  };
+                  return [{ type: 'tool', toolCall }];
+                });
+              } else {
+                // Old format: single text block + all tool calls below
+                blocks = [
+                  { type: 'text', content: msg.content },
+                  ...toolCallsData.map((tc): AssistantBlock => ({
+                    type: 'tool',
+                    toolCall: {
+                      index: 0,
+                      toolUseId: tc.tool_use_id,
+                      toolName: tc.tool_name,
+                      inputJson: tc.input_json,
+                      result: tc.result ?? undefined,
+                      isRunning: false,
+                    },
+                  })),
+                ];
+              }
+            }
+
+            // Indices for metadata placement
+            const firstTextIdx = blocks.findIndex(b => b.type === 'text');
+            const lastTextIdx = blocks.map((b, i) => b.type === 'text' ? i : -1).filter(i => i >= 0).pop() ?? -1;
+            const lastBlockIdx = blocks.length - 1;
+
             return (
-              <div key={msg.id}>
-                <MessageBubble
-                  message={msg}
-                  isStreaming={isStreamingMsg}
-                  streamingThinkings={isLast && msg.role === 'assistant' ? streamingThinkings : undefined}
-                  streamMeta={isStreamingMsg ? streamMeta : undefined}
-                  hookEvents={isLast && msg.role === 'assistant' ? hookEvents : undefined}
-                />
-                {msgToolCalls.length > 0 && (
-                  <div className="mt-1 space-y-1">
-                    {msgToolCalls.map((tc, i) => (
-                      <ToolCallCard key={i} toolCall={tc} />
-                    ))}
-                  </div>
-                )}
+              <div key={msg.id} className="flex flex-col gap-1">
+                {blocks.map((block, bi) => {
+                  if (block.type === 'text') {
+                    return (
+                      <MessageBubble
+                        key={bi}
+                        message={msg}
+                        textContent={block.content}
+                        isStreaming={isStreamingMsg && bi === lastBlockIdx}
+                        streamingThinkings={isLast && bi === firstTextIdx ? streamingThinkings : undefined}
+                        streamMeta={isStreamingMsg && bi === lastTextIdx ? streamMeta : undefined}
+                        hookEvents={isLast && bi === lastTextIdx ? hookEvents : undefined}
+                      />
+                    );
+                  } else {
+                    return <ToolCallCard key={bi} toolCall={block.toolCall} />;
+                  }
+                })}
               </div>
             );
           })}
