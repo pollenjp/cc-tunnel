@@ -5,6 +5,7 @@
 - React 18 + TypeScript
 - Vite (ビルドツール)
 - Tailwind CSS v4
+- react-router-dom v7 (URLルーティング)
 - ReactMarkdown + remark-gfm (Markdown レンダリング)
 - react-syntax-highlighter (コードブロックシンタックスハイライト)
 - @xterm/xterm (認証ターミナルエミュレータ)
@@ -458,6 +459,86 @@ useConversationPoller({
 ### ChatView のエラー表示
 
 `msg.status === 'error'` のメッセージは赤いエラーバッジ（「エラーが発生しました」）を表示する。
+
+---
+
+## URLルーティング
+
+### 概要
+
+React Router v7 (`react-router-dom`) による URL ベースの会話選択。会話 ID が URL に含まれるため、ブラウザの戻る/進む・ページリロード・URL 直接アクセスに対応する。
+
+### ルート定義
+
+```tsx
+// main.tsx: BrowserRouter でアプリ全体をラップ
+<BrowserRouter>
+  <App />
+</BrowserRouter>
+
+// App.tsx: 2つのルートを定義
+<Routes>
+  <Route path="/" element={<AppContent />} />
+  <Route path="/conversation/:id" element={<AppContent />} />
+</Routes>
+```
+
+### URL 設計
+
+| URL パターン | 表示 |
+| --- | --- |
+| `/` | 会話未選択（サイドバーから選択を促すプレースホルダー） |
+| `/conversation/{id}` | 指定 ID の会話を選択・表示 |
+
+### 動作仕様
+
+| 操作 | URL 変化 |
+| --- | --- |
+| サイドバーで会話をクリック | `→ /conversation/{id}` |
+| 新規会話作成 | `→ /conversation/{新ID}` |
+| 選択中会話を削除 | `→ /` |
+| ブラウザの戻る/進む | React Router が popstate を自動管理 |
+| 存在しない ID に直接アクセス | `→ /`（リダイレクト） |
+
+### 直接 URL アクセス時の初期化 (`AppContent` 内)
+
+```tsx
+const { id: urlId } = useParams<{ id: string }>();
+const navigate = useNavigate();
+
+// URL パラメータから会話を初期化
+const urlInitHandled = useRef<string | undefined>(undefined);
+useEffect(() => {
+  if (!urlId) {
+    // / へのナビゲーション時: 選択状態をクリア
+    setSelectedId(null);
+    return;
+  }
+  if (selectedId === urlId) { urlInitHandled.current = urlId; return; }
+  if (urlInitHandled.current === urlId) return;
+  urlInitHandled.current = urlId;
+
+  setSelectedId(urlId);
+  getConversation(urlId).then(detail => {
+    setMessages(detail.messages ?? []);
+    if (detail.status === 'running') setIsPolling(true);
+  }).catch(() => {
+    setSelectedId(null);
+    navigate('/');  // 存在しない ID → / へリダイレクト
+  });
+}, [urlId, selectedId, navigate]);
+```
+
+### nginx SPA フォールバック
+
+`apps/frontend/nginx.conf.template` の `location /` ブロックで設定済み。
+`/conversation/xxx` への直接アクセスも `index.html` を返す。
+
+```nginx
+location / {
+    try_files $uri $uri/ /index.html;
+}
+```
 
 ---
 

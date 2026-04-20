@@ -35,6 +35,7 @@ vi.mock('../hooks/useConversationListPoller', () => ({
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, act, screen } from '@testing-library/react';
 import { fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
 import * as clientModule from '../api/client';
 import type { Conversation } from '../api/client';
@@ -69,7 +70,7 @@ describe('App 楽観的 status 更新 (TDD Cycle 1)', () => {
     // sendMessage は永遠に解決しない（await 中の中間状態をテストするため）
     vi.mocked(clientModule.sendMessage).mockReturnValue(new Promise<{ message_id: string }>(() => {}));
 
-    render(<App />);
+    render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
     await flush(); // listConversations が解決し conversations が更新される
 
     // Sidebar に会話が表示されていること
@@ -118,7 +119,7 @@ describe('App isRunning prop (TDD Cycle 2)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(clientModule.getConversation).mockResolvedValue({ ...conv, messages: [streamingMsg] } as any);
 
-    render(<App />);
+    render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
     await flush();
 
     // 会話をクリックして選択
@@ -147,7 +148,7 @@ describe('App isRunning prop (TDD Cycle 2)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(clientModule.getConversation).mockResolvedValue({ ...conv, messages: [completedMsg] } as any);
 
-    render(<App />);
+    render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
     await flush();
 
     // 会話をクリックして選択

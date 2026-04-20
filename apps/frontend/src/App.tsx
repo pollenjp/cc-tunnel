@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import type { Conversation, Message } from './api/client';
 import {
   listConversations,
@@ -30,7 +31,9 @@ export type AssistantBlock =
   | { type: 'text'; content: string }
   | { type: 'tool'; toolCall: ToolCall }
 
-function App() {
+function AppContent() {
+  const { id: urlId } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const auth = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -55,6 +58,7 @@ function App() {
 
   const handleSelectConversation = useCallback(async (id: string) => {
     setSelectedId(id);
+    navigate(`/conversation/${id}`);
     setMessages([]);
     setIsPolling(false);
     setSending(false);
@@ -70,7 +74,44 @@ function App() {
     } catch (e) {
       console.error('Failed to load conversation:', e);
     }
-  }, []);
+  }, [navigate]);
+
+  // URL直接アクセス時: URLパラメータから会話を初期化
+  const urlInitHandled = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!urlId) {
+      // ルート (/) へのナビゲーション時: 選択状態をクリア
+      if (selectedId !== null) {
+        setSelectedId(null);
+        setMessages([]);
+        setIsPolling(false);
+      }
+      return;
+    }
+    // handleSelectConversation 経由で既に処理済みの場合はスキップ
+    if (selectedId === urlId) {
+      urlInitHandled.current = urlId;
+      return;
+    }
+    if (urlInitHandled.current === urlId) return;
+    urlInitHandled.current = urlId;
+
+    // 直接URLアクセス: 会話をロード
+    setSelectedId(urlId);
+    setMessages([]);
+    setIsPolling(false);
+    setSending(false);
+
+    getConversation(urlId).then(detail => {
+      const msgs = detail.messages ?? [];
+      setMessages(msgs);
+      if (detail.status === 'running') setIsPolling(true);
+    }).catch(() => {
+      // 存在しない会話ID → / へリダイレクト
+      setSelectedId(null);
+      navigate('/');
+    });
+  }, [urlId, selectedId, navigate]);
 
   const handleNewConversation = async () => {
     try {
@@ -87,8 +128,7 @@ function App() {
     try {
       await deleteConversation(id);
       if (selectedId === id) {
-        setSelectedId(null);
-        setMessages([]);
+        navigate('/');
       }
       await refreshConversations();
     } catch (err) {
@@ -193,6 +233,15 @@ function App() {
         </main>
       </div>
     </AuthGuard>
+  );
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<AppContent />} />
+      <Route path="/conversation/:id" element={<AppContent />} />
+    </Routes>
   );
 }
 
