@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Conversation, Message, SSEHookEvent } from './api/client';
+import { useState, useEffect, useCallback } from 'react';
+import type { Conversation, Message } from './api/client';
 import {
   listConversations,
   createConversation,
@@ -11,7 +11,6 @@ import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
 import { useAuth } from './hooks/useAuth';
 import { AuthGuard } from './components/AuthGuard';
-import { useSSEAbort } from './hooks/useSSEAbort';
 import { useConversationPoller } from './hooks/useConversationPoller';
 import { useConversationListPoller } from './hooks/useConversationListPoller';
 
@@ -31,22 +30,8 @@ export type AssistantBlock =
   | { type: 'text'; content: string }
   | { type: 'tool'; toolCall: ToolCall }
 
-export interface StreamMeta {
-  model?: string;
-  sessionId?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-  totalCostUSD?: number;
-  durationMs?: number;
-  rateLimitStatus?: string;
-  stopReason?: string;
-}
-
 function App() {
   const auth = useAuth();
-  const { startStream, switchSession, isActiveSession } = useSSEAbort();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -54,14 +39,6 @@ function App() {
   const [sending, setSending] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [streamMeta, setStreamMeta] = useState<StreamMeta | null>(null);
-  const [hookEvents, setHookEvents] = useState<SSEHookEvent[]>([]);
-  const [streamBlocks, setStreamBlocks] = useState<AssistantBlock[]>([]);
-  const rafIdRef = useRef<number>(0);
-  const streamMetaRef = useRef<StreamMeta>({});
-  const hookEventsRef = useRef<SSEHookEvent[]>([]);
-  const streamBlocksRef = useRef<AssistantBlock[]>([]);
-  const lastMessageIdRef = useRef<string | undefined>(undefined);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -76,40 +53,16 @@ function App() {
     refreshConversations();
   }, [refreshConversations]);
 
-  function scheduleRafUpdate() {
-    if (rafIdRef.current) return;
-    rafIdRef.current = requestAnimationFrame(() => {
-      rafIdRef.current = 0;
-      setStreamBlocks([...streamBlocksRef.current]);
-    });
-  }
-
   const handleSelectConversation = useCallback(async (id: string) => {
-    // 既存のSSEストリームをキャンセルし、アクティブセッションを更新
-    switchSession(id);
     setSelectedId(id);
     setMessages([]);
     setIsPolling(false);
-    lastMessageIdRef.current = undefined;
-    streamBlocksRef.current = [];
-    streamMetaRef.current = {};
-    hookEventsRef.current = [];
-    setStreamMeta(null);
-    setHookEvents([]);
-    setStreamBlocks([]);
     setSending(false);
-    if (rafIdRef.current) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = 0;
-    }
     setSidebarOpen(false);
     try {
       const detail = await getConversation(id);
       const msgs = detail.messages ?? [];
       setMessages(msgs);
-      if (msgs.length > 0) {
-        lastMessageIdRef.current = msgs[msgs.length - 1].id;
-      }
       // status === 'running' の場合はポーリング開始（CLI実行継続中）
       if (detail.status === 'running') {
         setIsPolling(true);
@@ -117,7 +70,7 @@ function App() {
     } catch (e) {
       console.error('Failed to load conversation:', e);
     }
-  }, [switchSession]);
+  }, []);
 
   const handleNewConversation = async () => {
     try {
@@ -143,20 +96,18 @@ function App() {
     }
   };
 
-  // ポーリングフック: SSE接続後に別会話から戻った際、実行継続中なら全メッセージ上書き取得
+  // ポーリングフック: 実行継続中なら全メッセージ上書き取得
   useConversationPoller({
     conversationId: isPolling ? selectedId : null,
     isRunning: isPolling,
     onMessages: (msgs) => {
       setMessages(msgs);  // 全置換（差分でなく全上書き）
-      if (msgs.length > 0) {
-        lastMessageIdRef.current = msgs[msgs.length - 1].id;
-      }
     },
     onCompleted: () => {
       setIsPolling(false);
       refreshConversations();
     },
+    intervalMs: 1000,
   });
 
   // running な会話がある間、3秒ごとに conversations を更新してサイドバーのスピナーを維持する
@@ -170,28 +121,13 @@ function App() {
     if (!content.trim() || !selectedId || sending) return;
     setInput('');
     setSending(true);
-    setIsPolling(false); // SSE送信中はポーリング不要
 
-    // 楽観的に status を 'running' に更新（サイドバーのスピナーを即時表示）
+    // 楽観的更新: 会話をrunning状態に
     setConversations(prev =>
       prev.map(c => c.id === selectedId ? { ...c, status: 'running' as const } : c)
     );
 
-    // このsend操作のセッションIDを固定し、AbortControllerを取得
-    const mySessionId = selectedId;
-    const { signal } = startStream(mySessionId);
-
-    streamBlocksRef.current = [];
-    streamMetaRef.current = {};
-    hookEventsRef.current = [];
-    setStreamMeta(null);
-    setHookEvents([]);
-    setStreamBlocks([]);
-    if (rafIdRef.current) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = 0;
-    }
-
+    // 楽観的ユーザーメッセージ追加
     const userMsg: Message = {
       id: crypto.randomUUID(),
       conversation_id: selectedId,
@@ -201,140 +137,19 @@ function App() {
     };
     setMessages(prev => [...prev, userMsg]);
 
-    const assistantMsg: Message = {
-      id: crypto.randomUUID(),
-      conversation_id: selectedId,
-      role: 'assistant' as Message['role'],
-      created_at: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, assistantMsg]);
-
     try {
-      await sendMessage(selectedId, content.trim(), (event) => {
-        // セッション切替後のイベントは無視する
-        if (!isActiveSession(mySessionId)) return;
-
-        if (event.type === 'text_delta') {
-          const blocks = streamBlocksRef.current;
-          const last = blocks[blocks.length - 1];
-          if (last?.type === 'text') {
-            streamBlocksRef.current = [...blocks.slice(0, -1), { type: 'text', content: last.content + event.content }];
-          } else {
-            streamBlocksRef.current = [...blocks, { type: 'text', content: event.content }];
-          }
-          scheduleRafUpdate();
-        } else if (event.type === 'thinking_delta') {
-          const blocks = streamBlocksRef.current;
-          const last = blocks[blocks.length - 1];
-          if (last?.type === 'thinking') {
-            streamBlocksRef.current = [...blocks.slice(0, -1), { type: 'thinking', content: last.content + event.content }];
-          } else {
-            streamBlocksRef.current = [...blocks, { type: 'thinking', content: event.content }];
-          }
-          scheduleRafUpdate();
-        } else if (event.type === 'init') {
-          streamMetaRef.current = {
-            ...streamMetaRef.current,
-            model: event.model,
-            sessionId: event.session_id,
-          };
-          setStreamMeta({ ...streamMetaRef.current });
-        } else if (event.type === 'rate_limit') {
-          streamMetaRef.current = {
-            ...streamMetaRef.current,
-            rateLimitStatus: event.status,
-          };
-          setStreamMeta({ ...streamMetaRef.current });
-        } else if (event.type === 'cost') {
-          streamMetaRef.current = {
-            ...streamMetaRef.current,
-            totalCostUSD: event.total_cost_usd,
-            durationMs: event.duration_ms,
-          };
-          setStreamMeta({ ...streamMetaRef.current });
-        } else if (event.type === 'hook_event') {
-          hookEventsRef.current = [...hookEventsRef.current, event];
-          setHookEvents(prev => [...prev, event]);
-        } else if (event.type === 'tool_use_start') {
-          const newTc: ToolCall = {
-            index: event.index,
-            toolUseId: event.tool_use_id,
-            toolName: event.tool_name,
-            inputJson: '',
-            isRunning: true,
-          };
-          streamBlocksRef.current = [...streamBlocksRef.current, { type: 'tool', toolCall: newTc }];
-          scheduleRafUpdate();
-        } else if (event.type === 'tool_input_delta') {
-          streamBlocksRef.current = streamBlocksRef.current.map(block =>
-            block.type === 'tool' && block.toolCall.index === event.index
-              ? { ...block, toolCall: { ...block.toolCall, inputJson: block.toolCall.inputJson + event.partial_json } }
-              : block
-          );
-          scheduleRafUpdate();
-        } else if (event.type === 'tool_result') {
-          streamBlocksRef.current = streamBlocksRef.current.map(block =>
-            block.type === 'tool' && block.toolCall.toolUseId === event.tool_use_id
-              ? { ...block, toolCall: { ...block.toolCall, result: event.content, isRunning: false } }
-              : block
-          );
-          scheduleRafUpdate();
-        }
-      }, signal);
+      await sendMessage(selectedId, content.trim());
+      setIsPolling(true); // 202返却後、pollingでassistant応答を追跡
     } catch (err) {
       console.error('Failed to send message:', err);
     } finally {
-      // セッションが切り替わっていれば state を更新しない
-      if (isActiveSession(mySessionId)) {
-        const finalBlocks = streamBlocksRef.current;
-        const finalText = finalBlocks
-          .filter((b): b is { type: 'text'; content: string } => b.type === 'text')
-          .map(b => b.content)
-          .join('');
-        const toolCallsList = finalBlocks
-          .filter((b): b is { type: 'tool'; toolCall: ToolCall } => b.type === 'tool')
-          .map(b => b.toolCall);
-        const hasThinkingOrTool = finalBlocks.some(b => b.type === 'thinking' || b.type === 'tool');
-        const contentBlocks = finalBlocks.map(b => {
-          if (b.type === 'text') return { type: 'text' as const, content: b.content };
-          if (b.type === 'thinking') return { type: 'thinking' as const, content: b.content };
-          return { type: 'tool_use' as const, tool_use_id: b.toolCall.toolUseId };
-        });
-
-        setMessages(prev => {
-          const copy = [...prev];
-          const last = copy[copy.length - 1];
-          if (last?.role === 'assistant') {
-            copy[copy.length - 1] = {
-              ...last,
-              message_data: {
-                ...((last.message_data as Record<string, unknown>) ?? {}),
-                content: finalText,
-                ...(streamMetaRef.current.model ? { model: streamMetaRef.current.model } : {}),
-                ...(streamMetaRef.current.totalCostUSD ? { cost_usd: streamMetaRef.current.totalCostUSD } : {}),
-                ...(streamMetaRef.current.durationMs ? { duration_ms: streamMetaRef.current.durationMs } : {}),
-                ...(hookEventsRef.current?.length > 0 ? { hook_events: hookEventsRef.current } : {}),
-                ...(toolCallsList.length > 0 ? {
-                  tool_calls: toolCallsList.map(tc => ({
-                    tool_use_id: tc.toolUseId,
-                    tool_name: tc.toolName,
-                    input_json: tc.inputJson,
-                    result: tc.result ?? null,
-                  })),
-                } : {}),
-                ...(hasThinkingOrTool ? { content_blocks: contentBlocks } : {}),
-              },
-            };
-          }
-          return copy;
-        });
-        setSending(false);
-        await refreshConversations();
-      }
+      setSending(false);
+      await refreshConversations();
     }
   };
 
   const hasStreamingMessage = messages.some(m => m.status === 'streaming');
+  const isRunning = sending || isPolling || hasStreamingMessage;
 
   return (
     <AuthGuard auth={auth}>
@@ -356,12 +171,8 @@ function App() {
             <ChatView
               messages={messages}
               onSend={handleSend}
-              isStreaming={sending}
               isPolling={isPolling}
-              isRunning={sending || hasStreamingMessage}
-              streamMeta={streamMeta}
-              hookEvents={hookEvents}
-              streamBlocks={streamBlocks}
+              isRunning={isRunning}
               input={input}
               onInputChange={setInput}
               onHamburger={() => setSidebarOpen(true)}

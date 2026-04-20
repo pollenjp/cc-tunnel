@@ -20,7 +20,7 @@ export function useConversationPoller({
   isRunning,
   onMessages,
   onCompleted,
-  intervalMs = 2000,
+  intervalMs = 1000,
 }: UseConversationPollerOptions): void {
   const stoppedRef = useRef(false);
 

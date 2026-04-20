@@ -67,7 +67,7 @@ describe('App 楽観的 status 更新 (TDD Cycle 1)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(clientModule.getConversation).mockResolvedValue({ ...conv, messages: [] } as any);
     // sendMessage は永遠に解決しない（await 中の中間状態をテストするため）
-    vi.mocked(clientModule.sendMessage).mockReturnValue(new Promise<void>(() => {}));
+    vi.mocked(clientModule.sendMessage).mockReturnValue(new Promise<{ message_id: string }>(() => {}));
 
     render(<App />);
     await flush(); // listConversations が解決し conversations が更新される

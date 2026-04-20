@@ -5,7 +5,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -19,7 +18,8 @@ import (
 type Server struct {
 	repo          repository
 	remote        remoteClient
-	batchInterval time.Duration // 0 = default 5s; override for testing
+	batchInterval time.Duration // 0 = default 2s; override for testing
+	doneCh        chan struct{}  // closed when Execute goroutine completes; for testing only
 }
 
 var _ ServerInterface = (*Server)(nil)
@@ -215,7 +215,6 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 
 	// 過去メッセージから --resume 用 session_id を取得
-	// 最新の assistant メッセージの message_data["session_id"] を使う
 	var resumeSessionID string
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role == "assistant" {
@@ -252,30 +251,6 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		})
 	}
 
-	// SSE ストリーミングレスポンス開始
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming not supported")
-		return
-	}
-
-	// cc-remote-agent に実行依頼
-	var mu sync.Mutex
-	var (
-		assistantContent  string
-		thinkingContent   string
-		modelName         string
-		costUSD           float64
-		durationMs        int64
-		hookEventsList    []map[string]any
-		thinkingBlocks    []string
-		toolCallsData     []ToolCallData
-		contentBlocksList []map[string]interface{}
-	)
-
 	executeReq := remoteclient.Request{
 		Prompt:                 req.Content,
 		SessionID:              resumeSessionID,
@@ -296,14 +271,54 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	assistantMsg, err := h.repo.CreateStreamingMessage(execCtx, convIDStr, "assistant", map[string]interface{}{})
 	if err != nil {
 		slog.Error("failed to create streaming assistant message", "err", err, "conversation_id", convIDStr)
-		assistantMsg = nil
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
-	// 5秒バッチ: contentBlocksList と toolCallsData を定期的に DB 保存
-	if assistantMsg != nil {
+	// 202 即時返却
+	msgUUID, _ := uuid.Parse(assistantMsg.ID)
+	writeJSON(w, http.StatusAccepted, SendMessageResponse{MessageId: msgUUID})
+
+	// goroutine で Execute + DB保存
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in Execute goroutine", "err", r, "conversation_id", convIDStr)
+			}
+			if h.doneCh != nil {
+				close(h.doneCh)
+			}
+		}()
+
+		// Mark conversation as running before CLI execution starts.
+		if err := h.repo.UpdateConversationStatus(execCtx, convIDStr, "running"); err != nil {
+			slog.Warn("failed to update conversation status to running", "err", err, "conversation_id", convIDStr)
+		}
+		// Ensure status is set to completed when execution finishes, regardless of outcome.
+		defer func() {
+			if err := h.repo.UpdateConversationStatus(execCtx, convIDStr, "completed"); err != nil {
+				slog.Warn("failed to update conversation status to completed", "err", err, "conversation_id", convIDStr)
+			}
+		}()
+
+		// cc-remote-agent に実行依頼
+		var mu sync.Mutex
+		var (
+			assistantContent  string
+			thinkingContent   string
+			modelName         string
+			costUSD           float64
+			durationMs        int64
+			hookEventsList    []map[string]any
+			thinkingBlocks    []string
+			toolCallsData     []ToolCallData
+			contentBlocksList []map[string]interface{}
+		)
+
+		// 2秒バッチ: contentBlocksList と toolCallsData を定期的に DB 保存
 		batchInterval := h.batchInterval
 		if batchInterval <= 0 {
-			batchInterval = 5 * time.Second
+			batchInterval = 2 * time.Second
 		}
 		ticker := time.NewTicker(batchInterval)
 		defer ticker.Stop()
@@ -323,333 +338,167 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 				}
 			}
 		}()
-	}
 
-	// Mark conversation as running before CLI execution starts.
-	if err := h.repo.UpdateConversationStatus(execCtx, convIDStr, "running"); err != nil {
-		slog.Warn("failed to update conversation status to running", "err", err, "conversation_id", convIDStr)
-	}
-	// Ensure status is set to completed when execution finishes, regardless of outcome.
-	defer func() {
-		if err := h.repo.UpdateConversationStatus(execCtx, convIDStr, "completed"); err != nil {
-			slog.Warn("failed to update conversation status to completed", "err", err, "conversation_id", convIDStr)
-		}
-	}()
-
-	slog.Info("message streaming started", "conversation_id", convIDStr, "has_resume_session", resumeSessionID != "")
-	newSessionID, err := h.remote.Execute(execCtx, executeReq, func(event remoteclient.StreamEvent) {
-		slog.Info("stream event received", "type", event.Type, "subtype", event.SubType)
-		switch event.Type {
-		case "assistant":
-			if event.Message != nil {
-				for _, block := range event.Message.Content {
-					if block.Type == "thinking" && block.Thinking != "" {
-						mu.Lock()
-						contentBlocksList = append(contentBlocksList, map[string]interface{}{
-							"type":    "thinking",
-							"content": block.Thinking,
-						})
-						mu.Unlock()
-						thinkingContent += block.Thinking
-						sseEvent := SSEThinkingEvent{Type: Thinking, Content: block.Thinking}
-						data, _ := json.Marshal(sseEvent)
-						slog.Info("SSE sent", "data", string(data))
-						if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
-							slog.Warn("SSE write failed", "error", err)
-							return
+		slog.Info("message processing started", "conversation_id", convIDStr, "has_resume_session", resumeSessionID != "")
+		newSessionID, err := h.remote.Execute(execCtx, executeReq, func(event remoteclient.StreamEvent) {
+			slog.Info("stream event received", "type", event.Type, "subtype", event.SubType)
+			switch event.Type {
+			case "assistant":
+				if event.Message != nil {
+					for _, block := range event.Message.Content {
+						if block.Type == "thinking" && block.Thinking != "" {
+							mu.Lock()
+							contentBlocksList = append(contentBlocksList, map[string]interface{}{
+								"type":    "thinking",
+								"content": block.Thinking,
+							})
+							mu.Unlock()
+							thinkingContent += block.Thinking
 						}
-						flusher.Flush()
-					}
-					if block.Type == "text" && block.Text != "" {
-						mu.Lock()
-						contentBlocksList = append(contentBlocksList, map[string]interface{}{
-							"type":    "text",
-							"content": block.Text,
-						})
-						mu.Unlock()
-						assistantContent += block.Text
-						sseEvent := SSETextEvent{Type: Text, Content: block.Text}
-						data, _ := json.Marshal(sseEvent)
-						slog.Info("SSE sent", "data", string(data))
-						if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
-							slog.Warn("SSE write failed", "error", err)
-							return
+						if block.Type == "text" && block.Text != "" {
+							mu.Lock()
+							contentBlocksList = append(contentBlocksList, map[string]interface{}{
+								"type":    "text",
+								"content": block.Text,
+							})
+							mu.Unlock()
+							assistantContent += block.Text
 						}
-						flusher.Flush()
-					}
-					if block.Type == "tool_use" && block.ID != "" {
-						mu.Lock()
-						contentBlocksList = append(contentBlocksList, map[string]interface{}{
-							"type":        "tool_use",
-							"tool_use_id": block.ID,
-						})
-						mu.Unlock()
-					}
-					if block.Type == "tool_result" {
-						content := ""
-						switch v := block.Content.(type) {
-						case string:
-							content = v
-						case []any:
-							if len(v) > 0 {
-								if m, ok := v[0].(map[string]any); ok {
-									content, _ = m["text"].(string)
+						if block.Type == "tool_use" && block.ID != "" {
+							mu.Lock()
+							contentBlocksList = append(contentBlocksList, map[string]interface{}{
+								"type":        "tool_use",
+								"tool_use_id": block.ID,
+							})
+							mu.Unlock()
+						}
+						if block.Type == "tool_result" {
+							content := ""
+							switch v := block.Content.(type) {
+							case string:
+								content = v
+							case []any:
+								if len(v) > 0 {
+									if m, ok := v[0].(map[string]any); ok {
+										content, _ = m["text"].(string)
+									}
+								}
+							}
+							if len(content) > 1000 {
+								content = content[:1000] + "...[truncated]"
+							}
+							for i, tc := range toolCallsData {
+								if tc.ToolUseId == block.ToolUseID {
+									result := content
+									toolCallsData[i].Result = &result
+									break
 								}
 							}
 						}
-						if len(content) > 1000 {
-							content = content[:1000] + "...[truncated]"
-						}
-						sseData, _ := json.Marshal(SSEToolResultEvent{
-							Type:      ToolResult,
-							ToolUseId: block.ToolUseID,
-							Content:   content,
-						})
-						slog.Info("SSE sent", "data", string(sseData))
-						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-							slog.Warn("SSE write failed", "error", err)
-							return
-						}
-						flusher.Flush()
 					}
 				}
-			}
-		case "user":
-			if event.Message != nil {
-				for _, block := range event.Message.Content {
-					if block.Type == "tool_result" {
-						content := ""
-						switch v := block.Content.(type) {
-						case string:
-							content = v
-						case []any:
-							if len(v) > 0 {
-								if m, ok := v[0].(map[string]any); ok {
-									content, _ = m["text"].(string)
+			case "user":
+				if event.Message != nil {
+					for _, block := range event.Message.Content {
+						if block.Type == "tool_result" {
+							content := ""
+							switch v := block.Content.(type) {
+							case string:
+								content = v
+							case []any:
+								if len(v) > 0 {
+									if m, ok := v[0].(map[string]any); ok {
+										content, _ = m["text"].(string)
+									}
+								}
+							}
+							if len(content) > 2000 {
+								content = content[:2000] + "...[truncated]"
+							}
+							for i, tc := range toolCallsData {
+								if tc.ToolUseId == block.ToolUseID {
+									result := content
+									toolCallsData[i].Result = &result
+									break
 								}
 							}
 						}
-						if len(content) > 2000 {
-							content = content[:2000] + "...[truncated]"
-						}
-						sseData, _ := json.Marshal(SSEToolResultEvent{
-							Type:      ToolResult,
-							ToolUseId: block.ToolUseID,
-							Content:   content,
+					}
+				}
+			case "system":
+				switch event.SubType {
+				case "init":
+					if event.Model != "" {
+						modelName = event.Model
+					}
+				case "hook_started", "hook_response", "notification", "status":
+					hookEventsList = append(hookEventsList, map[string]any{
+						"subtype":    event.SubType,
+						"hook_id":    event.HookID,
+						"hook_name":  event.HookName,
+						"hook_event": event.HookEvent,
+					})
+				}
+			case "stream_event":
+				var inner remoteclient.InnerEvent
+				if err := json.Unmarshal(event.Event, &inner); err != nil {
+					break
+				}
+				switch inner.Type {
+				case "content_block_start":
+					var cbInner struct {
+						Type string `json:"type"`
+						ID   string `json:"id,omitempty"`
+						Name string `json:"name,omitempty"`
+					}
+					if err := json.Unmarshal(inner.ContentBlock, &cbInner); err != nil {
+						break
+					}
+					if cbInner.Type == "tool_use" && cbInner.Name != "" {
+						toolCallsData = append(toolCallsData, ToolCallData{
+							ToolUseId: cbInner.ID,
+							ToolName:  cbInner.Name,
+							InputJson: "",
 						})
-						slog.Info("SSE sent", "data", string(sseData))
-						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-							slog.Warn("SSE write failed", "error", err)
-							return
+					}
+				case "content_block_delta":
+					var delta map[string]string
+					if err := json.Unmarshal(inner.Delta, &delta); err != nil {
+						break
+					}
+					switch delta["type"] {
+					case "thinking_delta":
+						if delta["thinking"] != "" {
+							if len(thinkingBlocks) == 0 {
+								thinkingBlocks = append(thinkingBlocks, "")
+							}
+							thinkingBlocks[len(thinkingBlocks)-1] += delta["thinking"]
 						}
-						flusher.Flush()
-						for i, tc := range toolCallsData {
-							if tc.ToolUseId == block.ToolUseID {
-								result := content
-								toolCallsData[i].Result = &result
-								break
+					case "input_json_delta":
+						if delta["partial_json"] != "" {
+							if len(toolCallsData) > 0 {
+								toolCallsData[len(toolCallsData)-1].InputJson += delta["partial_json"]
 							}
 						}
 					}
 				}
+			case "result":
+				costUSD = event.CostUSD
+				durationMs = event.DurationMs
 			}
-		case "system":
-			switch event.SubType {
-			case "init":
-				if event.Model != "" {
-					modelName = event.Model
-					sseData, _ := json.Marshal(SSEInitEvent{
-						Type:      Init,
-						Model:     event.Model,
-						SessionId: event.SessionID,
-					})
-					slog.Info("SSE sent", "data", string(sseData))
-					if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-						slog.Warn("SSE write failed", "error", err)
-						return
-					}
-					flusher.Flush()
-				}
-			case "hook_started", "hook_response", "notification", "status":
-				hookEventsList = append(hookEventsList, map[string]any{
-					"subtype":    event.SubType,
-					"hook_id":    event.HookID,
-					"hook_name":  event.HookName,
-					"hook_event": event.HookEvent,
-				})
-				hookID := event.HookID
-				hookName := event.HookName
-				hookEventStr := event.HookEvent
-				sessionID := event.SessionID
-				sseData, _ := json.Marshal(SSEHookEvent{
-					Type:      HookEvent,
-					Subtype:   event.SubType,
-					HookId:    &hookID,
-					HookName:  &hookName,
-					HookEvent: &hookEventStr,
-					SessionId: &sessionID,
-				})
-				slog.Info("SSE sent", "data", string(sseData))
-				if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-					slog.Warn("SSE write failed", "error", err)
-					return
-				}
-				flusher.Flush()
-			}
-		case "stream_event":
-			var inner remoteclient.InnerEvent
-			if err := json.Unmarshal(event.Event, &inner); err != nil {
-				break
-			}
-			switch inner.Type {
-			case "content_block_start":
-				var cbInner struct {
-					Type string `json:"type"`
-					ID   string `json:"id,omitempty"`
-					Name string `json:"name,omitempty"`
-				}
-				if err := json.Unmarshal(inner.ContentBlock, &cbInner); err != nil {
-					break
-				}
-				if cbInner.Type == "tool_use" && cbInner.Name != "" {
-					sseData, _ := json.Marshal(SSEToolUseStartEvent{
-						Type:      ToolUseStart,
-						Index:     inner.Index,
-						ToolUseId: cbInner.ID,
-						ToolName:  cbInner.Name,
-					})
-					slog.Info("SSE sent", "data", string(sseData))
-					if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-						slog.Warn("SSE write failed", "error", err)
-						return
-					}
-					flusher.Flush()
-					toolCallsData = append(toolCallsData, ToolCallData{
-						ToolUseId: cbInner.ID,
-						ToolName:  cbInner.Name,
-						InputJson: "",
-					})
-				}
-			case "content_block_delta":
-				var delta map[string]string
-				if err := json.Unmarshal(inner.Delta, &delta); err != nil {
-					break
-				}
-				switch delta["type"] {
-				case "text_delta":
-					if delta["text"] != "" {
-						sseData, _ := json.Marshal(SSETextDeltaEvent{
-							Type:    TextDelta,
-							Content: delta["text"],
-						})
-						slog.Info("SSE sent", "data", string(sseData))
-						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-							slog.Warn("SSE write failed", "error", err)
-							return
-						}
-						flusher.Flush()
-					}
-				case "thinking_delta":
-					if delta["thinking"] != "" {
-						sseData, _ := json.Marshal(SSEThinkingDeltaEvent{
-							Type:    ThinkingDelta,
-							Content: delta["thinking"],
-						})
-						slog.Info("SSE sent", "data", string(sseData))
-						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-							slog.Warn("SSE write failed", "error", err)
-							return
-						}
-						flusher.Flush()
-						if len(thinkingBlocks) == 0 {
-							thinkingBlocks = append(thinkingBlocks, "")
-						}
-						thinkingBlocks[len(thinkingBlocks)-1] += delta["thinking"]
-					}
-				case "input_json_delta":
-					if delta["partial_json"] != "" {
-						sseData, _ := json.Marshal(SSEToolInputDeltaEvent{
-							Type:        ToolInputDelta,
-							Index:       inner.Index,
-							PartialJson: delta["partial_json"],
-						})
-						slog.Info("SSE sent", "data", string(sseData))
-						if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-							slog.Warn("SSE write failed", "error", err)
-							return
-						}
-						flusher.Flush()
-						if len(toolCallsData) > 0 {
-							toolCallsData[len(toolCallsData)-1].InputJson += delta["partial_json"]
-						}
-					}
-				}
-			}
-		case "rate_limit_event":
-			if event.RateLimitInfo != nil {
-				sseData, _ := json.Marshal(SSERateLimitEvent{
-					Type:          RateLimit,
-					Status:        event.RateLimitInfo.Status,
-					ResetsAt:      int(event.RateLimitInfo.ResetsAt),
-					RateLimitType: event.RateLimitInfo.Type,
-				})
-				slog.Info("SSE sent", "data", string(sseData))
-				if _, err := fmt.Fprintf(w, "data: %s\n\n", sseData); err != nil {
-					slog.Warn("SSE write failed", "error", err)
-					return
-				}
-				flusher.Flush()
-			}
-		case "result":
-			costUSD = event.CostUSD
-			durationMs = event.DurationMs
-			costData, _ := json.Marshal(SSECostEvent{
-				Type:         Cost,
-				TotalCostUsd: event.CostUSD,
-				DurationMs:   event.DurationMs,
-			})
-			slog.Info("SSE sent", "data", string(costData))
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", costData); err != nil {
-				slog.Warn("SSE write failed", "error", err)
-				return
-			}
-			flusher.Flush()
-			data, _ := json.Marshal(SSEDoneEvent{
-				Type:      Done,
-				SessionId: event.SessionID,
-				CostUsd:   event.CostUSD,
-			})
-			slog.Info("SSE sent", "data", string(data))
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
-				slog.Warn("SSE write failed", "error", err)
-				return
-			}
-			flusher.Flush()
-		}
-	})
+		})
 
-	if err != nil {
-		slog.Error("message streaming error", "conversation_id", convIDStr, "err", err)
-		if assistantMsg != nil {
+		if err != nil {
+			slog.Error("message processing error", "conversation_id", convIDStr, "err", err)
 			if serr := h.repo.UpdateMessageStatus(execCtx, assistantMsg.ID, "error"); serr != nil {
 				slog.Error("failed to update message status to error", "err", serr, "message_id", assistantMsg.ID)
 			}
+			return
 		}
-		data, _ := json.Marshal(SSEErrorEvent{
-			Type:    SSEErrorEventTypeError,
-			Message: err.Error(),
-		})
-		if _, werr := fmt.Fprintf(w, "data: %s\n\n", data); werr != nil {
-			slog.Warn("SSE write failed", "error", werr)
-		}
-		flusher.Flush()
-		return
-	}
 
-	slog.Info("message streaming completed", "conversation_id", convIDStr)
+		slog.Info("message processing completed", "conversation_id", convIDStr)
 
-	// 最終 content_blocks 保存 + message_data マージ + status 更新
-	if assistantMsg != nil {
+		// 最終 content_blocks 保存 + message_data マージ + status 更新
 		mu.Lock()
 		finalBlocks := cloneBlocks(contentBlocksList)
 		mu.Unlock()
@@ -690,17 +539,17 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		if err := h.repo.UpdateMessageStatus(execCtx, assistantMsg.ID, "completed"); err != nil {
 			slog.Error("failed to update message status to completed", "err", err, "message_id", assistantMsg.ID)
 		}
-	}
 
-	if assistantContent != "" {
-		title := generateTitle(assistantContent)
-		if err := h.repo.UpdateConversationTitle(execCtx, convIDStr, title); err != nil {
-			slog.Error("failed to update conversation title", "err", err, "conversation_id", convIDStr)
+		if assistantContent != "" {
+			title := generateTitle(assistantContent)
+			if err := h.repo.UpdateConversationTitle(execCtx, convIDStr, title); err != nil {
+				slog.Error("failed to update conversation title", "err", err, "conversation_id", convIDStr)
+			}
 		}
-	}
-	if err := h.repo.UpdateConversationUpdatedAt(execCtx, convIDStr); err != nil {
-		slog.Error("failed to update conversation updated_at", "err", err, "conversation_id", convIDStr)
-	}
+		if err := h.repo.UpdateConversationUpdatedAt(execCtx, convIDStr); err != nil {
+			slog.Error("failed to update conversation updated_at", "err", err, "conversation_id", convIDStr)
+		}
+	}()
 }
 
 // --- helper functions ---

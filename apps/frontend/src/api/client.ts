@@ -15,37 +15,8 @@ export type ConversationDetail = components['schemas']['ConversationDetail'];
 export type Message = components['schemas']['Message'];
 export type CreateConversationRequest = components['schemas']['CreateConversationRequest'];
 export type SendMessageRequest = components['schemas']['SendMessageRequest'];
+export type SendMessageResponse = components['schemas']['SendMessageResponse'];
 export type ToolCallData = components['schemas']['ToolCallData'];
-
-// SSE イベントの型（openapi.yaml から生成）
-export type SSETextEvent = components['schemas']['SSETextEvent'];
-export type SSEThinkingEvent = components['schemas']['SSEThinkingEvent'];
-export type SSETextDeltaEvent = components['schemas']['SSETextDeltaEvent'];
-export type SSEThinkingDeltaEvent = components['schemas']['SSEThinkingDeltaEvent'];
-export type SSEToolUseStartEvent = components['schemas']['SSEToolUseStartEvent'];
-export type SSEToolInputDeltaEvent = components['schemas']['SSEToolInputDeltaEvent'];
-export type SSEToolResultEvent = components['schemas']['SSEToolResultEvent'];
-export type SSEInitEvent = components['schemas']['SSEInitEvent'];
-export type SSEHookEvent = components['schemas']['SSEHookEvent'];
-export type SSERateLimitEvent = components['schemas']['SSERateLimitEvent'];
-export type SSECostEvent = components['schemas']['SSECostEvent'];
-export type SSEDoneEvent = components['schemas']['SSEDoneEvent'];
-export type SSEErrorEvent = components['schemas']['SSEErrorEvent'];
-
-export type SSEEvent =
-  | SSETextEvent
-  | SSEThinkingEvent
-  | SSETextDeltaEvent
-  | SSEThinkingDeltaEvent
-  | SSEToolUseStartEvent
-  | SSEToolInputDeltaEvent
-  | SSEToolResultEvent
-  | SSEInitEvent
-  | SSEHookEvent
-  | SSERateLimitEvent
-  | SSECostEvent
-  | SSEDoneEvent
-  | SSEErrorEvent;
 
 function throwOnError<T>(result: { data?: T; error?: unknown }): T {
   if (result.error) throw result.error;
@@ -109,65 +80,15 @@ export async function deleteConversation(id: string): Promise<void> {
   });
 }
 
-function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === 'AbortError';
-}
-
-// SSE ストリーミングでメッセージを送信する
-// onEvent: 各SSEイベントで呼ばれるコールバック
-// signal: AbortController.signal を渡すと途中でキャンセル可能
 export async function sendMessage(
   conversationId: string,
   content: string,
-  onEvent: (event: SSEEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  let res: Response;
-  try {
-    res = await fetch(`/api/conversations/${conversationId}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-      signal,
-    });
-  } catch (err) {
-    if (isAbortError(err)) return;
-    throw err;
-  }
-
-  if (!res.ok) {
-    throw new Error(`sendMessage failed: ${res.status}`);
-  }
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE形式: "data: {...}\n\n" をパース
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop() ?? '';
-
-      for (const part of parts) {
-        const line = part.trim();
-        if (line.startsWith('data: ')) {
-          try {
-            const event = JSON.parse(line.slice(6)) as SSEEvent;
-            onEvent(event);
-          } catch {
-            // パース失敗は無視
-          }
-        }
-      }
-    }
-  } catch (err) {
-    if (isAbortError(err)) return;
-    throw err;
-  }
+): Promise<{ message_id: string }> {
+  const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`sendMessage failed: ${res.status}`);
+  return res.json();
 }

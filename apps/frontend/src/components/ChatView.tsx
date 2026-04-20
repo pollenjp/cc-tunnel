@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import type { Message, SSEHookEvent, ToolCallData } from '../api/client';
-import type { StreamMeta, ToolCall, AssistantBlock } from '../App';
+import type { Message, ToolCallData } from '../api/client';
+import type { ToolCall, AssistantBlock } from '../App';
 import { MessageBubble, ThinkingAccordion } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { ToolCallCard } from './ToolCallCard';
@@ -9,12 +9,8 @@ import { TypingIndicator } from './TypingIndicator';
 interface ChatViewProps {
   messages: Message[];
   onSend: (content: string) => void;
-  isStreaming: boolean;
   isPolling?: boolean;
   isRunning?: boolean;
-  streamMeta?: StreamMeta | null;
-  hookEvents?: SSEHookEvent[];
-  streamBlocks?: AssistantBlock[];
   input: string;
   onInputChange: (value: string) => void;
   onHamburger: () => void;
@@ -25,12 +21,12 @@ type ContentBlockEntry =
   | { type: 'text'; content: string }
   | { type: 'tool_use'; tool_use_id: string }
 
-export function ChatView({ messages, onSend, isStreaming, isPolling, isRunning, streamMeta, hookEvents, streamBlocks, input, onInputChange, onHamburger }: ChatViewProps) {
+export function ChatView({ messages, onSend, isPolling, isRunning, input, onInputChange, onHamburger }: ChatViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamBlocks]);
+  }, [messages]);
 
   const isEmpty = messages.length === 0;
 
@@ -42,9 +38,7 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, isRunning, 
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-          {messages.map((msg, idx) => {
-            const isLast = idx === messages.length - 1;
-            const isStreamingMsg = isStreaming && isLast && msg.role === 'assistant';
+          {messages.map((msg) => {
             const isPollingStreamingMsg = isPolling === true && msg.status === 'streaming';
 
             if (msg.role !== 'assistant') {
@@ -69,12 +63,7 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, isRunning, 
             // Build ordered blocks for this assistant message
             let blocks: AssistantBlock[];
 
-            if (isStreamingMsg) {
-              // Live SSE streaming: use streamBlocks, fall back to empty text block
-              blocks = (streamBlocks && streamBlocks.length > 0)
-                ? streamBlocks
-                : [{ type: 'text', content: '' }];
-            } else if (isPollingStreamingMsg) {
+            if (isPollingStreamingMsg) {
               // DB polling streaming: use content_blocks from message_data
               const meta = msg.message_data as Record<string, unknown> | undefined;
               const contentBlocks = meta?.content_blocks as ContentBlockEntry[] | undefined;
@@ -153,10 +142,8 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, isRunning, 
             }
 
             // Indices for metadata placement
-            const lastTextIdx = blocks.map((b, i) => b.type === 'text' ? i : -1).filter(i => i >= 0).pop() ?? -1;
             const lastBlockIdx = blocks.length - 1;
-            const isShowingStreaming = isStreamingMsg || isPollingStreamingMsg;
-            const isInProgress = isStreamingMsg || isPollingStreamingMsg || isRunning === true;
+            const isInProgress = isPollingStreamingMsg || isRunning === true;
             const isEmptyBlocks =
               blocks.length === 1 && blocks[0].type === 'text' && blocks[0].content === '';
 
@@ -171,9 +158,7 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, isRunning, 
                         key={bi}
                         message={msg}
                         textContent={block.content}
-                        isStreaming={isShowingStreaming && bi === lastBlockIdx}
-                        streamMeta={isStreamingMsg && bi === lastTextIdx ? streamMeta : undefined}
-                        hookEvents={isLast && bi === lastTextIdx ? hookEvents : undefined}
+                        isStreaming={isPollingStreamingMsg && bi === lastBlockIdx}
                       />
                     );
                   } else {
@@ -197,7 +182,7 @@ export function ChatView({ messages, onSend, isStreaming, isPolling, isRunning, 
         value={input}
         onChange={onInputChange}
         onSend={() => onSend(input)}
-        disabled={isStreaming || isPolling}
+        disabled={isRunning === true}
         onHamburger={onHamburger}
       />
     </div>

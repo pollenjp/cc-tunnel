@@ -3,15 +3,12 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import type { Message, SSEHookEvent } from '../api/client';
-import type { StreamMeta } from '../App';
+import type { Message } from '../api/client';
 
 interface MessageBubbleProps {
   message: Message;
   textContent?: string;
   isStreaming?: boolean;
-  streamMeta?: StreamMeta | null;
-  hookEvents?: SSEHookEvent[];
 }
 
 export function ThinkingAccordion({ content }: { content: string }) {
@@ -41,7 +38,7 @@ export function ThinkingAccordion({ content }: { content: string }) {
   );
 }
 
-export function MessageBubble({ message, textContent, isStreaming, streamMeta, hookEvents }: MessageBubbleProps) {
+export function MessageBubble({ message, textContent, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
   const msgData = message.message_data as Record<string, unknown> | undefined;
@@ -55,10 +52,10 @@ export function MessageBubble({ message, textContent, isStreaming, streamMeta, h
     return [];
   })();
 
-  const model = streamMeta?.model ?? msgData?.model as string | undefined;
-  const costUSD = streamMeta?.totalCostUSD ?? msgData?.cost_usd as number | undefined;
-  const durationMs = streamMeta?.durationMs ?? msgData?.duration_ms as number | undefined;
-  const msgHookEvents = hookEvents ?? msgData?.hook_events as SSEHookEvent[] | undefined;
+  const model = msgData?.model as string | undefined;
+  const costUSD = msgData?.cost_usd as number | undefined;
+  const durationMs = msgData?.duration_ms as number | undefined;
+  const msgHookEvents = msgData?.hook_events as Array<{ subtype: string; hook_name?: string }> | undefined;
 
   return (
     <div className={`flex flex-col gap-1 max-w-[75%] ${isUser ? 'self-end' : 'self-start'}`}>
@@ -106,7 +103,7 @@ export function MessageBubble({ message, textContent, isStreaming, streamMeta, h
           {textContent ?? (msgData?.content as string | undefined) ?? ''}
         </ReactMarkdown>
       </div>
-      {!isUser && (model || costUSD != null || msgHookEvents && msgHookEvents.length > 0) && (
+      {!isUser && (model || costUSD != null || (msgHookEvents && msgHookEvents.length > 0)) && (
         <div className="mt-2 text-[11px] opacity-60 space-y-1">
           <div className="flex flex-wrap gap-x-3">
             {model && <span>🤖 {model}</span>}

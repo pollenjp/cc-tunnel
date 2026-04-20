@@ -5,70 +5,42 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function makeSSEStream(lines: string[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  return new ReadableStream({
-    start(ctrl) {
-      for (const line of lines) {
-        ctrl.enqueue(encoder.encode(line));
-      }
-      ctrl.close();
-    },
-  });
-}
-
-describe('sendMessage abort', () => {
-  it('passes signal to fetch', async () => {
-    const controller = new AbortController();
-    const body = makeSSEStream(['data: {"type":"cost","total_cost_usd":0,"duration_ms":0}\n\n']);
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body });
+describe('sendMessage', () => {
+  it('makes a POST request with content and returns message_id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ message_id: 'test-uuid' }),
+    });
     vi.stubGlobal('fetch', fetchMock);
 
-    await sendMessage('conv-1', 'hello', vi.fn(), controller.signal);
+    const result = await sendMessage('conv-1', 'hello');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ signal: controller.signal }),
-    );
-  });
-
-  it('returns without calling onEvent when signal is pre-aborted', async () => {
-    const controller = new AbortController();
-    controller.abort();
-
-    const abortError = new DOMException('The operation was aborted', 'AbortError');
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
-
-    const onEvent = vi.fn();
-    await expect(sendMessage('conv-1', 'hello', onEvent, controller.signal)).resolves.toBeUndefined();
-    expect(onEvent).not.toHaveBeenCalled();
-  });
-
-  it('handles AbortError thrown by reader.read() gracefully', async () => {
-    const controller = new AbortController();
-    const abortError = new DOMException('The operation was aborted', 'AbortError');
-
-    const encoder = new TextEncoder();
-    let readCall = 0;
-    const readerMock = {
-      read: vi.fn().mockImplementation(() => {
-        readCall++;
-        if (readCall === 1) {
-          return Promise.resolve({
-            done: false,
-            value: encoder.encode('data: {"type":"cost","total_cost_usd":0,"duration_ms":0}\n\n'),
-          });
-        }
-        return Promise.reject(abortError);
+      '/api/conversations/conv-1/messages',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'hello' }),
       }),
-    };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      body: { getReader: () => readerMock },
-    }));
+    );
+    expect(result).toEqual({ message_id: 'test-uuid' });
+  });
 
-    const onEvent = vi.fn();
-    await expect(sendMessage('conv-1', 'hello', onEvent, controller.signal)).resolves.toBeUndefined();
-    expect(onEvent).toHaveBeenCalledTimes(1);
+  it('throws when response is not ok', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+
+    await expect(sendMessage('conv-1', 'hello')).rejects.toThrow('sendMessage failed: 500');
+  });
+
+  it('returns parsed JSON body on 202 response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ message_id: 'abc-def' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await sendMessage('conv-2', 'test message');
+
+    expect(result.message_id).toBe('abc-def');
   });
 });

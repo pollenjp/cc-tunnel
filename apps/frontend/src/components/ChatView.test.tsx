@@ -56,7 +56,6 @@ function makeMsg(overrides: Partial<Message> & { id: string }): Message {
 describe('ChatView', () => {
   const defaultProps = {
     onSend: vi.fn(),
-    isStreaming: false,
     input: '',
     onInputChange: vi.fn(),
     onHamburger: vi.fn(),
@@ -283,7 +282,7 @@ describe('ChatView', () => {
     expect(screen.getByTestId('typing-indicator')).toBeTruthy();
   });
 
-  it('does not show TypingIndicator when isPolling=false and isStreaming=false', () => {
+  it('does not show TypingIndicator when isPolling=false and isRunning=false', () => {
     const msg = makeMsg({
       id: 'msg-no-typing',
       role: 'assistant',
@@ -298,7 +297,6 @@ describe('ChatView', () => {
         {...defaultProps}
         messages={[msg]}
         isPolling={false}
-        isStreaming={false}
       />,
     );
 
@@ -348,7 +346,7 @@ describe('ChatView', () => {
     expect(screen.getByTestId('typing-indicator')).toBeTruthy();
   });
 
-  it('does not show TypingIndicator when isRunning=false and isPolling=false and isStreaming=false', () => {
+  it('does not show TypingIndicator when isRunning=false and isPolling=false', () => {
     const msg = makeMsg({
       id: 'msg-no-running',
       role: 'assistant',
@@ -363,7 +361,6 @@ describe('ChatView', () => {
         {...defaultProps}
         messages={[msg]}
         isPolling={false}
-        isStreaming={false}
         isRunning={false}
       />,
     );
@@ -371,45 +368,4 @@ describe('ChatView', () => {
     expect(screen.queryByTestId('typing-indicator')).toBeNull();
   });
 
-  it('shows TypingIndicator for SSE streaming with empty streamBlocks', () => {
-    const msg = makeMsg({
-      id: 'msg-sse-empty',
-      role: 'assistant',
-      status: 'streaming',
-      message_data: {},
-    });
-
-    render(
-      <ChatView
-        {...defaultProps}
-        messages={[msg]}
-        isStreaming={true}
-        streamBlocks={[]}
-      />,
-    );
-
-    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
-    expect(screen.queryByTestId('message-bubble-msg-sse-empty')).toBeNull();
-  });
-
-  it('shows content and TypingIndicator for SSE streaming with streamBlocks', () => {
-    const msg = makeMsg({
-      id: 'msg-sse-content',
-      role: 'assistant',
-      status: 'streaming',
-      message_data: {},
-    });
-
-    render(
-      <ChatView
-        {...defaultProps}
-        messages={[msg]}
-        isStreaming={true}
-        streamBlocks={[{ type: 'text', content: 'SSE途中テキスト' }]}
-      />,
-    );
-
-    expect(screen.getByText('SSE途中テキスト')).toBeTruthy();
-    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
-  });
 });

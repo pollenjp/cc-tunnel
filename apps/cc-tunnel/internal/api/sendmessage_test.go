@@ -252,6 +252,49 @@ func makeResultEvent(sessionID string) remoteclient.StreamEvent {
 }
 
 // =============================================================================
+// 202 レスポンス + message_id 検証
+// =============================================================================
+
+// TestSendMessage_Returns202WithMessageID verifies that SendMessage returns HTTP 202
+// with a JSON body containing "message_id".
+func TestSendMessage_Returns202WithMessageID(t *testing.T) {
+	const convIDStr = "00000001-0000-0000-0000-000000000001"
+	ctx := context.Background()
+
+	repo := &mockRepoCheckCtx{
+		conv: makeConv(convIDStr),
+		msgs: []*db.Message{},
+	}
+	remote := &mockRemoteWithCancel{
+		events:    []remoteclient.StreamEvent{makeResultEvent("sess-202")},
+		sessionID: "sess-202",
+		cancel:    func() {},
+	}
+
+	done := make(chan struct{})
+	w := httptest.NewRecorder()
+	body := strings.NewReader(`{"content":"hi"}`)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server := &Server{repo: repo, remote: remote, doneCh: done}
+	convID := ConversationId(uuid.MustParse(convIDStr))
+	server.SendMessage(w, req, convID)
+	<-done
+
+	if w.Code != http.StatusAccepted {
+		t.Errorf("FAIL: status = %d, want %d (202 Accepted)", w.Code, http.StatusAccepted)
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("FAIL: response body is not valid JSON: %v", err)
+	}
+	if _, ok := resp["message_id"]; !ok {
+		t.Errorf("FAIL: response body missing 'message_id' field: %v", resp)
+	}
+}
+
+// =============================================================================
 // Cycle 1: SSE切断後もDB保存が完了すること
 // =============================================================================
 
@@ -281,14 +324,16 @@ func TestSendMessage_ContextCancelledDuringExecution_AssistantMessageSaved(t *te
 		cancel:    cancel,
 	}
 
+	done := make(chan struct{})
 	w := newFailingResponseWriter()
 	body := strings.NewReader(`{"content":"hi"}`)
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote}
+	server := &Server{repo: repo, remote: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
+	<-done
 
 	// With the streaming approach, message is created at start via CreateStreamingMessage
 	// (before Execute), so it's always persisted regardless of frontend disconnect.
@@ -326,14 +371,16 @@ func TestSendMessage_ExecuteContextIsIndependentOfRequestContext(t *testing.T) {
 		msgs: []*db.Message{},
 	}
 
+	done := make(chan struct{})
 	w := newFailingResponseWriter()
 	body := strings.NewReader(`{"content":"cycle2 test"}`)
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote}
+	server := &Server{repo: repo, remote: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
+	<-done
 
 	if remote.executeCtxCancelledAtEntry {
 		t.Error("FAIL: Execute received a context that was already cancelled\n" +
@@ -365,14 +412,16 @@ func TestSendMessage_AssistantResponse_TitleUpdated(t *testing.T) {
 		cancel:    func() {}, // no-op: no disconnect simulation
 	}
 
+	done := make(chan struct{})
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"content":"hi"}`)
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote}
+	server := &Server{repo: repo, remote: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
+	<-done
 
 	wantTitle := generateTitle("Hello from AI")
 	if repo.updatedTitle != wantTitle {
@@ -405,14 +454,16 @@ func TestSendMessage_StatusUpdatedToRunningThenCompleted(t *testing.T) {
 		cancel:    func() {}, // no disconnect
 	}
 
+	done := make(chan struct{})
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"content":"status test"}`)
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote}
+	server := &Server{repo: repo, remote: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
+	<-done
 
 	// Expect exactly: ["running", "completed"]
 	wantHistory := []string{"running", "completed"}
@@ -450,14 +501,16 @@ func TestSendMessage_StreamingMessageCreatedAtStart(t *testing.T) {
 		cancel:    func() {},
 	}
 
+	done := make(chan struct{})
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"content":"stream test"}`)
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote}
+	server := &Server{repo: repo, remote: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
+	<-done
 
 	if !repo.streamingMsgCreated {
 		t.Error("FAIL: CreateStreamingMessage was NOT called\n" +
@@ -490,14 +543,16 @@ func TestSendMessage_UpdateContentBlocksCalledOnCompletion(t *testing.T) {
 		cancel:    func() {},
 	}
 
+	done := make(chan struct{})
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"content":"batch test"}`)
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote}
+	server := &Server{repo: repo, remote: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
+	<-done
 
 	if !repo.updateContentBlocksCalled {
 		t.Error("FAIL: UpdateMessageContentBlocks was NOT called\n" +
@@ -526,14 +581,16 @@ func TestSendMessage_MessageStatusCompletedOnSuccess(t *testing.T) {
 		cancel:    func() {},
 	}
 
+	done := make(chan struct{})
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"content":"msg status test"}`)
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote}
+	server := &Server{repo: repo, remote: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
+	<-done
 
 	if len(repo.msgStatusHistory) == 0 {
 		t.Error("FAIL: UpdateMessageStatus was NOT called on assistant message\n" +
@@ -635,13 +692,16 @@ func TestSendMessage_BatchTickerSavesToolCalls(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
+	done := make(chan struct{})
 	server := &Server{
 		repo:          repo,
 		remote:        remote,
 		batchInterval: 1 * time.Millisecond,
+		doneCh:        done,
 	}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
+	<-done
 
 	// Count how many MergeMessageData calls included "tool_calls" key.
 	toolCallsMergeCount := 0
