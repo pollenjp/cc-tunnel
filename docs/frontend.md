@@ -122,13 +122,13 @@ ChatView での使用:
 
 | 状態 | 表示内容 |
 | ---- | -------- |
-| `isInProgress` + ブロックが空テキストのみ | TypingIndicator のみ（MessageBubble は非表示） |
-| `isInProgress` + ブロックにコンテンツあり | コンテンツを通常描画 + 末尾に TypingIndicator |
+| `isInProgress` + `content_blocks` が空 | TypingIndicator のみ（MessageBubble は非表示） |
+| `isInProgress` + `content_blocks` にコンテンツあり | コンテンツを通常描画 + 末尾に TypingIndicator |
 | `isInProgress=false` | TypingIndicator 非表示 |
 
-`isInProgress` = `isStreamingMsg || isPollingStreamingMsg || isRunning === true`（SSE・DBポーリング両方に適用）。
+`isInProgress` = `isRunning === true`。
 
-`isRunning` prop は App.tsx から `sending || hasStreamingMessage` として渡される。`hasStreamingMessage = messages.some(m => m.status === 'streaming')` により、ポーリング復帰時の `isPolling` 更新タイミングのズレ（race condition）でも TypingIndicator が確実に表示される。
+`isRunning` prop は App.tsx から `sending || isPolling || hasStreamingMessage` として渡される。`hasStreamingMessage = messages.some(m => m.status === 'streaming')` により、ポーリング復帰時の `isPolling` 更新タイミングのズレ（race condition）でも TypingIndicator が確実に表示される。
 
 ### `ChatView`
 
@@ -140,22 +140,28 @@ ChatView での使用:
 | --------------- | ------------------------ | -------------------------------------------- |
 | `messages`      | `Message[]`              | 表示するメッセージ一覧                       |
 | `onSend`        | `(content) => void`      | 送信ハンドラ                                 |
-| `isStreaming`   | `boolean`                | SSE 受信中フラグ                             |
 | `isPolling`     | `boolean \| undefined`   | ポーリング中フラグ（DB駆動状態管理）         |
-| `isRunning`     | `boolean \| undefined`   | 実行中フラグ（`sending \|\| hasStreamingMessage`）TypingIndicator 表示制御用 |
-| `streamMeta`    | `StreamMeta \| null`     | モデル・コスト・所要時間などのメタ情報       |
-| `hookEvents`    | `SSEHookEvent[]`         | フックイベント一覧（フックイベントパネル用） |
-| `streamBlocks`  | `AssistantBlock[]`       | ストリーミング中のブロック列                 |
+| `isRunning`     | `boolean \| undefined`   | 実行中フラグ（`sending \|\| isPolling \|\| hasStreamingMessage`）TypingIndicator 表示制御用 |
 | `input`         | `string`                 | テキストエリアの入力値                       |
 | `onInputChange` | `(value) => void`        | 入力値変更ハンドラ                           |
 | `onHamburger`   | `() => void`             | モバイルでサイドバーを開くハンドラ           |
 
 **メッセージ表示の優先順位**
 
-1. `isStreaming && isLast && role === 'assistant'` → SSE ライブストリーミング（`streamBlocks` を使用）
-2. `isPolling && msg.status === 'streaming'` → DBポーリングストリーミング（`message_data.content_blocks` を使用、ストリーミングアニメーション付き）
-3. `msg.status === 'error'` → エラーバッジ表示（「エラーが発生しました」）
-4. それ以外 → DB復元レンダリング（完了メッセージ）
+1. `isPolling && msg.status === 'streaming'` → DBポーリングストリーミング（`message_data.content_blocks` を使用、ストリーミングアニメーション付き）
+2. `msg.status === 'error'` → エラーバッジ表示（「エラーが発生しました」）
+3. それ以外 → DB復元レンダリング（完了メッセージ）
+
+**streaming メッセージのレンダリングロジック**
+
+```
+streaming メッセージの表示優先順位:
+1. content_blocks があれば通常通りレンダリング
+2. TypingIndicator は content_blocks の「後ろ」に追加表示（末尾インジケータ）
+3. content_blocks が空（まだバッチ保存前）の場合のみ TypingIndicator 単体表示
+
+isInProgress = isRunning === true
+```
 
 ### `MessageBubble`
 
@@ -442,13 +448,13 @@ useConversationPoller({
 
 ポーリング中に `msg.status === 'streaming'` のメッセージを受け取った場合（`isPollingStreamingMsg`）:
 - `message_data.content_blocks` があればDBの部分コンテンツを表示
-- `content_blocks` が空なら空テキストブロックを表示
+- `content_blocks` が空なら TypingIndicator のみ表示（空バブルは表示しない）
 - ストリーミングアニメーション（カーソル）を付与する
 - `text` / `thinking` ブロックはそのまま表示
 - `tool_use` ブロックは `message_data.tool_calls` の `tool_use_id` マップから復元し `ToolCallCard` で表示（`isRunning: true`）
-  - `tool_calls` にエントリがない場合（バッチ保存前の未確定状態）はそのブロックをスキップ
-- メッセージバブルの下部にパルスインジケータ（`生成中...` テキスト + animate-pulse ドット）を表示
-  - `isPollingStreamingMsg` のときのみ表示。`isPolling=false` の場合は非表示。
+  - `tool_calls` にエントリがない場合（バッチ保存前の未確定状態）はフォールバック ToolCallCard を表示
+- TypingIndicator は `isRunning === true` のときのみ表示（`isPolling` に依存しない）
+  - `isRunning = sending || isPolling || hasStreamingMessage`
 
 ### バックエンド: dbMsgToAPI の status マッピング
 

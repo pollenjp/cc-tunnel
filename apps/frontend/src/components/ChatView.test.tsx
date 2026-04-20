@@ -98,6 +98,7 @@ describe('ChatView', () => {
         {...defaultProps}
         messages={[msg]}
         isPolling={true}
+        isRunning={true}
       />,
     );
 
@@ -163,6 +164,7 @@ describe('ChatView', () => {
         {...defaultProps}
         messages={[msg]}
         isPolling={true}
+        isRunning={true}
       />,
     );
 
@@ -253,6 +255,7 @@ describe('ChatView', () => {
         {...defaultProps}
         messages={[msg]}
         isPolling={true}
+        isRunning={true}
       />,
     );
 
@@ -275,6 +278,7 @@ describe('ChatView', () => {
         {...defaultProps}
         messages={[msg]}
         isPolling={true}
+        isRunning={true}
       />,
     );
 
@@ -366,6 +370,72 @@ describe('ChatView', () => {
     );
 
     expect(screen.queryByTestId('typing-indicator')).toBeNull();
+  });
+
+  it('shows content_blocks text when isRunning=true and isPolling=false', () => {
+    const msg = makeMsg({
+      id: 'msg-running-content',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'text', content: 'isRunning途中テキスト' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={false}
+        isRunning={true}
+      />,
+    );
+
+    expect(screen.getByText('isRunning途中テキスト')).toBeTruthy();
+  });
+
+  it('shows TypingIndicator only (no bubble) when isRunning=true and content_blocks is empty', () => {
+    const msg = makeMsg({
+      id: 'msg-running-empty',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {},
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={false}
+        isRunning={true}
+      />,
+    );
+
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
+    expect(screen.queryByTestId('message-bubble-msg-running-empty')).toBeNull();
+  });
+
+  it('shows TypingIndicator after content when isRunning=true and content_blocks has data', () => {
+    const msg = makeMsg({
+      id: 'msg-running-indicator',
+      role: 'assistant',
+      status: 'streaming',
+      message_data: {
+        content_blocks: [{ type: 'text', content: 'インジケータテスト' }],
+      },
+    });
+
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[msg]}
+        isPolling={false}
+        isRunning={true}
+      />,
+    );
+
+    expect(screen.getByText('インジケータテスト')).toBeTruthy();
+    expect(screen.getByTestId('typing-indicator')).toBeTruthy();
   });
 
 });

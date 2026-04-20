@@ -143,7 +143,7 @@ export function ChatView({ messages, onSend, isPolling, isRunning, input, onInpu
 
             // Indices for metadata placement
             const lastBlockIdx = blocks.length - 1;
-            const isInProgress = isPollingStreamingMsg || isRunning === true;
+            const isInProgress = isRunning === true;
             const isEmptyBlocks =
               blocks.length === 1 && blocks[0].type === 'text' && blocks[0].content === '';
 
