@@ -1,10 +1,10 @@
+[tasks."test:cc-remote-agent"]
+dir = "cc-remote-agent"
+run = 'mise run cc-remote-agent:test'
+
 [tasks."test:cc-tunnel"]
 dir = "cc-tunnel"
 run = 'mise run cc-tunnel:test'
-
-[tasks."test:cc-tmux-tunnel"]
-dir = "cc-tmux-tunnel"
-run = 'mise run cc-tmux-tunnel:test'
 
 [tasks."test:frontend"]
 dir = "frontend"
@@ -13,13 +13,13 @@ run = 'mise run frontend:test'
 [tasks."test"]
 depends = ["test:*"]
 
+[tasks."lint:cc-remote-agent"]
+dir = "cc-remote-agent"
+run = 'mise run cc-remote-agent:lint'
+
 [tasks."lint:cc-tunnel"]
 dir = "cc-tunnel"
 run = 'mise run cc-tunnel:lint'
-
-[tasks."lint:cc-tmux-tunnel"]
-dir = "cc-tmux-tunnel"
-run = 'mise run cc-tmux-tunnel:lint'
 
 [tasks."lint:frontend"]
 dir = "frontend"
@@ -33,6 +33,8 @@ depends = ["test", "lint"]
 
 [tasks."docker:up"]
 description = "Start all services with docker compose"
+# sources = ["**/*"]
+# outputs = { auto = true }
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
@@ -43,7 +45,7 @@ echo 'Access to http://localhost:3000 (if default configuration is used) to see 
 
 [tasks."docker:down"]
 description = "Stop all services with docker compose"
-run = 'docker compose down'
+run = 'docker compose down -v'
 
 [tasks."docker:logs"]
 description = "Follow logs of all services with docker compose"

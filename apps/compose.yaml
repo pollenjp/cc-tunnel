@@ -1,24 +1,50 @@
 services:
-  cc-tmux-tunnel:
-    build:
-      context: ./cc-tmux-tunnel
+  postgres:
+    image: mirror.gcr.io/library/postgres:18-alpine
     environment:
-      PORT: "${CC_TMUX_TUNNEL_ENV_PORT:-9090}"
+      POSTGRES_DB: cctunnel
+      POSTGRES_USER: cctunnel
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-cctunnel_dev}"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cctunnel -d cctunnel"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     expose:
-      - "${CC_TMUX_TUNNEL_ENV_PORT:-9090}"
+      - "5432"
+
+  cc-remote-agent:
+    build:
+      context: ./cc-remote-agent
+    environment:
+      PORT: "${CC_REMOTE_AGENT_ENV_PORT:-9091}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    volumes:
+      - claude-sessions:/home/user/.claude
+    expose:
+      - "${CC_REMOTE_AGENT_ENV_PORT:-9091}"
 
   cc-tunnel:
     build:
       context: ./cc-tunnel
     command:
-      - -runner-url
-      - http://cc-tmux-tunnel:${CC_TMUX_TUNNEL_ENV_PORT:-9090}
+      - -agent-url
+      - http://cc-remote-agent:${CC_REMOTE_AGENT_ENV_PORT:-9091}
     environment:
       PORT: ${CC_TUNNEL_ENV_PORT:-8080}
+      DATABASE_URL: "postgres://cctunnel:${POSTGRES_PASSWORD:-cctunnel_dev}@postgres:5432/cctunnel?sslmode=disable"
     expose:
       - "${CC_TUNNEL_ENV_PORT:-8080}"
+    ports: # To allow access from Vite running manually (not in Compose)
+      - "8080:${CC_TUNNEL_ENV_PORT:-8080}"
     depends_on:
-      - cc-tmux-tunnel
+      cc-remote-agent:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   frontend:
     build:
@@ -26,8 +52,14 @@ services:
     environment:
       PORT: "${FRONTEND_ENV_PORT:-8080}"
       BACKEND_URL: "/api"
+      # for nginx configuration in frontend Dockerfile
       API_UPSTREAM: "http://cc-tunnel:${CC_TUNNEL_ENV_PORT:-8080}"
     ports:
       - "3000:${FRONTEND_ENV_PORT:-8080}"
     depends_on:
-      - cc-tunnel
+      cc-tunnel:
+        condition: service_started
+
+volumes:
+  pgdata:
+  claude-sessions:

@@ -1,30 +1,121 @@
 openapi: "3.0.3"
 info:
   title: cc-tunnel API
-  description: API for controlling Claude Code CLI sessions via tmux
-  version: 0.3.0
+  description: AI chat session management via claude CLI
+  version: 1.0.0
 
 paths:
-  /sessions:
+  /auth/status:
+    get:
+      operationId: GetAuthStatus
+      summary: Get authentication status
+      responses:
+        "200":
+          description: Authentication status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /auth/login:
     post:
-      operationId: createSession
-      summary: Create a new session
-      description: |
-        Creates a new session. For claude_code type, creates a new tmux session and starts Claude Code CLI.
-        For multi_agent_shogun type, starts the shogun startup script or adopts existing sessions.
+      operationId: InitiateLogin
+      summary: Initiate login flow
       requestBody:
         required: false
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateSessionRequest"
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+
+  /auth/logout:
+    post:
+      operationId: Logout
+      summary: Logout
+      responses:
+        "200":
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /auth/cancel:
+    post:
+      operationId: CancelLogin
+      summary: Cancel the in-progress login PTY process
+      responses:
+        "200":
+          description: Login cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthCancelResponse"
+
+  /auth/input:
+    post:
+      operationId: SubmitAuthInput
+      summary: Submit input to the login process stdin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthInputRequest"
+      responses:
+        "200":
+          description: Input submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthInputResponse"
+        "409":
+          description: No login in progress
+
+  /auth/output:
+    get:
+      operationId: GetAuthOutput
+      summary: Get buffered stdout from the login process
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Cursor position to start from (0 = all lines)
+      responses:
+        "200":
+          description: Stdout lines and new cursor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthOutputResponse"
+
+  /conversations:
+    post:
+      operationId: createConversation
+      summary: Create a new conversation
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConversationRequest"
       responses:
         "201":
-          description: Session created
+          description: Conversation created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Session"
+                $ref: "#/components/schemas/Conversation"
         "500":
           description: Internal server error
           content:
@@ -32,187 +123,83 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     get:
-      operationId: listSessions
-      summary: List all sessions
+      operationId: listConversations
+      summary: List all conversations
       responses:
         "200":
-          description: List of sessions
+          description: List of conversations
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Session"
+                  $ref: "#/components/schemas/Conversation"
 
-  /sessions/discover:
+  /conversations/{conversationId}:
     get:
-      operationId: discoverSessions
-      summary: Discover existing unmanaged tmux sessions
-      description: |
-        Lists tmux sessions that exist but are not currently managed.
-        Returns claude-* sessions and shogun/multiagent session pairs.
+      operationId: getConversation
+      summary: Get conversation with message history
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
       responses:
         "200":
-          description: List of discoverable sessions
+          description: Conversation with messages
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/DiscoveredSession"
-        "500":
-          description: Internal server error
+                $ref: "#/components/schemas/ConversationDetail"
+        "404":
+          description: Not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-
-  /sessions/{sessionId}:
     delete:
-      operationId: deleteSession
-      summary: Delete a session
-      description: Kills the tmux session(s) and removes it from management.
+      operationId: deleteConversation
+      summary: Delete a conversation
       parameters:
-        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/ConversationId"
       responses:
         "200":
-          description: Session deleted
+          description: Deleted
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/StatusResponse"
         "404":
-          description: Session not found
+          description: Not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /sessions/{sessionId}/resize:
+  /conversations/{conversationId}/messages:
     post:
-      operationId: resizeSession
-      summary: Resize the tmux window
-      description: |
-        Resizes the tmux window of a running session.
-
-        For `multi_agent_shogun` sessions:
-        - If `paneIndex` is not supplied (or omitted) the shogun and
-          multiagent tmux sessions are both resized, and the optional
-          `col_widths` / `row_heights` are applied to the multiagent grid.
-        - If `paneIndex` is `0` only the shogun tmux session is resized.
-        - If `paneIndex` is `1`–`9` only the multiagent tmux session is
-          resized; `col_widths` / `row_heights` still apply.
+      operationId: sendMessage
+      summary: Send a message and process the assistant response asynchronously
       parameters:
-        - $ref: "#/components/parameters/SessionId"
-        - $ref: "#/components/parameters/PaneIndex"
+        - $ref: "#/components/parameters/ConversationId"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ResizeRequest"
+              $ref: "#/components/schemas/SendMessageRequest"
       responses:
-        "200":
-          description: Session resized
+        "202":
+          description: Message accepted for processing
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StatusResponse"
+                $ref: "#/components/schemas/SendMessageResponse"
         "400":
-          description: Invalid request body
+          description: Bad request
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: Session not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /sessions/{sessionId}/input:
-    post:
-      operationId: sendInput
-      summary: Send input to a session
-      description: |
-        Sends keystrokes to the tmux session via send-keys.
-        Each element in the `keys` array is passed as a separate argument to `tmux send-keys`.
-        Plain text is sent as literal characters. Special key names are interpreted by tmux.
-
-        Supported special keys include: Enter, Escape, Space, Tab, BSpace (Backspace),
-        Up, Down, Left, Right, Home, End, PageUp (PgUp), PageDown (PgDn),
-        F1-F12, IC (Insert), DC (Delete).
-
-        Modifier prefixes: C- (Ctrl), M- (Alt/Meta), S- (Shift).
-        Examples: "C-c" (Ctrl+C), "C-a" (Ctrl+A), "M-x" (Alt+X), "C-S-Up" (Ctrl+Shift+Up).
-      parameters:
-        - $ref: "#/components/parameters/SessionId"
-        - $ref: "#/components/parameters/PaneIndex"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SendInputRequest"
-      responses:
-        "200":
-          description: Input sent
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StatusResponse"
-        "400":
-          description: Invalid request body
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Session not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /sessions/{sessionId}/output:
-    get:
-      operationId: getOutput
-      summary: Get session output
-      description: Captures the current tmux pane content.
-      parameters:
-        - $ref: "#/components/parameters/SessionId"
-        - $ref: "#/components/parameters/PaneIndex"
-      responses:
-        "200":
-          description: Pane output
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OutputResponse"
-        "404":
-          description: Session not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /sessions/{sessionId}/outputs:
-    get:
-      operationId: getAllOutputs
-      summary: Get all pane outputs
-      description: Captures the content of all panes in the session.
-      parameters:
-        - $ref: "#/components/parameters/SessionId"
-      responses:
-        "200":
-          description: All pane outputs
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AllOutputsResponse"
-        "404":
-          description: Session not found
+          description: Conversation not found
           content:
             application/json:
               schema:
@@ -220,173 +207,194 @@ paths:
 
 components:
   parameters:
-    SessionId:
-      name: sessionId
+    ConversationId:
+      name: conversationId
       in: path
       required: true
       schema:
         type: string
-
-    PaneIndex:
-      name: paneIndex
-      in: query
-      required: false
-      description: |
-        Pane index to target. For claude_code sessions, only 0 is valid.
-        For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
-      schema:
-        type: integer
-        minimum: 0
-        maximum: 9
-        default: 0
+        format: uuid
 
   schemas:
-    SessionType:
-      type: string
-      enum:
-        - claude_code
-        - multi_agent_shogun
+    AuthStatus:
+      type: object
+      required:
+        - loggedIn
+        - authMethod
+        - loginPending
+      properties:
+        loggedIn:
+          type: boolean
+        authMethod:
+          type: string
+          enum: [none, api_key, claude.ai]
+        apiProvider:
+          type: string
+        email:
+          type: string
+        orgName:
+          type: string
+        subscriptionType:
+          type: string
+        apiKeySource:
+          type: string
+        loginPending:
+          type: boolean
+        loginUrl:
+          type: string
 
-    CreateSessionRequest:
+    LoginRequest:
       type: object
       properties:
-        type:
-          $ref: "#/components/schemas/SessionType"
-          default: claude_code
-        tmux_name:
+        method:
           type: string
-          description: Existing tmux session name to adopt (for claude_code type)
-        width:
-          type: integer
-          description: tmux window width in columns
-          default: 200
-          minimum: 40
-          maximum: 500
-          example: 200
-        height:
-          type: integer
-          description: tmux window height in rows
-          default: 50
-          minimum: 10
-          maximum: 200
-          example: 50
+          enum: [claudeai, console]
 
-    Session:
+    LoginResponse:
+      type: object
+      required:
+        - message
+      properties:
+        loginUrl:
+          type: string
+        loggedIn:
+          type: boolean
+        message:
+          type: string
+
+    AuthInputRequest:
+      type: object
+      required: [input]
+      properties:
+        input:
+          type: string
+          description: Input to send to the login process stdin (can be empty string for Enter)
+
+    AuthInputResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    AuthOutputResponse:
+      type: object
+      required: [data, cursor]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded PTY output bytes since the given cursor
+        cursor:
+          type: integer
+          description: New cursor position for the next request
+
+    AuthCancelResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    CreateConversationRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          default: ""
+        model:
+          type: string
+          default: "claude-sonnet-4-6"
+        system_prompt:
+          type: string
+
+    Conversation:
       type: object
       required:
         - id
-        - type
-        - tmux_name
-        - pane_count
+        - title
+        - model
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        model:
+          type: string
+        status:
+          type: string
+          enum: [idle, running, completed]
+          description: Execution status of the conversation
+        system_prompt:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      required:
+        - id
+        - conversation_id
+        - role
         - created_at
       properties:
         id:
           type: string
-          example: "a1b2c3d4e5f6g7h8"
-        type:
-          $ref: "#/components/schemas/SessionType"
-        tmux_name:
+          format: uuid
+        conversation_id:
           type: string
-          example: "claude-a1b2c3d4e5f6g7h8"
-        pane_count:
-          type: integer
-          description: Number of panes (1 for claude_code, 10 for multi_agent_shogun)
-          example: 1
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant, system]
+        message_data:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [streaming, completed, error]
         created_at:
           type: string
           format: date-time
-
-    DiscoveredSession:
-      type: object
-      required:
-        - type
-        - tmux_names
-      properties:
-        type:
-          $ref: "#/components/schemas/SessionType"
-        tmux_names:
-          type: array
-          items:
-            type: string
-          description: Tmux session names (1 for claude_code, 2 for multi_agent_shogun)
-
-    ResizeRequest:
-      type: object
-      required:
-        - width
-        - height
-      properties:
-        width:
-          type: integer
-          description: tmux window width in columns
-          minimum: 40
-          maximum: 500
-          example: 200
-        height:
-          type: integer
-          description: tmux window height in rows
-          minimum: 10
-          maximum: 200
-          example: 50
-        col_widths:
-          type: array
-          description: |
-            Per-column pane widths in cells. Only used for `multi_agent_shogun`
-            sessions and must contain exactly 3 entries corresponding to the
-            three columns of the 3x3 multiagent grid (left to right).
-          minItems: 3
-          maxItems: 3
-          items:
-            type: integer
-            minimum: 20
-            maximum: 500
-        row_heights:
-          type: array
-          description: |
-            Per-row pane heights in cells. Only used for `multi_agent_shogun`
-            sessions and must contain exactly 3 entries corresponding to the
-            three rows of the 3x3 multiagent grid (top to bottom).
-          minItems: 3
-          maxItems: 3
-          items:
-            type: integer
-            minimum: 8
-            maximum: 200
-
-    SendInputRequest:
-      type: object
-      required:
-        - keys
-      properties:
-        keys:
-          type: array
-          items:
-            type: string
-          description: |
-            Array of keys to send to the tmux session.
-            Each element is passed as a separate argument to `tmux send-keys`.
-            Plain text strings are sent as literal input.
-            Special key names (Enter, Escape, C-c, etc.) are interpreted by tmux.
-          example: ["hello", "Enter"]
-
-    OutputResponse:
-      type: object
-      required:
-        - output
-      properties:
-        output:
+        updated_at:
           type: string
+          format: date-time
 
-    AllOutputsResponse:
+    ConversationDetail:
+      allOf:
+        - $ref: "#/components/schemas/Conversation"
+        - type: object
+          required:
+            - messages
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: "#/components/schemas/Message"
+
+    SendMessageRequest:
       type: object
       required:
-        - panes
+        - content
       properties:
-        panes:
-          type: object
-          additionalProperties:
-            type: string
-          description: Map of pane index (as string key) to output content
+        content:
+          type: string
+          description: User message content
+
+    SendMessageResponse:
+      type: object
+      required: [message_id]
+      properties:
+        message_id:
+          type: string
+          format: uuid
 
     StatusResponse:
       type: object
@@ -404,3 +412,23 @@ components:
       properties:
         error:
           type: string
+
+    ToolCallData:
+      type: object
+      required:
+        - tool_use_id
+        - tool_name
+        - input_json
+      properties:
+        tool_use_id:
+          type: string
+        tool_name:
+          type: string
+        input_json:
+          type: string
+        result:
+          type: string
+          nullable: true
+        is_running:
+          type: boolean
+

@@ -12,6 +12,9 @@ run = 'npm run generate'
 depends = ["frontend:install", "frontend:generate"]
 run = 'npm run dev'
 
+[tasks."frontend:dev:up".env]
+BACKEND_URL = "http://localhost:8080"
+
 [tasks."frontend:lint"]
 depends = ["frontend:install"]
 run = 'npm run lint'

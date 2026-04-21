@@ -18,50 +18,211 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for SessionType.
+// Defines values for AuthStatusAuthMethod.
 const (
-	ClaudeCode       SessionType = "claude_code"
-	MultiAgentShogun SessionType = "multi_agent_shogun"
+	ApiKey   AuthStatusAuthMethod = "api_key"
+	ClaudeAi AuthStatusAuthMethod = "claude.ai"
+	None     AuthStatusAuthMethod = "none"
 )
 
-// Valid indicates whether the value is a known member of the SessionType enum.
-func (e SessionType) Valid() bool {
+// Valid indicates whether the value is a known member of the AuthStatusAuthMethod enum.
+func (e AuthStatusAuthMethod) Valid() bool {
 	switch e {
-	case ClaudeCode:
+	case ApiKey:
 		return true
-	case MultiAgentShogun:
+	case ClaudeAi:
+		return true
+	case None:
 		return true
 	default:
 		return false
 	}
 }
 
-// AllOutputsResponse defines model for AllOutputsResponse.
-type AllOutputsResponse struct {
-	// Panes Map of pane index (as string key) to output content
-	Panes map[string]string `json:"panes"`
+// Defines values for ConversationStatus.
+const (
+	ConversationStatusCompleted ConversationStatus = "completed"
+	ConversationStatusIdle      ConversationStatus = "idle"
+	ConversationStatusRunning   ConversationStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ConversationStatus enum.
+func (e ConversationStatus) Valid() bool {
+	switch e {
+	case ConversationStatusCompleted:
+		return true
+	case ConversationStatusIdle:
+		return true
+	case ConversationStatusRunning:
+		return true
+	default:
+		return false
+	}
 }
 
-// CreateSessionRequest defines model for CreateSessionRequest.
-type CreateSessionRequest struct {
-	// Height tmux window height in rows
-	Height *int `json:"height,omitempty"`
+// Defines values for ConversationDetailStatus.
+const (
+	ConversationDetailStatusCompleted ConversationDetailStatus = "completed"
+	ConversationDetailStatusIdle      ConversationDetailStatus = "idle"
+	ConversationDetailStatusRunning   ConversationDetailStatus = "running"
+)
 
-	// TmuxName Existing tmux session name to adopt (for claude_code type)
-	TmuxName *string      `json:"tmux_name,omitempty"`
-	Type     *SessionType `json:"type,omitempty"`
-
-	// Width tmux window width in columns
-	Width *int `json:"width,omitempty"`
+// Valid indicates whether the value is a known member of the ConversationDetailStatus enum.
+func (e ConversationDetailStatus) Valid() bool {
+	switch e {
+	case ConversationDetailStatusCompleted:
+		return true
+	case ConversationDetailStatusIdle:
+		return true
+	case ConversationDetailStatusRunning:
+		return true
+	default:
+		return false
+	}
 }
 
-// DiscoveredSession defines model for DiscoveredSession.
-type DiscoveredSession struct {
-	// TmuxNames Tmux session names (1 for claude_code, 2 for multi_agent_shogun)
-	TmuxNames []string    `json:"tmux_names"`
-	Type      SessionType `json:"type"`
+// Defines values for LoginRequestMethod.
+const (
+	Claudeai LoginRequestMethod = "claudeai"
+	Console  LoginRequestMethod = "console"
+)
+
+// Valid indicates whether the value is a known member of the LoginRequestMethod enum.
+func (e LoginRequestMethod) Valid() bool {
+	switch e {
+	case Claudeai:
+		return true
+	case Console:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MessageRole.
+const (
+	Assistant MessageRole = "assistant"
+	System    MessageRole = "system"
+	User      MessageRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the MessageRole enum.
+func (e MessageRole) Valid() bool {
+	switch e {
+	case Assistant:
+		return true
+	case System:
+		return true
+	case User:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MessageStatus.
+const (
+	MessageStatusCompleted MessageStatus = "completed"
+	MessageStatusError     MessageStatus = "error"
+	MessageStatusStreaming MessageStatus = "streaming"
+)
+
+// Valid indicates whether the value is a known member of the MessageStatus enum.
+func (e MessageStatus) Valid() bool {
+	switch e {
+	case MessageStatusCompleted:
+		return true
+	case MessageStatusError:
+		return true
+	case MessageStatusStreaming:
+		return true
+	default:
+		return false
+	}
+}
+
+// AuthCancelResponse defines model for AuthCancelResponse.
+type AuthCancelResponse struct {
+	Message string `json:"message"`
+}
+
+// AuthInputRequest defines model for AuthInputRequest.
+type AuthInputRequest struct {
+	// Input Input to send to the login process stdin (can be empty string for Enter)
+	Input string `json:"input"`
+}
+
+// AuthInputResponse defines model for AuthInputResponse.
+type AuthInputResponse struct {
+	Message string `json:"message"`
+}
+
+// AuthOutputResponse defines model for AuthOutputResponse.
+type AuthOutputResponse struct {
+	// Cursor New cursor position for the next request
+	Cursor int `json:"cursor"`
+
+	// Data Base64-encoded PTY output bytes since the given cursor
+	Data string `json:"data"`
+}
+
+// AuthStatus defines model for AuthStatus.
+type AuthStatus struct {
+	ApiKeySource     *string              `json:"apiKeySource,omitempty"`
+	ApiProvider      *string              `json:"apiProvider,omitempty"`
+	AuthMethod       AuthStatusAuthMethod `json:"authMethod"`
+	Email            *string              `json:"email,omitempty"`
+	LoggedIn         bool                 `json:"loggedIn"`
+	LoginPending     bool                 `json:"loginPending"`
+	LoginUrl         *string              `json:"loginUrl,omitempty"`
+	OrgName          *string              `json:"orgName,omitempty"`
+	SubscriptionType *string              `json:"subscriptionType,omitempty"`
+}
+
+// AuthStatusAuthMethod defines model for AuthStatus.AuthMethod.
+type AuthStatusAuthMethod string
+
+// Conversation defines model for Conversation.
+type Conversation struct {
+	CreatedAt time.Time          `json:"created_at"`
+	Id        openapi_types.UUID `json:"id"`
+	Model     string             `json:"model"`
+
+	// Status Execution status of the conversation
+	Status       ConversationStatus `json:"status"`
+	SystemPrompt *string            `json:"system_prompt,omitempty"`
+	Title        string             `json:"title"`
+	UpdatedAt    time.Time          `json:"updated_at"`
+}
+
+// ConversationStatus Execution status of the conversation
+type ConversationStatus string
+
+// ConversationDetail defines model for ConversationDetail.
+type ConversationDetail struct {
+	CreatedAt time.Time          `json:"created_at"`
+	Id        openapi_types.UUID `json:"id"`
+	Messages  []Message          `json:"messages"`
+	Model     string             `json:"model"`
+
+	// Status Execution status of the conversation
+	Status       ConversationDetailStatus `json:"status"`
+	SystemPrompt *string                  `json:"system_prompt,omitempty"`
+	Title        string                   `json:"title"`
+	UpdatedAt    time.Time                `json:"updated_at"`
+}
+
+// ConversationDetailStatus Execution status of the conversation
+type ConversationDetailStatus string
+
+// CreateConversationRequest defines model for CreateConversationRequest.
+type CreateConversationRequest struct {
+	Model        *string `json:"model,omitempty"`
+	SystemPrompt *string `json:"system_prompt,omitempty"`
+	Title        *string `json:"title,omitempty"`
 }
 
 // Error defines model for Error.
@@ -69,120 +230,119 @@ type Error struct {
 	Error string `json:"error"`
 }
 
-// OutputResponse defines model for OutputResponse.
-type OutputResponse struct {
-	Output string `json:"output"`
+// LoginRequest defines model for LoginRequest.
+type LoginRequest struct {
+	Method *LoginRequestMethod `json:"method,omitempty"`
 }
 
-// ResizeRequest defines model for ResizeRequest.
-type ResizeRequest struct {
-	// ColWidths Per-column pane widths in cells. Only used for `multi_agent_shogun`
-	// sessions and must contain exactly 3 entries corresponding to the
-	// three columns of the 3x3 multiagent grid (left to right).
-	ColWidths *[]int `json:"col_widths,omitempty"`
+// LoginRequestMethod defines model for LoginRequest.Method.
+type LoginRequestMethod string
 
-	// Height tmux window height in rows
-	Height int `json:"height"`
-
-	// RowHeights Per-row pane heights in cells. Only used for `multi_agent_shogun`
-	// sessions and must contain exactly 3 entries corresponding to the
-	// three rows of the 3x3 multiagent grid (top to bottom).
-	RowHeights *[]int `json:"row_heights,omitempty"`
-
-	// Width tmux window width in columns
-	Width int `json:"width"`
+// LoginResponse defines model for LoginResponse.
+type LoginResponse struct {
+	LoggedIn *bool   `json:"loggedIn,omitempty"`
+	LoginUrl *string `json:"loginUrl,omitempty"`
+	Message  string  `json:"message"`
 }
 
-// SendInputRequest defines model for SendInputRequest.
-type SendInputRequest struct {
-	// Keys Array of keys to send to the tmux session.
-	// Each element is passed as a separate argument to `tmux send-keys`.
-	// Plain text strings are sent as literal input.
-	// Special key names (Enter, Escape, C-c, etc.) are interpreted by tmux.
-	Keys []string `json:"keys"`
+// Message defines model for Message.
+type Message struct {
+	ConversationId openapi_types.UUID      `json:"conversation_id"`
+	CreatedAt      time.Time               `json:"created_at"`
+	Id             openapi_types.UUID      `json:"id"`
+	MessageData    *map[string]interface{} `json:"message_data,omitempty"`
+	Role           MessageRole             `json:"role"`
+	Status         *MessageStatus          `json:"status,omitempty"`
+	UpdatedAt      *time.Time              `json:"updated_at,omitempty"`
 }
 
-// Session defines model for Session.
-type Session struct {
-	CreatedAt time.Time `json:"created_at"`
-	Id        string    `json:"id"`
+// MessageRole defines model for Message.Role.
+type MessageRole string
 
-	// PaneCount Number of panes (1 for claude_code, 10 for multi_agent_shogun)
-	PaneCount int         `json:"pane_count"`
-	TmuxName  string      `json:"tmux_name"`
-	Type      SessionType `json:"type"`
+// MessageStatus defines model for Message.Status.
+type MessageStatus string
+
+// SendMessageRequest defines model for SendMessageRequest.
+type SendMessageRequest struct {
+	// Content User message content
+	Content string `json:"content"`
 }
 
-// SessionType defines model for SessionType.
-type SessionType string
+// SendMessageResponse defines model for SendMessageResponse.
+type SendMessageResponse struct {
+	MessageId openapi_types.UUID `json:"message_id"`
+}
 
 // StatusResponse defines model for StatusResponse.
 type StatusResponse struct {
 	Status string `json:"status"`
 }
 
-// PaneIndex defines model for PaneIndex.
-type PaneIndex = int
-
-// SessionId defines model for SessionId.
-type SessionId = string
-
-// SendInputParams defines parameters for SendInput.
-type SendInputParams struct {
-	// PaneIndex Pane index to target. For claude_code sessions, only 0 is valid.
-	// For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
-	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
+// ToolCallData defines model for ToolCallData.
+type ToolCallData struct {
+	InputJson string  `json:"input_json"`
+	IsRunning *bool   `json:"is_running,omitempty"`
+	Result    *string `json:"result,omitempty"`
+	ToolName  string  `json:"tool_name"`
+	ToolUseId string  `json:"tool_use_id"`
 }
 
-// GetOutputParams defines parameters for GetOutput.
-type GetOutputParams struct {
-	// PaneIndex Pane index to target. For claude_code sessions, only 0 is valid.
-	// For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
-	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
+// ConversationId defines model for ConversationId.
+type ConversationId = openapi_types.UUID
+
+// GetAuthOutputParams defines parameters for GetAuthOutput.
+type GetAuthOutputParams struct {
+	// Since Cursor position to start from (0 = all lines)
+	Since *int `form:"since,omitempty" json:"since,omitempty"`
 }
 
-// ResizeSessionParams defines parameters for ResizeSession.
-type ResizeSessionParams struct {
-	// PaneIndex Pane index to target. For claude_code sessions, only 0 is valid.
-	// For multi_agent_shogun sessions: 0 = shogun pane, 1-9 = multiagent panes.
-	PaneIndex *PaneIndex `form:"paneIndex,omitempty" json:"paneIndex,omitempty"`
-}
+// SubmitAuthInputJSONRequestBody defines body for SubmitAuthInput for application/json ContentType.
+type SubmitAuthInputJSONRequestBody = AuthInputRequest
 
-// CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
-type CreateSessionJSONRequestBody = CreateSessionRequest
+// InitiateLoginJSONRequestBody defines body for InitiateLogin for application/json ContentType.
+type InitiateLoginJSONRequestBody = LoginRequest
 
-// SendInputJSONRequestBody defines body for SendInput for application/json ContentType.
-type SendInputJSONRequestBody = SendInputRequest
+// CreateConversationJSONRequestBody defines body for CreateConversation for application/json ContentType.
+type CreateConversationJSONRequestBody = CreateConversationRequest
 
-// ResizeSessionJSONRequestBody defines body for ResizeSession for application/json ContentType.
-type ResizeSessionJSONRequestBody = ResizeRequest
+// SendMessageJSONRequestBody defines body for SendMessage for application/json ContentType.
+type SendMessageJSONRequestBody = SendMessageRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// List all sessions
-	// (GET /sessions)
-	ListSessions(w http.ResponseWriter, r *http.Request)
-	// Create a new session
-	// (POST /sessions)
-	CreateSession(w http.ResponseWriter, r *http.Request)
-	// Discover existing unmanaged tmux sessions
-	// (GET /sessions/discover)
-	DiscoverSessions(w http.ResponseWriter, r *http.Request)
-	// Delete a session
-	// (DELETE /sessions/{sessionId})
-	DeleteSession(w http.ResponseWriter, r *http.Request, sessionId SessionId)
-	// Send input to a session
-	// (POST /sessions/{sessionId}/input)
-	SendInput(w http.ResponseWriter, r *http.Request, sessionId SessionId, params SendInputParams)
-	// Get session output
-	// (GET /sessions/{sessionId}/output)
-	GetOutput(w http.ResponseWriter, r *http.Request, sessionId SessionId, params GetOutputParams)
-	// Get all pane outputs
-	// (GET /sessions/{sessionId}/outputs)
-	GetAllOutputs(w http.ResponseWriter, r *http.Request, sessionId SessionId)
-	// Resize the tmux window
-	// (POST /sessions/{sessionId}/resize)
-	ResizeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId, params ResizeSessionParams)
+	// Cancel the in-progress login PTY process
+	// (POST /auth/cancel)
+	CancelLogin(w http.ResponseWriter, r *http.Request)
+	// Submit input to the login process stdin
+	// (POST /auth/input)
+	SubmitAuthInput(w http.ResponseWriter, r *http.Request)
+	// Initiate login flow
+	// (POST /auth/login)
+	InitiateLogin(w http.ResponseWriter, r *http.Request)
+	// Logout
+	// (POST /auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request)
+	// Get buffered stdout from the login process
+	// (GET /auth/output)
+	GetAuthOutput(w http.ResponseWriter, r *http.Request, params GetAuthOutputParams)
+	// Get authentication status
+	// (GET /auth/status)
+	GetAuthStatus(w http.ResponseWriter, r *http.Request)
+	// List all conversations
+	// (GET /conversations)
+	ListConversations(w http.ResponseWriter, r *http.Request)
+	// Create a new conversation
+	// (POST /conversations)
+	CreateConversation(w http.ResponseWriter, r *http.Request)
+	// Delete a conversation
+	// (DELETE /conversations/{conversationId})
+	DeleteConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId)
+	// Get conversation with message history
+	// (GET /conversations/{conversationId})
+	GetConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId)
+	// Send a message and process the assistant response asynchronously
+	// (POST /conversations/{conversationId}/messages)
+	SendMessage(w http.ResponseWriter, r *http.Request, conversationId ConversationId)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -194,11 +354,11 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
-// ListSessions operation middleware
-func (siw *ServerInterfaceWrapper) ListSessions(w http.ResponseWriter, r *http.Request) {
+// CancelLogin operation middleware
+func (siw *ServerInterfaceWrapper) CancelLogin(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListSessions(w, r)
+		siw.Handler.CancelLogin(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -208,11 +368,11 @@ func (siw *ServerInterfaceWrapper) ListSessions(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
-// CreateSession operation middleware
-func (siw *ServerInterfaceWrapper) CreateSession(w http.ResponseWriter, r *http.Request) {
+// SubmitAuthInput operation middleware
+func (siw *ServerInterfaceWrapper) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateSession(w, r)
+		siw.Handler.SubmitAuthInput(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -222,11 +382,11 @@ func (siw *ServerInterfaceWrapper) CreateSession(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
-// DiscoverSessions operation middleware
-func (siw *ServerInterfaceWrapper) DiscoverSessions(w http.ResponseWriter, r *http.Request) {
+// InitiateLogin operation middleware
+func (siw *ServerInterfaceWrapper) InitiateLogin(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DiscoverSessions(w, r)
+		siw.Handler.InitiateLogin(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -236,58 +396,38 @@ func (siw *ServerInterfaceWrapper) DiscoverSessions(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
-// DeleteSession operation middleware
-func (siw *ServerInterfaceWrapper) DeleteSession(w http.ResponseWriter, r *http.Request) {
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAuthOutput operation middleware
+func (siw *ServerInterfaceWrapper) GetAuthOutput(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "sessionId" -------------
-	var sessionId SessionId
-
-	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", r.PathValue("sessionId"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteSession(w, r, sessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SendInput operation middleware
-func (siw *ServerInterfaceWrapper) SendInput(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "sessionId" -------------
-	var sessionId SessionId
-
-	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", r.PathValue("sessionId"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
-		return
-	}
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params SendInputParams
+	var params GetAuthOutputParams
 
-	// ------------- Optional query parameter "paneIndex" -------------
+	// ------------- Optional query parameter "since" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "paneIndex", r.URL.Query(), &params.PaneIndex, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "paneIndex", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SendInput(w, r, sessionId, params)
+		siw.Handler.GetAuthOutput(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -297,33 +437,11 @@ func (siw *ServerInterfaceWrapper) SendInput(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
-// GetOutput operation middleware
-func (siw *ServerInterfaceWrapper) GetOutput(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "sessionId" -------------
-	var sessionId SessionId
-
-	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", r.PathValue("sessionId"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetOutputParams
-
-	// ------------- Optional query parameter "paneIndex" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "paneIndex", r.URL.Query(), &params.PaneIndex, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "paneIndex", Err: err})
-		return
-	}
+// GetAuthStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetOutput(w, r, sessionId, params)
+		siw.Handler.GetAuthStatus(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -333,22 +451,11 @@ func (siw *ServerInterfaceWrapper) GetOutput(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
-// GetAllOutputs operation middleware
-func (siw *ServerInterfaceWrapper) GetAllOutputs(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "sessionId" -------------
-	var sessionId SessionId
-
-	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", r.PathValue("sessionId"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
-		return
-	}
+// ListConversations operation middleware
+func (siw *ServerInterfaceWrapper) ListConversations(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetAllOutputs(w, r, sessionId)
+		siw.Handler.ListConversations(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -358,33 +465,86 @@ func (siw *ServerInterfaceWrapper) GetAllOutputs(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
-// ResizeSession operation middleware
-func (siw *ServerInterfaceWrapper) ResizeSession(w http.ResponseWriter, r *http.Request) {
+// CreateConversation operation middleware
+func (siw *ServerInterfaceWrapper) CreateConversation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateConversation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteConversation operation middleware
+func (siw *ServerInterfaceWrapper) DeleteConversation(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	// ------------- Path parameter "sessionId" -------------
-	var sessionId SessionId
+	// ------------- Path parameter "conversationId" -------------
+	var conversationId ConversationId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", r.PathValue("sessionId"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "conversationId", r.PathValue("conversationId"), &conversationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ResizeSessionParams
-
-	// ------------- Optional query parameter "paneIndex" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "paneIndex", r.URL.Query(), &params.PaneIndex, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "paneIndex", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ResizeSession(w, r, sessionId, params)
+		siw.Handler.DeleteConversation(w, r, conversationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetConversation operation middleware
+func (siw *ServerInterfaceWrapper) GetConversation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "conversationId" -------------
+	var conversationId ConversationId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "conversationId", r.PathValue("conversationId"), &conversationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetConversation(w, r, conversationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SendMessage operation middleware
+func (siw *ServerInterfaceWrapper) SendMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "conversationId" -------------
+	var conversationId ConversationId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "conversationId", r.PathValue("conversationId"), &conversationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SendMessage(w, r, conversationId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -514,14 +674,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions", wrapper.ListSessions)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sessions", wrapper.CreateSession)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions/discover", wrapper.DiscoverSessions)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/sessions/{sessionId}", wrapper.DeleteSession)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sessions/{sessionId}/input", wrapper.SendInput)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions/{sessionId}/output", wrapper.GetOutput)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions/{sessionId}/outputs", wrapper.GetAllOutputs)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sessions/{sessionId}/resize", wrapper.ResizeSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cancel", wrapper.CancelLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/input", wrapper.SubmitAuthInput)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.InitiateLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/output", wrapper.GetAuthOutput)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/status", wrapper.GetAuthStatus)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/conversations", wrapper.ListConversations)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/conversations", wrapper.CreateConversation)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/conversations/{conversationId}", wrapper.DeleteConversation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/conversations/{conversationId}", wrapper.GetConversation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/conversations/{conversationId}/messages", wrapper.SendMessage)
 
 	return m
 }
@@ -529,44 +692,35 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"IwAA",
+	"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",
+	"AA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

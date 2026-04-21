@@ -1,0 +1,102 @@
+@startuml chat-activity
+title Chat機能 アクティビティ図（isRunning / ポーリング / メッセージ送信 / 会話切替）
+
+start
+
+partition "メッセージ送信フロー" {
+  :ユーザーがメッセージを入力して送信;
+  if (content.trim() あり\nかつ conversationId あり\nかつ sending=false?) then (yes)
+    :setSending(true)\n→ isRunning = true;
+    :ユーザーメッセージを楽観的に追加\n(setMessages);
+    :POST /conversations/:id/messages\n(sendMessage());
+    :202 Accepted レスポンス;
+    :setIsPolling(true);
+    :setSending(false) [finally];
+    note right: isPolling=true → useConversationPoller 起動
+    repeat
+      :1秒待機 (setInterval);
+      :GET /conversations/:id\n(getConversation());
+      :onMessages(msgs) → setMessages(msgs)\ncontent_blocks / tool_calls 更新;
+    repeat while (detail.status === 'running'?) is (yes)
+    ->status=completed;
+    :stoppedRef.current = true;
+    :onCompleted() 呼び出し;
+    :setIsPolling(false)\n→ isRunning = false;
+    :onConversationUpdate()\n→ サイドバー更新;
+  else (no)
+    :処理なし（ガード条件不成立）;
+  endif
+}
+
+partition "会話選択/復帰フロー" {
+  :conversationId が変更される;
+  note right
+    App.tsx: navigate('/conversation/:id') により
+    ChatView の conversationId prop が変化
+  end note
+  :setMessages([])\nsetIsPolling(false)\nsetSending(false)\nsetInput('');
+  if (conversationId あり?) then (yes)
+    :GET /conversations/:id\n(getConversation());
+    :setMessages(detail.messages);
+    if (detail.status === 'running'?) then (yes)
+      :setIsPolling(true)\n→ ポーリング開始（1秒間隔）;
+    else (no)
+      :通常表示\n(isRunning=false);
+    endif
+  else (no)
+    :会話未選択状態（空表示）;
+  endif
+}
+
+partition "会話切替フロー" {
+  :別会話を選択\n(handleSelectConversation(newId));
+  :navigate('/conversation/:newId');
+  note right: URL変更 → selectedId 変更 → conversationId prop 変更
+  :旧ポーリング停止\n(useConversationPoller useEffect クリーンアップ);
+  :messages クリア / state リセット\n(conversationId 変更の useEffect 発火);
+  :GET /conversations/:newId\n→ 新 messages セット;
+  if (新会話 detail.status === 'running'?) then (yes)
+    :setIsPolling(true)\n→ ポーリング開始;
+  else (no)
+    :通常表示\n(isRunning=false);
+  endif
+}
+
+partition "UI表示フロー" {
+  note
+    isRunning = sending
+            || isPolling
+            || messages.some(m => m.status === 'streaming')
+  end note
+  if (isRunning?) then (yes)
+    if (sending=true かつ\nアシスタントメッセージ未着?) then (yes)
+      :独立した TypingIndicator 表示;
+    else (no)
+      :（送信待機なし）;
+    endif
+    if (isPolling=true かつ\nmsg.status === 'streaming'?\n(isPollingStreamingMsg=true)) then (yes)
+      if (content_blocks あり?) then (yes)
+        :テキスト/ツールブロック\n途中表示;
+        :TypingIndicator（末尾）;
+      else (no)
+        :TypingIndicator のみ表示\n(isEmptyBlocks=true);
+      endif
+    else (no)
+      :完了済みメッセージ 通常表示\n(content_blocks または旧フォーマット);
+      :各アシスタントメッセージ末尾に\nTypingIndicator 表示\n(isInProgress=isRunning=true);
+    endif
+  else (no)
+    :全メッセージ 通常表示\n(TypingIndicator なし);
+  endif
+  :サイドバースピナー処理;
+  note right
+    App.tsx:
+    hasRunning = conversations.some(c => c.status='running')
+    useConversationListPoller（3秒間隔）
+    → refreshConversations()
+    → Sidebar でスピナー表示
+  end note
+}
+
+stop
+@enduml

@@ -1,0 +1,60 @@
+@startuml useConversationPoller-activity
+title useConversationPoller 内部フロー
+
+start
+
+partition "useEffect 実行（isRunning / conversationId / intervalMs / poll 変更時）" {
+  if (isRunning=true\nかつ conversationId あり?) then (yes)
+    :stoppedRef.current = false;
+    :setInterval 開始\n(intervalMs ms, デフォルト 1000ms);
+
+    repeat
+      :intervalMs ms 待機;
+      if (stoppedRef.current = true?) then (yes)
+        :clearInterval(id);
+        break
+      else (no)
+        if (conversationId あり?) then (yes)
+          :GET /conversations/:id\n(getConversation());
+          if (レスポンス成功?) then (yes)
+            :msgs = detail.messages ?? [];
+            :onMessages(msgs)\n（全件フル配信）;
+            if (detail.status === 'completed'?) then (yes)
+              :stoppedRef.current = true;
+              :onCompleted() 呼び出し;
+              note right
+                次 tick で stoppedRef=true を検知
+                → clearInterval → ポーリング終了
+              end note
+            else (no)
+              note right: status=running → 次のサイクルへ
+            endif
+          else (エラー)
+            :エラー無視 (keep polling);
+          endif
+        else (no)
+          :早期リターン;
+        endif
+      endif
+    repeat while (interval アクティブ?) is (yes)
+  else (no)
+    note right
+      isRunning=false または
+      conversationId=null
+      → interval 未開始（待機）
+    end note
+  endif
+}
+
+partition "クリーンアップ (useEffect return)" {
+  :clearInterval(id);
+  note right
+    発火タイミング:
+    ・conversationId 変更
+    ・isRunning=false に変更
+    ・コンポーネント アンマウント
+  end note
+}
+
+stop
+@enduml

@@ -2,3 +2,13 @@ version: "2"
 
 run:
   timeout: 5m
+
+linters:
+  enable:
+    - exhaustruct
+  settings:
+    exhaustruct:
+      include:
+        - 'github\.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api\.ConversationDetail$'
+        - 'github\.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api\.Message$'
+        - 'github\.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api\.Conversation$'

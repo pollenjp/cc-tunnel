@@ -1,17 +1,12 @@
 import { describe, it, expect } from 'vitest';
 
-describe('BACKEND_URL', () => {
-  it('defaults to /api when window.__ENV__ is not set', async () => {
-    // window.__ENV__ is undefined in test environment
+describe('client module', () => {
+  it('exports conversations API functions', async () => {
     const mod = await import('./client');
-    // The module should load without errors
-    expect(mod.createSession).toBeDefined();
-    expect(mod.listSessions).toBeDefined();
-    expect(mod.sendKeys).toBeDefined();
-    expect(mod.getOutput).toBeDefined();
-    expect(mod.getAllOutputs).toBeDefined();
-    expect(mod.deleteSession).toBeDefined();
-    expect(mod.resizeSession).toBeDefined();
-    expect(mod.discoverSessions).toBeDefined();
+    expect(mod.listConversations).toBeDefined();
+    expect(mod.createConversation).toBeDefined();
+    expect(mod.getConversation).toBeDefined();
+    expect(mod.deleteConversation).toBeDefined();
+    expect(mod.sendMessage).toBeDefined();
   });
 });
