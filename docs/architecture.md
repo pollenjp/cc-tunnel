@@ -361,6 +361,54 @@ SendMessage 開始
 
 全ての DB 操作は `execCtx = context.WithoutCancel(r.Context())` を使用するため、フロントエンド切断後も継続される。
 
+## コンストラクタ関数パターン（構造体フィールド設定漏れ防止）
+
+DB から API レスポンス型への変換は、専用のコンストラクタ関数（`internal/api/mapping.go`）に集約されている。
+
+### 設計の目的
+
+`ConversationDetail.Status` のようなフィールドが Go のゼロ値（`""`）のままレスポンスに含まれると、
+フロントエンドのポーリングが完了を検知できないバグが発生した（2026-04-21実例）。
+このクラスのバグを構造的に根絶するため 3 層防御を設けた。
+
+### 3 層防御
+
+| 層 | 手段 | 実装箇所 |
+|----|------|---------|
+| 1 | コンストラクタ関数（単一変換経路） | `internal/api/mapping.go` |
+| 2 | exhaustruct linter（コンパイル前検知） | `.golangci.yml` |
+| 3 | フィールド網羅テスト（回帰防止） | `internal/api/handler_test.go`, `mapping_test.go` |
+
+### コンストラクタ関数
+
+```go
+// DB → API Conversation
+func newConversation(c *db.Conversation) Conversation
+
+// DB → API Message
+func newMessage(m *db.Message) Message
+
+// DB → API ConversationDetail（messages を含む完全レスポンス）
+func newConversationDetail(conv *db.Conversation, msgs []*db.Message) ConversationDetail
+```
+
+`handler.go` は直接構造体リテラルを組み立てず、必ずこれらのコンストラクタを呼び出す。
+
+### exhaustruct linter 設定
+
+API レスポンス型のみに適用（全構造体への過剰適用を防ぐため `include` で絞り込み）:
+
+```yaml
+linters-settings:
+  exhaustruct:
+    include:
+      - 'github\.com/pollenjp/.../internal/api\.ConversationDetail$'
+      - 'github\.com/pollenjp/.../internal/api\.Message$'
+      - 'github\.com/pollenjp/.../internal/api\.Conversation$'
+```
+
+これらの型の struct literal に未設定フィールドがあると `golangci-lint` がコンパイル前に検知する。
+
 ## ErrorStackHandler（構造化ログ）
 
 `internal/logging/handler.go` で `slog.Handler` インターフェースをラップした `ErrorStackHandler` を実装。

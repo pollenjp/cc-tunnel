@@ -157,21 +157,7 @@ func (h *Server) GetConversation(w http.ResponseWriter, r *http.Request, convers
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	convUUID, _ := uuid.Parse(conv.ID)
-	detail := ConversationDetail{
-		Id:           convUUID,
-		Title:        conv.Title,
-		Model:        conv.Model,
-		Status:       ConversationDetailStatus(conv.Status),
-		CreatedAt:    conv.CreatedAt,
-		UpdatedAt:    conv.UpdatedAt,
-		SystemPrompt: conv.SystemPrompt,
-		Messages:     make([]Message, 0, len(msgs)),
-	}
-	for _, m := range msgs {
-		detail.Messages = append(detail.Messages, dbMsgToAPI(m))
-	}
-	writeJSON(w, http.StatusOK, detail)
+	writeJSON(w, http.StatusOK, newConversationDetail(conv, msgs))
 }
 
 func (h *Server) DeleteConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
@@ -565,41 +551,6 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, Error{Error: msg})
-}
-
-func dbConvToAPI(c *db.Conversation) Conversation {
-	id, _ := uuid.Parse(c.ID)
-	conv := Conversation{
-		Id:        id,
-		Title:     c.Title,
-		Model:     c.Model,
-		Status:    ConversationStatus(c.Status),
-		CreatedAt: c.CreatedAt,
-		UpdatedAt: c.UpdatedAt,
-	}
-	if c.SystemPrompt != nil {
-		conv.SystemPrompt = c.SystemPrompt
-	}
-	return conv
-}
-
-func dbMsgToAPI(m *db.Message) Message {
-	msgID, _ := uuid.Parse(m.ID)
-	convID, _ := uuid.Parse(m.ConversationID)
-	msg := Message{
-		Id:             msgID,
-		ConversationId: convID,
-		Role:           MessageRole(m.Role),
-		CreatedAt:      m.CreatedAt,
-	}
-	if m.Status != "" {
-		status := MessageStatus(m.Status)
-		msg.Status = &status
-	}
-	if len(m.MessageData) > 0 {
-		msg.MessageData = &m.MessageData
-	}
-	return msg
 }
 
 func cloneToolCalls(calls []ToolCallData) []ToolCallData {
