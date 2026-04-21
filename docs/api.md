@@ -270,11 +270,11 @@ Claude CLI の認証状態を返す。
 
 ---
 
-### メッセージ送信（SSEストリーミング）
+### メッセージ送信（非同期処理）
 
 #### POST /conversations/{conversationId}/messages
 
-ユーザーメッセージを送信し、アシスタントの応答をServer-Sent Events (SSE)でストリーミングする。
+ユーザーメッセージを送信し、アシスタントの応答をバックグラウンドで非同期処理する。レスポンスは即時 202 Accepted で返される。処理結果は `GET /conversations/{conversationId}` のポーリングで取得する。
 
 **Path Parameters**: `conversationId` (UUID)
 
@@ -286,123 +286,28 @@ Claude CLI の認証状態を返す。
 }
 ```
 
-**Response 200** — `Content-Type: text/event-stream`
+**Response 202** — メッセージ受付済み
 
-各イベントは `data: <json>\n\n` 形式で送信される。
-
-#### SSEイベント一覧
-
-**`init`** — セッション開始情報
-
-```
-data: {"type":"init","model":"claude-sonnet-4-6","session_id":"abc123"}
-```
-
-**`text`** — アシスタントのテキスト（完成ブロック単位）
-
-```
-data: {"type":"text","content":"Go generics allow..."}
-```
-
-**`text_delta`** — テキストの差分（リアルタイム表示用）
-
-```
-data: {"type":"text_delta","content":"allow"}
-```
-
-**`thinking`** — 思考ブロック（完成ブロック単位）
-
-```
-data: {"type":"thinking","content":"The user is asking about..."}
-```
-
-**`thinking_delta`** — 思考の差分（リアルタイム表示用）
-
-```
-data: {"type":"thinking_delta","content":"The user"}
-```
-
-**`tool_use_start`** — ツール使用開始
-
-```
-data: {"type":"tool_use_start","index":0,"tool_use_id":"toolu_01","tool_name":"bash"}
+```json
+{
+  "message_id": "msg-uuid"
+}
 ```
 
 | フィールド | 型 | 説明 |
 |------------|-----|------|
-| `index` | integer | コンテンツブロックのインデックス |
-| `tool_use_id` | string | ツール使用ID |
-| `tool_name` | string | ツール名 |
+| `message_id` | string (UUID) | 作成されたアシスタントメッセージの ID |
 
-**`tool_input_delta`** — ツール入力の差分
-
-```
-data: {"type":"tool_input_delta","index":0,"partial_json":"{\"command\":\"ls"}
-```
-
-| フィールド | 型 | 説明 |
-|------------|-----|------|
-| `index` | integer | コンテンツブロックのインデックス |
-| `partial_json` | string | ツール入力JSONの差分断片 |
-
-**`tool_result`** — ツール実行結果（アシスタント側1000文字、ユーザー側2000文字で切り捨て）
-
-```
-data: {"type":"tool_result","tool_use_id":"toolu_01","content":"file1.txt\nfile2.txt"}
-```
-
-| フィールド | 型 | 説明 |
-|------------|-----|------|
-| `tool_use_id` | string | 対応する `tool_use_start` のツール使用ID |
-| `content` | string | ツール実行結果テキスト |
-
-**`hook_event`** — Claude Code フックイベント
-
-```
-data: {"type":"hook_event","subtype":"hook_started","hook_id":"h1","hook_name":"PreToolUse","hook_event":"hook_started","session_id":"abc123"}
-```
-
-| フィールド    | 型      | 説明                                                         |
-| ------------- | ------- | ------------------------------------------------------------ |
-| `subtype`     | string  | イベント種別（下表参照）                                     |
-| `hook_id`     | string? | フックの識別子                                               |
-| `hook_name`   | string? | フック名（例: `PreToolUse`, `PostToolUse`）                  |
-| `hook_event`  | string? | フックイベント種別（`hook_started` / `hook_response` / `notification` / `status`） |
-| `session_id`  | string? | セッションID                                                 |
-
-| `subtype`       | 説明             |
-| --------------- | ---------------- |
-| `hook_started`  | フック開始       |
-| `hook_response` | フックからの応答 |
-| `notification`  | 通知             |
-| `status`        | ステータス更新   |
-
-**`rate_limit`** — レート制限情報
-
-```
-data: {"type":"rate_limit","status":"limited","resets_at":1713398400,"rate_limit_type":"requests"}
-```
-
-**`cost`** — コスト情報（`done` の直前に送信）
-
-```
-data: {"type":"cost","total_cost_usd":0.001,"duration_ms":3200}
-```
-
-**`done`** — ストリーム終了
-
-```
-data: {"type":"done","session_id":"abc123","cost_usd":0.001}
-```
-
-**`error`** — エラー
-
-```
-data: {"type":"error","message":"execution failed"}
-```
-
-**Response 400**: リクエスト不正  
+**Response 400**: リクエスト不正（content が空など）
 **Response 404**: 会話が存在しない
+
+#### 非同期処理フロー
+
+1. `POST /conversations/{id}/messages` → 202 Accepted 即時返却
+2. バックエンドが goroutine で Claude CLI を実行
+3. フロントエンドが `GET /conversations/{id}` を 1 秒間隔でポーリング
+4. `status === 'running'` の間、ポーリング継続（streaming メッセージを随時表示）
+5. `status === 'completed'` になったらポーリング停止
 
 #### 会話ステータス (`status` フィールド)
 
@@ -413,15 +318,6 @@ data: {"type":"error","message":"execution failed"}
 | `idle` | 初期状態。メッセージ送信待ち |
 | `running` | CLI 実行中（`SendMessage` 処理中） |
 | `completed` | CLI 実行完了 |
-
-**SSE切断後の復帰フロー（DBポーリング方式）**:
-
-1. ユーザーが `POST /conversations/{id}/messages` でメッセージ送信 → SSEストリーミング開始
-2. ストリーミング中に別会話に切り替え（SSE切断） → バックエンドは `execCtx` で処理継続
-3. 元の会話に戻る → フロントエンドが `GET /conversations/{id}` で `status` を確認
-4. `status === 'running'` → `useConversationPoller` フックが 2 秒間隔で `GET /conversations/{id}` をポーリング
-5. 新しいメッセージが届いたら差分表示（「処理中...」インジケータ付き）
-6. `status === 'completed'` になったらポーリング停止
 
 #### タイトルの自動更新
 
@@ -452,17 +348,15 @@ data: {"type":"error","message":"execution failed"}
 
 ##### ToolCallData
 
-`metadata.tool_calls` の各要素。openapi.yaml の `ToolCallData` スキーマ参照。
+`message_data.tool_calls` の各要素。openapi.yaml の `ToolCallData` スキーマ参照。
 
 | フィールド | 型 | 必須 | 説明 |
 |------------|-----|:----:|------|
-| `tool_use_id` | string | ✓ | ツール使用ID（SSE `tool_use_start` の `tool_use_id` と対応） |
+| `tool_use_id` | string | ✓ | ツール使用ID |
 | `tool_name` | string | ✓ | ツール名 |
-| `input_json` | string | ✓ | ツール入力JSON文字列（`input_json_delta` を結合したもの） |
-| `result` | string | - | ツール実行結果（`tool_result` イベント受信後に格納） |
+| `input_json` | string | ✓ | ツール入力JSON文字列 |
+| `result` | string | - | ツール実行結果 |
 | `is_running` | boolean | - | 実行中フラグ |
-
-> **廃止フォーマット**: 旧バージョンでは `tool_calls` の各要素に `name`/`input` フィールドを使用していた。現行フォーマットでは `tool_name`/`input_json` に変更されている（後方互換性なし）。
 
 ---
 

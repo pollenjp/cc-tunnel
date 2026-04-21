@@ -171,9 +171,9 @@ SET message_data = message_data || jsonb_build_object('content_blocks', $1::json
 WHERE id = $2
 ```
 
-`UpdateMessageContentBlocks(ctx, messageID, contentBlocks)` で呼び出す。5秒 ticker による定期バッチ保存と、実行完了時の最終保存に使用。
+`UpdateMessageContentBlocks(ctx, messageID, contentBlocks)` で呼び出す。2秒 ticker による定期バッチ保存と、実行完了時の最終保存に使用。
 
-> **バッチ保存における tool_calls**: 5秒 ticker の goroutine は `UpdateMessageContentBlocks` に加えて `MergeMessageData({tool_calls: snapshotTools})` も呼び出す。これにより、フロントエンドがポーリング（`isPolling=true`）で会話を復元した際、SSE完了前でも `tool_calls` を参照できる。
+> **バッチ保存における tool_calls**: 2秒 ticker の goroutine は `UpdateMessageContentBlocks` に加えて `MergeMessageData({tool_calls: snapshotTools})` も呼び出す。これにより、フロントエンドがポーリング（`isPolling=true`）で会話を復元した際、処理完了前でも `tool_calls` を参照できる。
 
 **メッセージステータス更新**
 

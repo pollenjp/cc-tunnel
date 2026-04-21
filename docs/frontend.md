@@ -44,15 +44,13 @@ export type AssistantBlock =
   | { type: 'tool';    toolCall: ToolCall }
 ```
 
-### ストリーミング中
+### DB ポーリング中（streaming メッセージ）
 
-`streamBlocksRef` がすべてのブロックをリアルタイムで蓄積する。RAF (requestAnimationFrame) バッチ更新で `streamBlocks` state に反映される。
+`messages[].status === 'streaming'` のメッセージを受け取った場合:
 
-- `text` / `text_delta` イベント → 末尾が `text` ブロックなら追記、なければ新規追加
-- `thinking` / `thinking_delta` イベント → 末尾が `thinking` ブロックなら追記、なければ新規追加
-- `tool_use_start` イベント → `{ type: 'tool', toolCall: { isRunning: true } }` を末尾に追加
-- `tool_input_delta` イベント → 該当 `index` の tool ブロックの `inputJson` を追記
-- `tool_result` イベント → 該当 `toolUseId` の tool ブロックに `result` をセットし `isRunning: false`
+- `message_data.content_blocks` があれば DB の部分コンテンツを表示
+- `content_blocks` が空なら TypingIndicator のみ表示（空バブルは表示しない）
+- `message_data.tool_calls` を `tool_use_id` でマップして ToolCallCard を表示（`isRunning: true`）
 
 ### DB 復元時 (新形式)
 
@@ -114,16 +112,20 @@ type ContentBlockEntry =
 
 ### `TypingIndicator`
 
-ストリーミング進行中を示すパルスドットアニメーションコンポーネント。
+処理進行中を示すシマーアニメーションコンポーネント。
 
 ```tsx
-export function TypingIndicator() { ... }
+export function TypingIndicator() {
+  return (
+    <div className="flex items-center px-1 py-1" data-testid="typing-indicator">
+      <span className="typing-shimmer text-sm font-medium">進行中...</span>
+    </div>
+  );
+}
 ```
 
-- 3つのドット（`span`要素）を横並びで表示
-- 各ドットに `animate-pulse` クラスを付与
-- ストークドディレイ: 0s / 0.2s / 0.4s（`animationDelay` スタイル）
-- カラー: `var(--color-text-muted)`（Tokyo Night テーマに合わせたグレー系）
+- 「進行中...」テキストを表示
+- `typing-shimmer` CSS クラスによるグラデーションシマーアニメーション
 - `data-testid="typing-indicator"` でテスト可能
 
 ChatView での使用:
@@ -265,48 +267,9 @@ Claude CLI の認証フロー (OAuth) 用のターミナルエミュレータ。
 | `authUrl`       | `useState<string \| null>` | 出力から検出した認証 URL                             |
 | `fullOutputRef` | `useRef<string>`           | URL 検出用の出力累積バッファ                         |
 
----
 
-## SSE 受信フロー（sendMessage の動作）
 
-1. `App.tsx` の `handleSend` が呼ばれると、ユーザーメッセージと空のアシスタントメッセージを即座に `messages` に追加する。
-2. `api/client.ts` の `sendMessage` 関数が `POST /api/conversations/{id}/messages` を `fetch` で呼び出す。
-3. レスポンスボディを `ReadableStream` として読み取り、`TextDecoder` で SSE テキストにデコードする。
-4. `\n\n` 区切りで各 SSE イベントを分割し、`data: {...}` の JSON をパースする。
-5. イベントタイプに応じた処理:
-   - `type: "text"` / `type: "text_delta"` → `streamBlocksRef` の末尾 text ブロックに追記（なければ新規）し RAF スケジュール。
-   - `type: "thinking"` / `type: "thinking_delta"` → `streamBlocksRef` の末尾 thinking ブロックに追記（なければ新規）し RAF スケジュール。
-   - `type: "tool_use_start"` → `streamBlocksRef` に `{ type: 'tool', toolCall: { isRunning: true } }` を追加し RAF スケジュール。
-   - `type: "tool_input_delta"` → `streamBlocksRef` の該当 `index` の tool ブロックの `inputJson` に追記し RAF スケジュール。
-   - `type: "tool_result"` → `streamBlocksRef` の該当 `toolUseId` の tool ブロックに `result` をセットし `isRunning: false`、RAF スケジュール。
-   - `type: "init"` → `streamMetaRef` にモデル名・セッション ID を設定し `streamMeta` を更新する。
-   - `type: "rate_limit"` → `streamMetaRef` にレートリミット状態を設定し `streamMeta` を更新する。
-   - `type: "cost"` → `streamMetaRef` にコスト・所要時間を設定し `streamMeta` を更新する。
-   - `type: "hook_event"` → `hookEventsRef` および `hookEvents` に追加する。
-   - `type: "done"` / `type: "error"` → 現状の UI では特別処理なし。
-6. ストリーミング完了後 (`finally` ブロック):
-   - `streamBlocksRef` から `finalText`（text ブロックの結合）と `toolCallsList` を抽出する。
-   - thinking または tool ブロックが存在する場合、`metadata.content_blocks` に全ブロックを保存する。
-   - `metadata.tool_calls` に ToolCallData リストを保存する。
-   - `sending` を `false` にして会話リストを更新する。
 
----
-
-## content_blocks 保存（ストリーミング完了時）
-
-ストリーミング完了後の `finally` ブロックで、ブロック情報を `metadata` に保存する。
-
-- **保存条件**: `finalBlocks` に `thinking` または `tool` ブロックが含まれる場合。
-- **`metadata.content_blocks`**: ブロック順序を保持した配列。
-  ```ts
-  [
-    { type: 'text', content: '...' },
-    { type: 'thinking', content: '...' },
-    { type: 'tool_use', tool_use_id: '...' },
-  ]
-  ```
-- **`metadata.tool_calls`**: ToolCallData の配列（`tool_use_id`, `tool_name`, `input_json`, `result`）。
-- DB 復元時は `content_blocks` を使って順序通りのブロック列を再構築する。
 
 ---
 
@@ -315,8 +278,9 @@ Claude CLI の認証フロー (OAuth) 用のターミナルエミュレータ。
 - **`api/schema.d.ts`**: `openapi-typescript` で `apps/openapi/openapi.yaml` から自動生成。**手動編集禁止**。
 - **`api/client.ts`**: `components['schemas'][...]` 型エイリアスを定義し、`openapi-fetch` ベースの API クライアントを実装。手書きの型定義を廃止し、生成型に統一。
   - `ToolCallData`: `components['schemas']['ToolCallData']` のエイリアス
-  - 各 SSE イベント型: `components['schemas']['SSE*Event']` のエイリアス
-- **`ChatView.tsx`**: `StoredToolCall` 型を廃止し、`ToolCallData` を `api/client.ts` からインポートして使用。
+  - `Message`: `components['schemas']['Message']` のエイリアス
+  - `Conversation`: `components['schemas']['Conversation']` のエイリアス
+- **`ChatView.tsx`**: `ToolCallData` を `api/client.ts` からインポートして使用。
 
 ---
 
@@ -347,33 +311,11 @@ AuthGuard
 
 AuthTerminal 画面のキャンセルボタンから `useAuth.cancelLogin()` → `POST /auth/cancel` を呼び出す。
 
----
 
-## フックイベントパネル
-
-ストリーミング中に受信した `hook_event` をアシスタントメッセージのメタデータ行に `<details>` 要素で折りたたみ表示する。
-
-- `msgHookEvents.length > 0` のとき表示される。
-- `<summary>` に件数 (`▸ Hook Events (N)`) を表示。
-- 展開すると各イベントを `subtype — hook_name` 形式で一覧表示する。
 
 ---
 
 ## サイドバースピナー制御
-
-### 楽観的 status 更新 (handleSend)
-
-`handleSend` の冒頭で、送信対象会話の status を即座に `'running'` に更新する。
-これにより、バックエンドが DB を更新するより先にサイドバーのスピナーが表示される。
-
-```ts
-// App.tsx handleSend より
-setConversations(prev =>
-  prev.map(c => c.id === selectedId ? { ...c, status: 'running' as const } : c)
-);
-```
-
-送信完了後の `refreshConversations()` で DB の実際の値（`'completed'`）に戻る。
 
 ### conversations ポーリング (useConversationListPoller)
 
@@ -428,7 +370,7 @@ export interface UseConversationPollerOptions {
   isRunning: boolean;
   onMessages: (messages: Message[]) => void;  // 全メッセージを受け取る（差分でなく全置換）
   onCompleted: () => void;
-  intervalMs?: number;  // デフォルト 2000ms
+  intervalMs?: number;  // デフォルト 1000ms
 }
 ```
 
@@ -468,9 +410,9 @@ useConversationPoller({
 - TypingIndicator は `isRunning === true` のときのみ表示（`isPolling` に依存しない）
   - `isRunning = sending || isPolling || hasStreamingMessage`
 
-### バックエンド: dbMsgToAPI の status マッピング
+### バックエンド: コンストラクタ関数による status マッピング
 
-`handler.go` の `dbMsgToAPI` 関数は `db.Message.Status` を `Message.Status` にマッピングする。
+`mapping.go` の `newMessage()` 関数は `db.Message.Status` を `Message.Status` にマッピングする。
 これにより、`GetConversation` で取得したメッセージの `status` フィールドが正しくフロントエンドに返される。
 `status` が空文字の場合（旧データ）は `Status` フィールドを設定しない（omitempty）。
 
@@ -549,58 +491,6 @@ location / {
 }
 ```
 
----
 
-## SSE 切断耐性設計
 
-### 概要
 
-セッション切替時・コンポーネントアンマウント時に、進行中の SSE ストリームを確実にクリーンアップする。
-
-### `useSSEAbort` フック (`src/hooks/useSSEAbort.ts`)
-
-SSE の AbortController ライフサイクルを管理するカスタムフック。
-
-| 関数 | 動作 |
-| ---- | ---- |
-| `startStream(sessionId)` | 既存のコントローラを abort し、新しい `AbortController` を作成して `{ signal }` を返す |
-| `switchSession(sessionId)` | 現在のコントローラを abort し、アクティブセッション ID を更新する |
-| `isActiveSession(sessionId)` | 現在アクティブなセッション ID と一致するか返す |
-
-コンポーネントアンマウント時は `useEffect` のクリーンアップで自動的に abort される。
-
-### `sendMessage` の AbortSignal 対応 (`src/api/client.ts`)
-
-`sendMessage(conversationId, content, onEvent, signal?)` に `signal` パラメータを追加。
-
-- `fetch()` に `signal` を渡す
-- `fetch` / `reader.read()` が `AbortError` を投げた場合は静かに return（throw しない）
-
-### `App.tsx` の統合
-
-`handleSend`:
-
-1. `startStream(mySessionId)` で `signal` を取得し SSE 開始
-2. コールバック内で `isActiveSession(mySessionId)` をチェック → 切替後は無視
-3. `finally` ブロックでも `isActiveSession` を確認し、切替後は state を更新しない
-
-`handleSelectConversation`:
-
-1. 先頭で `switchSession(id)` を呼び出し、進行中の SSE を abort
-2. ストリーミング state を全てリセット（`streamBlocks`, `streamMeta`, `hookEvents`, `sending`）
-3. RAF をキャンセル
-
-### リロード後の状態
-
-バックエンドは `context.WithoutCancel` でフロントエンド切断後も処理を継続する。処理完了後に DB へ保存するため、ユーザーが再度そのセッションを選択すると完了済みのメッセージが表示される。処理完了前に選択した場合は既存メッセージ（user メッセージまで）が表示され、リロードで最新状態を確認できる。
-
----
-
-## ツール使用可視化
-
-ストリーミング中・DB 復元時ともに、アシスタントメッセージのブロック列に `ToolCallCard` が順番にレンダリングされる。
-
-- ストリーミング中: `streamBlocks` の `type === 'tool'` ブロックとして表示される。
-- DB 復元時: `metadata.content_blocks` から `type === 'tool_use'` エントリを `ToolCallData` に紐付けて再構築。
-- `tool_use_start` → `tool_input_delta` → `tool_result` の順で状態が遷移する。
-- ストリーミング完了後は `streamBlocks` がリセット (`setStreamBlocks([])`) され、履歴は `metadata.content_blocks` として `messages` に保持される。
