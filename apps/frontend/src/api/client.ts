@@ -1,7 +1,8 @@
 import createClient from 'openapi-fetch';
 import type { paths, components } from './schema';
 
-const client = createClient<paths>({ baseUrl: '/api' });
+const baseUrl = window.__ENV__?.BACKEND_URL ?? '/api';
+const client = createClient<paths>({ baseUrl });
 
 export type AuthStatus = components['schemas']['AuthStatus'];
 export type LoginRequest = components['schemas']['LoginRequest'];

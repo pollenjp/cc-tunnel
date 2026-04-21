@@ -151,14 +151,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Send a message and stream the assistant response
-         * @description Sends a user message to the conversation and streams the assistant
-         *     response as Server-Sent Events (SSE).
-         *     Response Content-Type: text/event-stream
-         *     Each SSE event has format: data: <json>\n\n
-         *     Event types: {"type":"text","content":"..."} | {"type":"done","session_id":"...","cost_usd":0.01} | {"type":"error","message":"..."}
-         */
+        /** Send a message and process the assistant response asynchronously */
         post: operations["sendMessage"];
         delete?: never;
         options?: never;
@@ -254,6 +247,10 @@ export interface components {
             /** @description User message content */
             content: string;
         };
+        SendMessageResponse: {
+            /** Format: uuid */
+            message_id: string;
+        };
         StatusResponse: {
             /** @example ok */
             status: string;
@@ -267,87 +264,6 @@ export interface components {
             input_json: string;
             result?: string | null;
             is_running?: boolean;
-        };
-        SSETextEvent: {
-            /** @enum {string} */
-            type: "text";
-            content: string;
-        };
-        SSEThinkingEvent: {
-            /** @enum {string} */
-            type: "thinking";
-            content: string;
-        };
-        SSETextDeltaEvent: {
-            /** @enum {string} */
-            type: "text_delta";
-            content: string;
-        };
-        SSEThinkingDeltaEvent: {
-            /** @enum {string} */
-            type: "thinking_delta";
-            content: string;
-        };
-        SSEToolUseStartEvent: {
-            /** @enum {string} */
-            type: "tool_use_start";
-            index: number;
-            tool_use_id: string;
-            tool_name: string;
-        };
-        SSEToolInputDeltaEvent: {
-            /** @enum {string} */
-            type: "tool_input_delta";
-            index: number;
-            partial_json: string;
-        };
-        SSEToolResultEvent: {
-            /** @enum {string} */
-            type: "tool_result";
-            tool_use_id: string;
-            content: string;
-        };
-        SSEInitEvent: {
-            /** @enum {string} */
-            type: "init";
-            model: string;
-            session_id: string;
-        };
-        SSEHookEvent: {
-            /** @enum {string} */
-            type: "hook_event";
-            subtype: string;
-            hook_id?: string;
-            hook_name?: string;
-            hook_event?: string;
-            session_id?: string;
-        };
-        SSERateLimitEvent: {
-            /** @enum {string} */
-            type: "rate_limit";
-            status: string;
-            resets_at: number;
-            rate_limit_type: string;
-        };
-        SSECostEvent: {
-            /** @enum {string} */
-            type: "cost";
-            /** Format: double */
-            total_cost_usd: number;
-            /** Format: int64 */
-            duration_ms: number;
-        };
-        SSEDoneEvent: {
-            /** @enum {string} */
-            type: "done";
-            session_id: string;
-            /** Format: double */
-            cost_usd: number;
-        };
-        SSEErrorEvent: {
-            /** @enum {string} */
-            type: "error";
-            message: string;
         };
     };
     responses: never;
@@ -628,13 +544,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description SSE stream of assistant response */
-            200: {
+            /** @description Message accepted for processing */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    "application/json": components["schemas"]["SendMessageResponse"];
                 };
             };
             /** @description Bad request */

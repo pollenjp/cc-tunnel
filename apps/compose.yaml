@@ -38,6 +38,8 @@ services:
       DATABASE_URL: "postgres://cctunnel:${POSTGRES_PASSWORD:-cctunnel_dev}@postgres:5432/cctunnel?sslmode=disable"
     expose:
       - "${CC_TUNNEL_ENV_PORT:-8080}"
+    ports: # To allow access from Vite running manually (not in Compose)
+      - "8080:${CC_TUNNEL_ENV_PORT:-8080}"
     depends_on:
       cc-remote-agent:
         condition: service_started
@@ -50,6 +52,7 @@ services:
     environment:
       PORT: "${FRONTEND_ENV_PORT:-8080}"
       BACKEND_URL: "/api"
+      # for nginx configuration in frontend Dockerfile
       API_UPSTREAM: "http://cc-tunnel:${CC_TUNNEL_ENV_PORT:-8080}"
     ports:
       - "3000:${FRONTEND_ENV_PORT:-8080}"
