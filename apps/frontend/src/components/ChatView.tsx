@@ -1,18 +1,16 @@
-import { useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Message, ToolCallData } from '../api/client';
 import type { ToolCall, AssistantBlock } from '../App';
+import { getConversation, sendMessage } from '../api/client';
 import { MessageBubble, ThinkingAccordion } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { ToolCallCard } from './ToolCallCard';
 import { TypingIndicator } from './TypingIndicator';
+import { useConversationPoller } from '../hooks/useConversationPoller';
 
 interface ChatViewProps {
-  messages: Message[];
-  onSend: (content: string) => void;
-  isPolling?: boolean;
-  isRunning?: boolean;
-  input: string;
-  onInputChange: (value: string) => void;
+  conversationId: string | null;
+  onConversationUpdate?: () => void;
   onHamburger: () => void;
 }
 
@@ -21,12 +19,71 @@ type ContentBlockEntry =
   | { type: 'text'; content: string }
   | { type: 'tool_use'; tool_use_id: string }
 
-export function ChatView({ messages, onSend, isPolling, isRunning, input, onInputChange, onHamburger }: ChatViewProps) {
+export function ChatView({ conversationId, onConversationUpdate, onHamburger }: ChatViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [sending, setSending] = useState(false);
+  const [isPolling, setIsPolling] = useState(false);
+  const [input, setInput] = useState('');
 
+  const isRunning = sending || isPolling || messages.some(m => m.status === 'streaming');
+
+  // conversationId 変更時: messages クリア → 初期ロード
+  useEffect(() => {
+    setMessages([]);
+    setIsPolling(false);
+    setSending(false);
+    setInput('');
+
+    if (!conversationId) return;
+
+    getConversation(conversationId).then(detail => {
+      const msgs = detail.messages ?? [];
+      setMessages(msgs);
+      if (detail.status === 'running') setIsPolling(true);
+    }).catch(console.error);
+  }, [conversationId]);
+
+  // messages 更新時にスクロール
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // ポーリングフック
+  useConversationPoller({
+    conversationId: isPolling ? conversationId : null,
+    isRunning: isPolling,
+    onMessages: (msgs) => setMessages(msgs),
+    onCompleted: () => {
+      setIsPolling(false);
+      onConversationUpdate?.();
+    },
+    intervalMs: 1000,
+  });
+
+  const handleSend = async (content: string) => {
+    if (!content.trim() || !conversationId || sending) return;
+    setSending(true);
+    setInput('');
+
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      conversation_id: conversationId,
+      role: 'user' as Message['role'],
+      message_data: { content: content.trim() },
+      created_at: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, userMsg]);
+
+    try {
+      await sendMessage(conversationId, content.trim());
+      setIsPolling(true);
+    } catch (err) {
+      console.error('Failed to send message:', err);
+    } finally {
+      setSending(false);
+    }
+  };
 
   const isEmpty = messages.length === 0;
 
@@ -95,7 +152,7 @@ export function ChatView({ messages, onSend, isPolling, isRunning, input, onInpu
                   })
                 : [{ type: 'text', content: '' }];
             } else {
-              // Loaded from DB (completed message)
+              // Loaded from DB (completed or non-polling streaming message)
               const meta = msg.message_data as Record<string, unknown> | undefined;
               const contentBlocks = meta?.content_blocks as ContentBlockEntry[] | undefined;
               const toolCallsData = (meta?.tool_calls as ToolCallData[] | undefined) ?? [];
@@ -141,9 +198,8 @@ export function ChatView({ messages, onSend, isPolling, isRunning, input, onInpu
               }
             }
 
-            // Indices for metadata placement
             const lastBlockIdx = blocks.length - 1;
-            const isInProgress = isRunning === true;
+            const isInProgress = isRunning;
             const isEmptyBlocks =
               blocks.length === 1 && blocks[0].type === 'text' && blocks[0].content === '';
 
@@ -169,6 +225,12 @@ export function ChatView({ messages, onSend, isPolling, isRunning, input, onInpu
               </div>
             );
           })}
+          {/* 送信中（アシスタントメッセージがまだない）ときの TypingIndicator */}
+          {sending && (
+            <div className="flex flex-col gap-1">
+              <TypingIndicator />
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
       )}
@@ -180,9 +242,9 @@ export function ChatView({ messages, onSend, isPolling, isRunning, input, onInpu
       )}
       <MessageInput
         value={input}
-        onChange={onInputChange}
-        onSend={() => onSend(input)}
-        disabled={isRunning === true}
+        onChange={setInput}
+        onSend={() => handleSend(input)}
+        disabled={isRunning}
         onHamburger={onHamburger}
       />
     </div>

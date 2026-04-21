@@ -1,11 +1,17 @@
 // TDD Cycle: URLルーティング (React Router)
-// これらのテストは react-router-dom 導入 + App.tsx routing 実装前は FAIL する
 
 vi.mock('../components/ChatView', () => ({
-  ChatView: ({ onSend, isRunning }: { onSend: (content: string) => void; isRunning?: boolean }) => (
-    <div data-testid="chat-view" data-is-running={String(isRunning ?? false)}>
-      <button data-testid="send-btn" onClick={() => onSend('hello')}>送信</button>
-    </div>
+  ChatView: ({
+    conversationId,
+  }: {
+    conversationId: string | null;
+    onConversationUpdate?: () => void;
+    onHamburger: () => void;
+  }) => (
+    <div
+      data-testid="chat-view"
+      data-conversation-id={conversationId ?? ''}
+    />
   ),
 }));
 
@@ -25,10 +31,6 @@ vi.mock('../hooks/useAuth', () => ({
     logout: vi.fn(),
     cancelLogin: vi.fn(),
   }),
-}));
-
-vi.mock('../hooks/useConversationPoller', () => ({
-  useConversationPoller: vi.fn(),
 }));
 
 vi.mock('../hooks/useConversationListPoller', () => ({

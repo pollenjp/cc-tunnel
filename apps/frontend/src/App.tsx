@@ -1,18 +1,16 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, useNavigate, useParams } from 'react-router-dom';
-import type { Conversation, Message } from './api/client';
+import type { Conversation } from './api/client';
 import {
   listConversations,
   createConversation,
   getConversation,
   deleteConversation,
-  sendMessage,
 } from './api/client';
 import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
 import { useAuth } from './hooks/useAuth';
 import { AuthGuard } from './components/AuthGuard';
-import { useConversationPoller } from './hooks/useConversationPoller';
 import { useConversationListPoller } from './hooks/useConversationListPoller';
 
 import './App.css';
@@ -36,12 +34,10 @@ function AppContent() {
   const navigate = useNavigate();
   const auth = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const [isPolling, setIsPolling] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // selectedId を URL から直接導出（setState-in-effect を避けるため）
+  const selectedId = urlId ?? null;
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -52,72 +48,31 @@ function AppContent() {
     }
   }, []);
 
+  // 初回マウント時に会話一覧を取得（インライン async で setState-in-effect を避ける）
   useEffect(() => {
-    refreshConversations();
-  }, [refreshConversations]);
+    listConversations()
+      .then(list => setConversations(list ?? []))
+      .catch(e => console.error('Failed to list conversations:', e));
+  }, []);
 
-  const handleSelectConversation = useCallback(async (id: string) => {
-    setSelectedId(id);
-    navigate(`/conversation/${id}`);
-    setMessages([]);
-    setIsPolling(false);
-    setSending(false);
-    setSidebarOpen(false);
-    try {
-      const detail = await getConversation(id);
-      const msgs = detail.messages ?? [];
-      setMessages(msgs);
-      // status === 'running' の場合はポーリング開始（CLI実行継続中）
-      if (detail.status === 'running') {
-        setIsPolling(true);
-      }
-    } catch (e) {
-      console.error('Failed to load conversation:', e);
-    }
-  }, [navigate]);
-
-  // URL直接アクセス時: URLパラメータから会話を初期化
-  const urlInitHandled = useRef<string | undefined>(undefined);
+  // URL直接アクセス時: 会話の存在確認（存在しなければ / へリダイレクト）
   useEffect(() => {
-    if (!urlId) {
-      // ルート (/) へのナビゲーション時: 選択状態をクリア
-      if (selectedId !== null) {
-        setSelectedId(null);
-        setMessages([]);
-        setIsPolling(false);
-      }
-      return;
-    }
-    // handleSelectConversation 経由で既に処理済みの場合はスキップ
-    if (selectedId === urlId) {
-      urlInitHandled.current = urlId;
-      return;
-    }
-    if (urlInitHandled.current === urlId) return;
-    urlInitHandled.current = urlId;
-
-    // 直接URLアクセス: 会話をロード
-    setSelectedId(urlId);
-    setMessages([]);
-    setIsPolling(false);
-    setSending(false);
-
-    getConversation(urlId).then(detail => {
-      const msgs = detail.messages ?? [];
-      setMessages(msgs);
-      if (detail.status === 'running') setIsPolling(true);
-    }).catch(() => {
-      // 存在しない会話ID → / へリダイレクト
-      setSelectedId(null);
+    if (!urlId) return;
+    getConversation(urlId).catch(() => {
       navigate('/');
     });
-  }, [urlId, selectedId, navigate]);
+  }, [urlId, navigate]);
+
+  const handleSelectConversation = useCallback((id: string) => {
+    navigate(`/conversation/${id}`);
+    setSidebarOpen(false);
+  }, [navigate]);
 
   const handleNewConversation = async () => {
     try {
       const conv = await createConversation();
       await refreshConversations();
-      await handleSelectConversation(conv.id);
+      handleSelectConversation(conv.id);
     } catch (e) {
       console.error('Failed to create conversation:', e);
     }
@@ -136,60 +91,12 @@ function AppContent() {
     }
   };
 
-  // ポーリングフック: 実行継続中なら全メッセージ上書き取得
-  useConversationPoller({
-    conversationId: isPolling ? selectedId : null,
-    isRunning: isPolling,
-    onMessages: (msgs) => {
-      setMessages(msgs);  // 全置換（差分でなく全上書き）
-    },
-    onCompleted: () => {
-      setIsPolling(false);
-      refreshConversations();
-    },
-    intervalMs: 1000,
-  });
-
   // running な会話がある間、3秒ごとに conversations を更新してサイドバーのスピナーを維持する
   const hasRunning = conversations.some(c => c.status === 'running');
   useConversationListPoller({
     hasRunning,
     onPoll: refreshConversations,
   });
-
-  const handleSend = async (content: string) => {
-    if (!content.trim() || !selectedId || sending) return;
-    setInput('');
-    setSending(true);
-
-    // 楽観的更新: 会話をrunning状態に
-    setConversations(prev =>
-      prev.map(c => c.id === selectedId ? { ...c, status: 'running' as const } : c)
-    );
-
-    // 楽観的ユーザーメッセージ追加
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      conversation_id: selectedId,
-      role: 'user' as Message['role'],
-      message_data: { content: content.trim() },
-      created_at: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, userMsg]);
-
-    try {
-      await sendMessage(selectedId, content.trim());
-      setIsPolling(true); // 202返却後、pollingでassistant応答を追跡
-    } catch (err) {
-      console.error('Failed to send message:', err);
-    } finally {
-      setSending(false);
-      await refreshConversations();
-    }
-  };
-
-  const hasStreamingMessage = messages.some(m => m.status === 'streaming');
-  const isRunning = sending || isPolling || hasStreamingMessage;
 
   return (
     <AuthGuard auth={auth}>
@@ -209,12 +116,8 @@ function AppContent() {
         <main className="flex-1 flex flex-col overflow-hidden min-w-0">
           {selectedId ? (
             <ChatView
-              messages={messages}
-              onSend={handleSend}
-              isPolling={isPolling}
-              isRunning={isRunning}
-              input={input}
-              onInputChange={setInput}
+              conversationId={selectedId}
+              onConversationUpdate={() => refreshConversations()}
               onHamburger={() => setSidebarOpen(true)}
             />
           ) : (
