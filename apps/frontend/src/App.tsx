@@ -118,6 +118,11 @@ function AppContent() {
             <ChatView
               conversationId={selectedId}
               onConversationUpdate={() => refreshConversations()}
+              onSendStart={() => {
+                setConversations(prev =>
+                  prev.map(c => c.id === selectedId ? { ...c, status: 'running' } : c)
+                );
+              }}
               onHamburger={() => setSidebarOpen(true)}
             />
           ) : (

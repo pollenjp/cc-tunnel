@@ -210,6 +210,35 @@ describe('ChatView', () => {
     expect(screen.getByText('処理中...')).toBeTruthy();
   });
 
+  it('[Cycle3] メッセージ送信開始時に onSendStart が呼ばれること', async () => {
+    const onSendStart = vi.fn();
+    vi.mocked(clientModule.getConversation).mockResolvedValue(
+      makeConvDetail('completed', [])
+    );
+    vi.mocked(clientModule.sendMessage).mockResolvedValue({ message_id: 'new-msg' });
+
+    render(
+      <ChatView
+        conversationId="conv-1"
+        onConversationUpdate={vi.fn()}
+        onSendStart={onSendStart}
+        onHamburger={vi.fn()}
+      />
+    );
+    await flush();
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('message-input-text'), {
+        target: { value: 'テスト' },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('message-send-btn'));
+    });
+
+    expect(onSendStart).toHaveBeenCalledTimes(1);
+  });
+
   it('[Cycle2] 送信中（sending=true）のとき TypingIndicator が表示されること', async () => {
     vi.mocked(clientModule.getConversation).mockResolvedValue(
       makeConvDetail('completed', [])

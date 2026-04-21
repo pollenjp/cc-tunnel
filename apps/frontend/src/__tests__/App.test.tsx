@@ -1,15 +1,21 @@
 vi.mock('../components/ChatView', () => ({
   ChatView: ({
     conversationId,
+    onSendStart,
   }: {
     conversationId: string | null;
     onConversationUpdate?: () => void;
+    onSendStart?: () => void;
     onHamburger: () => void;
   }) => (
     <div
       data-testid="chat-view"
       data-conversation-id={conversationId ?? ''}
-    />
+    >
+      <button data-testid="send-start-btn" onClick={onSendStart}>
+        SendStart
+      </button>
+    </div>
   ),
 }));
 
@@ -42,6 +48,7 @@ import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
 import * as clientModule from '../api/client';
 import type { Conversation } from '../api/client';
+import { useConversationListPoller } from '../hooks/useConversationListPoller';
 
 function makeConv(overrides: Partial<Conversation> & { id: string }): Conversation {
   return {
@@ -102,6 +109,33 @@ describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
     expect(chatView.getAttribute('data-is-running')).toBeNull();
     expect(chatView.getAttribute('data-messages')).toBeNull();
     expect(chatView.getAttribute('data-is-polling')).toBeNull();
+  });
+
+  it('onSendStart が呼ばれると useConversationListPoller に hasRunning=true が渡されること', async () => {
+    const conv = makeConv({ id: 'conv-spinning', status: 'idle', title: '会話C' });
+
+    vi.mocked(clientModule.listConversations).mockResolvedValue([conv]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(clientModule.getConversation).mockResolvedValue({ ...conv, messages: [] } as any);
+
+    render(<MemoryRouter initialEntries={['/conversation/conv-spinning']}><App /></MemoryRouter>);
+    await flush();
+
+    // 初期状態では hasRunning=false
+    expect(vi.mocked(useConversationListPoller)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ hasRunning: false })
+    );
+
+    // onSendStart をシミュレート
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('send-start-btn'));
+    });
+    await flush();
+
+    // hasRunning=true になること
+    expect(vi.mocked(useConversationListPoller)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ hasRunning: true })
+    );
   });
 
   it('会話未選択時は ChatView が表示されないこと', async () => {

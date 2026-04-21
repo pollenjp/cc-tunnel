@@ -11,6 +11,7 @@ import { useConversationPoller } from '../hooks/useConversationPoller';
 interface ChatViewProps {
   conversationId: string | null;
   onConversationUpdate?: () => void;
+  onSendStart?: () => void;
   onHamburger: () => void;
 }
 
@@ -19,7 +20,7 @@ type ContentBlockEntry =
   | { type: 'text'; content: string }
   | { type: 'tool_use'; tool_use_id: string }
 
-export function ChatView({ conversationId, onConversationUpdate, onHamburger }: ChatViewProps) {
+export function ChatView({ conversationId, onConversationUpdate, onSendStart, onHamburger }: ChatViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
@@ -65,6 +66,7 @@ export function ChatView({ conversationId, onConversationUpdate, onHamburger }: 
     if (!content.trim() || !conversationId || sending) return;
     setSending(true);
     setInput('');
+    onSendStart?.();
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
