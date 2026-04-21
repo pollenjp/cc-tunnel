@@ -1,0 +1,26 @@
+@startuml c4_container
+' Level 2: Container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title cc-tunnel Container Diagram
+
+Person(user, "User", "ブラウザユーザー")
+System_Ext(anthropic, "Anthropic API", "Claude AI (claude-sonnet等)")
+
+System_Boundary(cctunnel_system, "cc-tunnel") {
+  Container(frontend, "Frontend", "React/Vite + nginx", "会話UIを提供。\nnginxがAPIリクエスト(/api/*)を\ncc-tunnel APIにリバースプロキシ。\nPort: 3000")
+
+  Container(api, "cc-tunnel API", "Go (net/http)", "会話・メッセージ管理REST API。\n202 Accepted後にgoroutineで\nClaude CLI実行・DB保存を行う。\nPort: 8080")
+
+  Container(remote_agent, "cc-remote-agent", "Go", "Claude CLIをHTTP APIとしてラップ。\n認証・実行・出力ストリーミングを提供。\nPort: 9091")
+
+  ContainerDb(db, "PostgreSQL", "PostgreSQL 18-alpine", "会話(conversations)・\nメッセージ(messages)を永続化。\nPort: 5432")
+}
+
+Rel(user, frontend, "Webブラウザでアクセス", "HTTP")
+Rel(frontend, api, "REST API呼び出し (/api/*)", "HTTP/JSON")
+Rel(api, db, "会話・メッセージの読み書き", "PostgreSQL (pgx/v5)")
+Rel(api, remote_agent, "Claude CLI実行・認証操作", "HTTP/NDJSON (streaming)")
+Rel(remote_agent, anthropic, "LLM呼び出し", "HTTPS")
+
+@enduml

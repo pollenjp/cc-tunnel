@@ -1,0 +1,79 @@
+@startuml usecase
+title cc-tunnel ユースケース図
+
+left to right direction
+
+actor "User" as user
+actor "Claude CLI\n(cc-remote-agent)" as claude
+
+rectangle "cc-tunnel" {
+
+  ' ---- 認証 ----
+  rectangle "認証" {
+    usecase "認証状態確認\nGET /auth/status" as UC_AuthStatus
+    usecase "ログイン開始\nPOST /auth/login\n(claudeai / console)" as UC_Login
+    usecase "ログアウト\nPOST /auth/logout" as UC_Logout
+    usecase "ログインキャンセル\nPOST /auth/cancel" as UC_CancelLogin
+    usecase "認証入力送信\nPOST /auth/input\n(PTY stdin)" as UC_AuthInput
+    usecase "認証出力取得\nGET /auth/output\n(PTY stdout, base64)" as UC_AuthOutput
+  }
+
+  ' ---- 会話管理 ----
+  rectangle "会話管理" {
+    usecase "会話一覧表示\nGET /conversations" as UC_ListConv
+    usecase "新規会話作成\nPOST /conversations" as UC_CreateConv
+    usecase "会話詳細取得\nGET /conversations/:id" as UC_GetConv
+    usecase "会話削除\nDELETE /conversations/:id" as UC_DeleteConv
+  }
+
+  ' ---- メッセージ・実行 ----
+  rectangle "メッセージ・実行" {
+    usecase "メッセージ送信\nPOST /conversations/:id/messages\n→ 202 Accepted" as UC_SendMsg
+    usecase "Claude CLI 実行\n(非同期 goroutine)" as UC_ExecClaude
+    usecase "ポーリングで\n進行状況取得\nGET /conversations/:id\n(1秒間隔)" as UC_Polling
+    usecase "完了検知\n(status=completed)" as UC_Complete
+    usecase "タイトル自動生成" as UC_Title
+    usecase "切断後の自動継続\n(context.WithoutCancel)" as UC_Disconnect
+  }
+
+  ' ---- ナビゲーション ----
+  rectangle "ナビゲーション" {
+    usecase "URL直接アクセス\n/conversation/:id" as UC_DirectURL
+    usecase "ブラウザ戻る/進む" as UC_BrowserNav
+    usecase "会話切替" as UC_SwitchConv
+  }
+
+}
+
+' --- User associations ---
+user --> UC_AuthStatus
+user --> UC_Login
+user --> UC_Logout
+user --> UC_CancelLogin
+user --> UC_AuthInput
+user --> UC_AuthOutput
+
+user --> UC_ListConv
+user --> UC_CreateConv
+user --> UC_GetConv
+user --> UC_DeleteConv
+
+user --> UC_SendMsg
+user --> UC_DirectURL
+user --> UC_BrowserNav
+user --> UC_SwitchConv
+
+' --- Use case relationships ---
+UC_SendMsg ..> UC_ExecClaude : <<include>>
+UC_SendMsg ..> UC_Disconnect : <<include>>
+UC_SendMsg ..> UC_Polling : <<include>>
+UC_GetConv ..> UC_Polling : <<extend>>\n(status=running 時)
+UC_Polling ..> UC_Complete : <<include>>
+UC_Complete ..> UC_Title : <<include>>
+UC_SwitchConv ..> UC_GetConv : <<include>>
+UC_DirectURL ..> UC_GetConv : <<include>>
+
+' --- Claude CLI associations ---
+UC_ExecClaude --> claude
+
+@enduml

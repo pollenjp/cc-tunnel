@@ -1,0 +1,16 @@
+@startuml c4_context
+' Level 1: System Context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+title cc-tunnel System Context Diagram
+
+Person(user, "User", "ブラウザでClaudeとチャットするユーザー")
+
+System(cctunnel, "cc-tunnel", "Claude CLIをWebUI経由で操作できるシステム。\n会話管理・認証・メッセージ送受信を提供する。")
+
+System_Ext(anthropic, "Anthropic API", "Claude AI (claude-sonnet等)。\ncc-remote-agentがClaude CLI経由でアクセスする。")
+
+Rel(user, cctunnel, "Webブラウザでアクセス", "HTTP")
+Rel(cctunnel, anthropic, "Claude CLI経由でAIモデルを呼び出す", "HTTPS")
+
+@enduml

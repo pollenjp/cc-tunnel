@@ -1,0 +1,51 @@
+@startuml c4_component
+' Level 3: Component
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title cc-tunnel Component Diagram
+
+Person(user, "User", "ブラウザユーザー")
+System_Ext(anthropic, "Anthropic API", "Claude AI")
+ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18", "会話・メッセージデータ")
+Container_Ext(remote_agent, "cc-remote-agent", "Go", "Claude CLIラッパー。\n認証・実行・ストリーミング提供。")
+
+' --- cc-tunnel API コンポーネント ---
+Container_Boundary(api_boundary, "cc-tunnel API (Go)") {
+  Component(handler, "Handler (Server)", "net/http", "APIエンドポイント処理。\n会話CRUD・メッセージ送信・認証プロキシ。\n202 Accepted後にgoroutineで非同期実行。")
+  Component(repository, "Repository", "pgx/v5", "DB操作層。\n会話・メッセージのCRUD。\nCreateStreamingMessage/MergeMessageData等。")
+  Component(remoteclient, "RemoteClient", "net/http", "cc-remote-agentへのHTTPクライアント。\nExecute (NDJSON streaming) / Auth操作。")
+}
+
+' --- Frontend コンポーネント ---
+Container_Boundary(frontend_boundary, "Frontend (React/Vite)") {
+  Component(app, "App", "React Router v6", "URLルーティング。\n/ と /conversation/:id を処理。")
+  Component(appcontent, "AppContent", "React", "会話選択・新規作成・削除のオーケストレーション。\nuseParams で URL から conversationId を取得。")
+  Component(sidebar, "Sidebar", "React", "会話一覧表示。\nrunning会話にスピナー表示。")
+  Component(chatview, "ChatView", "React", "メッセージ表示コンポーネント。\nconversationId のみ受取り、\n内部でポーリング・isRunning管理を自己完結。")
+  Component(listpoller, "useConversationListPoller", "React Hook", "running会話がある間、\n3秒ごとに会話一覧をポーリング更新。\nサイドバーのスピナー維持に使用。")
+  Component(apiclient, "APIClient", "fetch (api/client.ts)", "REST API呼び出しラッパー。\nlistConversations/getConversation/\nsendMessage/deleteConversation等。")
+  Component(authguard, "AuthGuard", "React", "認証状態チェック。\n未認証時にAuthTerminalを表示。")
+  Component(useauth, "useAuth", "React Hook", "認証状態管理。\nlogin/logout/status取得。")
+}
+
+' Frontend → Backend
+Rel(user, app, "ブラウザ操作", "HTTP")
+Rel(app, appcontent, "ルート一致時にレンダリング")
+Rel(appcontent, sidebar, "conversations・selectedIdを渡す")
+Rel(appcontent, chatview, "conversationIdを渡す")
+Rel(appcontent, listpoller, "hasRunning状態と\nonPollコールバックを渡す")
+Rel(appcontent, authguard, "authを渡してラップ")
+Rel(authguard, useauth, "auth状態を参照")
+Rel(listpoller, apiclient, "listConversations呼び出し (3秒間隔)")
+Rel(chatview, apiclient, "getConversation呼び出し (1秒間隔)\nsendMessage呼び出し")
+Rel(useauth, apiclient, "getAuthStatus/login/logout呼び出し")
+Rel(apiclient, handler, "REST API呼び出し", "HTTP/JSON")
+
+' Backend 内部
+Rel(handler, repository, "会話・メッセージDB操作")
+Rel(handler, remoteclient, "Claude CLI実行・認証操作")
+Rel(repository, db, "SQL", "PostgreSQL (pgx/v5)")
+Rel(remoteclient, remote_agent, "Execute/Auth API", "HTTP/NDJSON")
+Rel(remote_agent, anthropic, "LLM呼び出し", "HTTPS")
+
+@enduml
