@@ -162,6 +162,7 @@ func (h *Server) GetConversation(w http.ResponseWriter, r *http.Request, convers
 		Id:           convUUID,
 		Title:        conv.Title,
 		Model:        conv.Model,
+		Status:       ConversationDetailStatus(conv.Status),
 		CreatedAt:    conv.CreatedAt,
 		UpdatedAt:    conv.UpdatedAt,
 		SystemPrompt: conv.SystemPrompt,

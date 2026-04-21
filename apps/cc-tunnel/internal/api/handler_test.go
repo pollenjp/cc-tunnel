@@ -2,8 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestWriteJSON(t *testing.T) {
@@ -40,5 +43,41 @@ func TestWriteError(t *testing.T) {
 	}
 	if result.Error != "bad request" {
 		t.Fatalf("expected 'bad request', got %q", result.Error)
+	}
+}
+
+// TestGetConversation_returnsStatus verifies that GET /conversations/:id
+// includes the conversation status in its response.
+// This is a regression test for the bug where ConversationDetail.Status was
+// not set in the handler, causing the frontend poller to never detect completion.
+func TestGetConversation_returnsStatus(t *testing.T) {
+	const convIDStr = "00000001-0000-0000-0000-000000000001"
+
+	conv := makeConv(convIDStr)
+	conv.Status = "completed"
+
+	repo := &mockRepoCheckCtx{
+		conv: conv,
+		msgs: nil,
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/conversations/"+convIDStr, nil)
+
+	server := &Server{repo: repo, remote: nil}
+	convID := ConversationId(uuid.MustParse(convIDStr))
+	server.GetConversation(w, req, convID)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var detail ConversationDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if detail.Status != ConversationDetailStatusCompleted {
+		t.Errorf("Status = %q, want %q", detail.Status, ConversationDetailStatusCompleted)
 	}
 }

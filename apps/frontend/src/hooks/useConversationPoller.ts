@@ -39,6 +39,7 @@ export function useConversationPoller({
       }
     } catch {
       // Ignore transient errors; keep polling.
+      console.log("error useConversationPoller")
     }
   }, [conversationId, onMessages, onCompleted]);
 
