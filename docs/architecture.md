@@ -2,6 +2,8 @@
 
 ## コンポーネント構成
 
+### 現行（ローカル開発構成）
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Browser                                                        │
@@ -33,6 +35,35 @@
 │  claude CLI           │
 │  (Claude Code)        │
 └──────────────────────┘
+```
+
+### 将来（Cloud Run + GCE 構成）
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Browser                                                        │
+│  React SPA (Vite + Tailwind CSS + xterm.js)                    │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ HTTPS (port 443)
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  frontend (nginx)                                               │
+│  静的ファイル配信 + /api/* → cc-tunnel プロキシ                 │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ HTTP
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  cc-tunnel (Go, Cloud Run)                                      │
+│  APIゲートウェイ・会話管理・SessionManager                       │
+└──────────┬───────────────────────────────┬──────────────────────┘
+           │ pgx/v5                        │ HTTP (VPC Connector)
+           ▼                               ▼
+┌──────────────────────┐       ┌───────────────────────────────────┐
+│  PostgreSQL           │       │  GCE VM (Docker Host)             │
+│  (Cloud SQL)          │       │  ├─ session-abc (cc-remote-agent, :9091) │
+│  会話・メッセージ永続化│       │  ├─ session-def (cc-remote-agent, :9092) │
+│  セッションメタデータ  │       │  └─ ...                           │
+└──────────────────────┘       └───────────────────────────────────┘
 ```
 
 ## データフロー: メッセージ送信時
@@ -115,7 +146,7 @@
 
 | 項目 | 内容 |
 |------|------|
-| コンテナ | Docker Compose (4 サービス) |
+| コンテナ | ローカル開発: Docker Compose / 本番: Cloud Run (cc-tunnel) + GCE (Docker Host) |
 | リバースプロキシ | nginx (frontend コンテナ内) |
 | データベース | PostgreSQL 18-alpine |
 
@@ -391,3 +422,34 @@ type ErrorStackHandler struct {
 - `extractStack()` が `runtime.Callers` でコールスタックを取得（最大 8 フレーム）
 - slog / runtime 内部フレームは自動スキップ
 - `Enabled`, `WithAttrs`, `WithGroup` も委譲して完全なハンドラーインターフェースを実装
+
+## セッション隔離アーキテクチャ（Docker on GCE）
+
+### 概要
+
+会話セッションごとに独立した cc-remote-agent コンテナを動的生成する方式。
+詳細設計は `docs/docker-gce-design.md` を参照。
+
+### 現行との差分
+
+| 項目 | 現行（単一インスタンス） | 新方式（Docker on GCE） |
+|------|----------------------|----------------------|
+| cc-remote-agent | 常時稼働の単一インスタンス | セッションごとに動的生成 |
+| 隔離性 | なし（全セッション共有） | コンテナレベル（namespaces） |
+| セッション接続 | 固定 -agent-url | SessionManager による per-session routing |
+| インフラ | Docker Compose（ローカル） | Cloud Run + GCE（本番） |
+
+### 新規コンポーネント: SessionManager
+
+cc-tunnel に追加する中核コンポーネント。
+- 責務: 会話→エンドポイントのマッピング管理、GCE VM/Dockerコンテナのライフサイクル管理
+- 配置: apps/cc-tunnel/internal/sessionmanager/
+- 詳細: `docs/docker-gce-design.md` §2「コンポーネント詳細」参照
+
+### 変更影響ファイル
+
+- apps/cc-tunnel/cmd/cc-tunnel/main.go: SessionManager初期化追加
+- apps/cc-tunnel/internal/api/handler.go: per-session routing
+- apps/cc-tunnel/internal/db/repository.go: session_endpoints, vm_instances テーブル追加
+
+（変更不要: cc-remote-agent, frontend, openapi）

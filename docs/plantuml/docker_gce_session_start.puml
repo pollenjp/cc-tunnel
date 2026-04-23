@@ -1,0 +1,47 @@
+@startuml docker_gce_session_start
+' セッション開始〜コンテナ生成のシーケンス図
+title Docker on GCE — セッション開始〜コンテナ生成シーケンス
+
+participant Browser
+participant "cc-tunnel (Cloud Run)" as CloudRun
+participant SessionManager as SM
+participant PostgreSQL as DB
+participant "GCE API" as GCEAPI
+participant "GCE VM" as VM
+participant "Docker Daemon" as Docker
+participant "cc-remote-agent Container" as Container
+
+Browser -> CloudRun: POST /api/conversations\n(新規会話作成)
+CloudRun -> DB: INSERT conversation
+CloudRun --> Browser: 201 Created {id, status: "idle"}
+
+Browser -> CloudRun: POST /api/conversations/{id}/messages\n{content: "Hello"}
+CloudRun -> SM: GetOrCreateEndpoint(conversation_id)
+
+alt VM 稼働中 (warm)
+  SM -> DB: SELECT session_endpoint\nWHERE conversation_id = ?
+  note over SM: エンドポイント未登録 → 新規コンテナ作成
+  SM -> Docker: docker run -d -p 909N:9091 cc-remote-agent
+  Docker -> Container: コンテナ起動 (1-3秒)
+  Container --> Docker: Ready
+  SM -> DB: INSERT session_endpoint\n{conversation_id, vm_ip, port, status: "running"}
+  SM --> CloudRun: Endpoint{ip: "10.128.0.5", port: 9093}
+else VM 未稼働 (cold)
+  SM -> GCEAPI: instances.insert\n(e2-standard-2, startup-script)
+  note over GCEAPI,VM: VM 起動 30-60秒
+  GCEAPI --> SM: {status: "RUNNING", internalIP: "10.128.0.5"}
+  SM -> DB: INSERT vm_instance\n{ip, status: "running"}
+  SM -> Docker: docker run -d -p 9091:9091 cc-remote-agent
+  Docker -> Container: コンテナ起動 (1-3秒)
+  Container --> Docker: Ready
+  SM -> DB: INSERT session_endpoint\n{conversation_id, vm_ip, port}
+  SM --> CloudRun: Endpoint{ip: "10.128.0.5", port: 9091}
+end
+
+CloudRun -> Container: POST /execute\n{prompt, session_id, ...}
+Container -> Container: claude CLI 実行\n(ndjson streaming)
+Container --> CloudRun: ndjson stream
+CloudRun -> DB: UPDATE message\n(content_blocks, status)
+CloudRun --> Browser: 202 Accepted
+
+@enduml

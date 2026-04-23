@@ -1,0 +1,35 @@
+@startuml docker_gce_component
+' Level 3: Component (Docker on GCE — cc-tunnel 内部コンポーネント)
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Docker on GCE — cc-tunnel Component Diagram
+
+System_Ext(docker_api, "Docker API (SSH経由)", "GCE VM 上の Docker Daemon\nコンテナ管理 (run/stop/rm)")
+System_Ext(compute_api, "Compute Engine API", "Google Cloud\nVM ライフサイクル管理 (create/delete)")
+ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL", "会話・メッセージ・セッション・VM インスタンスデータ")
+
+Container_Boundary(api_boundary, "cc-tunnel API (Go, Cloud Run)") {
+  Component(handler, "API Handler", "net/http\n(api/handler.go)", "HTTPリクエスト処理。\n会話CRUD・メッセージ送信。\n202 Accepted後にgoroutineで非同期実行。")
+
+  Component(sessionmanager, "SessionManager", "Go (新規)\n(sessionmanager/manager.go)", "セッション管理。\n会話→エンドポイントのマッピング。\nGetOrCreateEndpoint() / ReleaseEndpoint()。")
+
+  Component(provisioner, "Provisioner", "Go (新規)\n(sessionmanager/provisioner.go)", "GCE VM + Docker コンテナ操作。\nVM create/delete。\nDocker run/stop/rm。")
+
+  Component(idlechecker, "IdleChecker / VMScaler", "Go goroutine (新規)\n(sessionmanager/healthcheck.go)", "アイドル監視。\nIdleChecker: 60秒間隔でコンテナ削除。\nVMScaler: 5分間隔でVM削除。")
+
+  Component(remoteclient, "RemoteClient", "net/http\n(remoteclient/client.go)", "cc-remote-agent への HTTP クライアント。\nExecute (NDJSON streaming) / Auth操作。\nセッションごとに動的に生成。")
+
+  Component(repository, "DB Repository", "pgx/v5\n(db/repository.go)", "DB操作層。\n会話・メッセージ・session_endpoint・\nvm_instance の CRUD。")
+}
+
+Rel(handler, sessionmanager, "GetOrCreateEndpoint(conversation_id)")
+Rel(handler, remoteclient, "Execute(prompt, session_id)")
+Rel(sessionmanager, provisioner, "docker run/rm, VM create/delete")
+Rel(sessionmanager, repository, "session_endpoint CRUD\nvm_instance CRUD")
+Rel(idlechecker, repository, "last_activity クエリ\nactive_containers クエリ")
+Rel(idlechecker, provisioner, "コンテナ削除 (stop/rm)\nVM削除")
+Rel(repository, db, "SQL", "PostgreSQL (pgx/v5)")
+Rel(provisioner, docker_api, "docker run/stop/rm\nコンテナ状態確認", "SSH トンネル")
+Rel(provisioner, compute_api, "instances.insert / instances.delete", "HTTPS (REST)")
+
+@enduml
