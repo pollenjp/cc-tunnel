@@ -1,0 +1,63 @@
+@startuml sandbox_selection_flow
+' Docker on GCE と Cloud Run Sandbox の選択フロー図
+title execution_mode による実行方式選択フロー
+
+start
+
+:POST /api/conversations\n{execution_mode: "docker_gce" | "cloud_run_sandbox"};
+
+if (execution_mode は?) then (cloud_run_sandbox)
+  :conversations.execution_mode = "cloud_run_sandbox";
+else (docker_gce または省略)
+  :conversations.execution_mode = "docker_gce"\n(デフォルト: --default-execution-mode フラグ);
+endif
+
+:conversations テーブルに execution_mode を永続化\n(ALTER TABLE: execution_mode TEXT NOT NULL DEFAULT 'docker_gce');
+
+:POST /api/conversations/{id}/messages;
+:handler.SendMessage();
+:DB: SELECT conversations WHERE id = ?\n→ execution_mode を取得;
+
+if (execution_mode は?) then (cloud_run_sandbox)
+  partition "Cloud Run Sandbox フロー（SandboxProvider）" {
+    :provider = providers["cloud_run_sandbox"];
+    :SandboxProvider.Execute(conversationID, req);
+    :SandboxManager.GetOrCreateSandbox(conversationID);
+
+    if (sandbox_sessions レコードあり?) then (あり)
+      :WebSocket /attach/{sandbox_id}?sandbox_token={token}\n（既存 sandbox へ再接続・restore）;
+    else (なし)
+      :WebSocket /create\n（新規 Cloud Run Sandbox インスタンス作成）;
+    endif
+
+    :Cloud Run Sandbox (gVisor) 内で\nclaude CLI 実行\n→ stdout → NDJSON パース;
+  }
+else (docker_gce)
+  partition "Docker on GCE フロー（DockerGCEProvider）" {
+    :provider = providers["docker_gce"];
+    :DockerGCEProvider.Execute(conversationID, req);
+    :SessionManager.GetOrCreateEndpoint(conversationID);
+
+    if (セッションエンドポイントあり?) then (あり)
+      :既存の cc-remote-agent コンテナに接続;
+    else (なし)
+      :GCE VM 上に Docker コンテナ起動\n（cc-remote-agent）;
+    endif
+
+    :cc-remote-agent コンテナ内で\nclaude CLI 実行\n→ HTTP / NDJSON ストリーム受信;
+  }
+endif
+
+note right
+  SessionProvider インターフェースによる共通化:
+  Execute(ctx, conversationID, req, callback) (sessionID, error)
+  UpdateLastActivity(ctx, conversationID) error
+  ReleaseSession(ctx, conversationID) error
+end note
+
+:callback(ndjson イベント);
+:DB: UPDATE messages (content_blocks, session_id, status: "done");
+
+stop
+
+@enduml

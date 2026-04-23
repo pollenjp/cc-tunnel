@@ -149,6 +149,7 @@
 | コンテナ | ローカル開発: Docker Compose / 本番: Cloud Run (cc-tunnel) + GCE (Docker Host) |
 | リバースプロキシ | nginx (frontend コンテナ内) |
 | データベース | PostgreSQL 18-alpine |
+| セッション隔離方式 | Docker on GCE（コンテナ隔離）/ Cloud Run Sandbox（gVisor隔離）から選択 |
 
 ## OpenAPI 型統一
 
@@ -453,3 +454,30 @@ cc-tunnel に追加する中核コンポーネント。
 - apps/cc-tunnel/internal/db/repository.go: session_endpoints, vm_instances テーブル追加
 
 （変更不要: cc-remote-agent, frontend, openapi）
+
+## セッション隔離アーキテクチャ（Cloud Run Sandbox）
+
+### 概要
+
+会話セッションごとに Cloud Run Sandbox（gVisor隔離）を使用する方式。
+詳細設計は `docs/cloud-run-sandbox-design.md` を参照。
+
+### Docker on GCE との対比
+
+設計書の比較表を参考に、用途・適用シナリオの違い:
+
+- Docker on GCE: 重い作業・長時間セッション・カスタム環境向け
+- Cloud Run Sandbox: 軽量・高速起動・高セキュリティ（gVisor）・checkpoint/restore 対応
+
+### ユーザー選択メカニズム
+
+`POST /api/conversations` の `execution_mode` パラメータで選択:
+
+- `"docker_gce"`: Docker on GCE 方式
+- `"cloud_run_sandbox"`: Cloud Run Sandbox 方式
+
+### 新規コンポーネント: SandboxManager
+
+- 責務: Cloud Run Sandbox のライフサイクル管理・WebSocket 通信
+- `SessionProvider` インターフェースで `SessionManager` と統一インターフェース
+- 詳細: `docs/cloud-run-sandbox-design.md` 参照

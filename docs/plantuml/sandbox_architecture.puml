@@ -1,0 +1,42 @@
+@startuml sandbox_architecture
+' Cloud Run Sandbox 方式の全体アーキテクチャ図（C4 Container Diagram）
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title Cloud Run Sandbox Architecture — C4 Container Diagram
+
+Person(user, "User", "ブラウザユーザー")
+
+System_Ext(anthropic, "Anthropic API", "Claude AI (claude-sonnet等)")
+System_Ext(cloudsql, "Cloud SQL (PostgreSQL)", "会話・メッセージ・sandbox_sessionsメタデータ永続化")
+System_Ext(gcs, "GCS (Cloud Storage)", "Checkpoint・Filesystem Snapshotの永続化先")
+
+System_Boundary(cctunnel_system, "cc-tunnel (Cloud Run)") {
+  Container(frontend, "Frontend", "nginx + React", "会話UIを提供。\nnginxがAPIリクエスト(/api/*)を\ncc-tunnel APIにリバースプロキシ。\nPort: 3000")
+
+  Container(api, "cc-tunnel API", "Go (net/http)", "会話・メッセージ管理REST API。\nexecution_modeに基づきSessionProviderを選択。\nPort: 8080")
+
+  Container(sandboxmanager, "SandboxManager", "Go (新規コンポーネント)", "Cloud Run SandboxへのWebSocket接続管理。\n会話ID→サンドボックスIDのマッピング管理。\nCheckpoint/Restore・Idle検知を担当。")
+
+  Container(auth_agent, "認証専用 cc-remote-agent", "Go", "認証フロー専用（固定1台）。\nOAuth PTY フロー (claude /auth) を担当。\nPort: 9091")
+}
+
+System_Boundary(sandbox_service, "Cloud Run Sandbox サービス (同一VPC, asia-northeast1)") {
+  Container(sandbox_abc, "sandbox-{conv_abc}", "Cloud Run Sandbox (gVisor)", "会話abc専用サンドボックス。\n[gVisor]内でclaude CLI実行。\nconcurrency=1, session-affinity")
+
+  Container(sandbox_def, "sandbox-{conv_def}", "Cloud Run Sandbox (gVisor)", "会話def専用サンドボックス。\n[gVisor]内でclaude CLI実行。\nconcurrency=1, session-affinity")
+}
+
+Rel(user, frontend, "Webブラウザでアクセス", "HTTP")
+Rel(frontend, api, "REST API呼び出し (/api/*)", "HTTP")
+Rel(api, cloudsql, "会話・メッセージの読み書き", "PostgreSQL (pgx/v5)")
+Rel(api, auth_agent, "認証操作", "HTTP")
+Rel(api, sandboxmanager, "SessionProvider.Execute(conversationID)")
+Rel(sandboxmanager, cloudsql, "sandbox_sessionsの読み書き", "PostgreSQL (pgx/v5)")
+Rel(sandboxmanager, sandbox_abc, "WebSocket接続・claude CLI exec", "WebSocket wss://")
+Rel(sandboxmanager, sandbox_def, "WebSocket接続・claude CLI exec", "WebSocket wss://")
+Rel(sandbox_abc, anthropic, "LLM呼び出し", "HTTPS")
+Rel(sandbox_def, anthropic, "LLM呼び出し", "HTTPS")
+Rel(sandbox_abc, gcs, "Checkpoint・Snapshot保存・読み込み", "GCS FUSE (/mnt/gcs)")
+Rel(sandbox_def, gcs, "Checkpoint・Snapshot保存・読み込み", "GCS FUSE (/mnt/gcs)")
+
+@enduml

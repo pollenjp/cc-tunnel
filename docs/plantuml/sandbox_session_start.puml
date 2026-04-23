@@ -1,0 +1,56 @@
+@startuml sandbox_session_start
+' セッション開始〜Sandbox生成〜メッセージ処理のシーケンス図
+title Cloud Run Sandbox — セッション開始〜Sandbox生成〜メッセージ処理シーケンス
+
+participant Browser
+participant "cc-tunnel (Cloud Run)" as CloudRun
+participant SandboxManager as SM
+participant PostgreSQL as DB
+participant "Cloud Run Sandbox" as Sandbox
+
+Browser -> CloudRun: POST /api/conversations/{id}/messages\n{content: "Hello"}
+CloudRun -> SM: SessionProvider.Execute(conversationID, req)
+
+alt 初回メッセージ（sandbox_session レコードなし）
+  SM -> DB: SELECT sandbox_sessions\nWHERE conversation_id = ?
+  DB --> SM: レコードなし
+  SM -> Sandbox: WebSocket接続: wss://<SANDBOX_URL>/create
+  SM -> Sandbox: 初期化メッセージ\n{"idle_timeout": 900,\n"enable_checkpoint": true,\n"enable_idle_timeout_auto_checkpoint": true,\n"filesystem_snapshot_name": "cc-tunnel-base-v1"}
+  Sandbox --> SM: {"event": "status_update", "status": "SANDBOX_CREATING"}
+  Sandbox --> SM: {"event": "sandbox_id",\n"sandbox_id": "sandbox-a1b2", "sandbox_token": "deadbeef..."}
+  Sandbox --> SM: {"event": "status_update", "status": "SANDBOX_RUNNING"}
+  SM -> DB: INSERT sandbox_sessions\n{conversation_id, sandbox_id, sandbox_token, status: "active"}
+else 2回目以降（sandbox_session レコードあり）
+  SM -> DB: SELECT sandbox_sessions\nWHERE conversation_id = ?
+  DB --> SM: {sandbox_id: "sandbox-a1b2", sandbox_token: "deadbeef..."}
+  SM -> Sandbox: WebSocket接続:\nwss://<SANDBOX_URL>/attach/sandbox-a1b2?sandbox_token=deadbeef...
+  alt ローカルにサンドボックスあり（アフィニティヒット）
+    Sandbox --> SM: {"event": "status_update", "status": "SANDBOX_RUNNING"}
+  else GCS から restore（アフィニティミスまたはidle後）
+    Sandbox --> SM: {"event": "status_update", "status": "SANDBOX_RESTORING"}
+    note over Sandbox: GCS から checkpoint ファイルを読み込み\ngVisor 状態を復元（runsc restore）
+    Sandbox --> SM: {"event": "status_update", "status": "SANDBOX_RUNNING"}
+  end
+end
+
+SM -> Sandbox: {"language": "bash",\n"code": "claude --print --output-format stream-json\n--model claude-sonnet-4-6 --session-id '' --prompt 'Hello'"}
+Sandbox --> SM: {"event": "status_update", "status": "SANDBOX_EXECUTION_RUNNING"}
+
+loop ndjson ストリーミング
+  Sandbox --> SM: {"event": "stdout",\n"data": "{\"type\":\"assistant\",\"message\":{...}}\n"}
+end
+
+Sandbox --> SM: {"event": "stdout",\n"data": "{\"type\":\"result\",\"session_id\":\"abc123\",...}\n"}
+Sandbox --> SM: {"event": "status_update", "status": "SANDBOX_EXECUTION_DONE"}
+
+SM -> CloudRun: callback(ndjson イベント)
+CloudRun -> DB: UPDATE messages\n(content_blocks, session_id, status: "done")
+
+note over SM,Sandbox: 実行完了後に checkpoint（オプション）
+SM -> Sandbox: {"action": "checkpoint"}
+Sandbox --> SM: {"event": "status_update", "status": "SANDBOX_CHECKPOINTED"}
+SM -> Sandbox: WebSocket 切断
+
+CloudRun --> Browser: 202 Accepted
+
+@enduml
