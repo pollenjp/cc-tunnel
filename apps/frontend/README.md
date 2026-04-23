@@ -24,7 +24,7 @@ Server A・Server B を先に起動しておくこと:
 
 ```bash
 # Server A
-cd ../cc-tmux-tunnel && go run ./cmd/cc-tmux-tunnel/ -addr :9090
+cd ../cc-remote-agent && PORT=9090 go run ./cmd/cc-remote-agent/
 
 # Server B
 cd ../cc-tunnel && go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090
@@ -44,14 +44,11 @@ npm run build
 
 - セッションの作成・一覧・削除 (サイドバー)
 - セッションタイプの選択 (`claude_code` / `multi_agent_shogun`)
-- tmux ペインの出力表示 (ターミナル風ビュー、2 秒ポーリング)
 - multi_agent_shogun の 3x3 グリッドビュー + 個別ペインタブ切り替え
 - マルチライン入力 (textarea、Ctrl+Enter で送信)
 - Shift+Enter で Enter キー送信、Send / Enter ボタンの分離
 - スクロール・リサイズ可能なペイン表示
-- フロントエンド表示幅に合わせた tmux ペインの自動リサイズ
 - Auto-refresh のオン/オフ切り替え
-- 未管理 tmux セッションの検出とアタッチ (Discover)
 - セッション作成時のローディングインジケーター
 
 ## ディレクトリ構成
