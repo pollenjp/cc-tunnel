@@ -1,0 +1,139 @@
+@startuml auth_flow
+title cc-tunnel 認証フロー図
+
+skinparam activity {
+  BackgroundColor LightYellow
+  BorderColor DarkGoldenRod
+  ArrowColor DarkSlateGray
+  DiamondBackgroundColor LightBlue
+  DiamondBorderColor SteelBlue
+}
+
+skinparam note {
+  BackgroundColor LightCyan
+  BorderColor SteelBlue
+}
+
+start
+
+partition "ルートガード（保護ルートへの直接アクセス時）" {
+
+  :ユーザーが保護ルートに直接アクセス\n(/chat, /settings/account, /settings/agents);
+
+  if (アプリ認証済み?) then (yes)
+    :保護ルートをそのまま表示;
+  else (no)
+    :/login?redirect=<元のURL> にリダイレクト;
+
+    note right
+      redirect クエリパラメーターに
+      元のパスを保存
+      例: /login?redirect=/chat
+    end note
+
+    :ユーザーがログイン完了;
+    :redirect パラメーターの URL へリダイレクト\n（元の保護ルートへ戻る）;
+  endif
+}
+
+partition "アプリ認証フロー（cc-tunnel へのログイン）" {
+
+  :ユーザーがチャットボタン押下;
+
+  if (アプリ認証済み?) then (yes)
+    :/chat へ遷移;
+  else (no)
+    :/login へリダイレクト;
+
+    note right
+      現在: モック認証
+      将来: Google IAP 等
+    end note
+
+    if (現在の実装\n（モック認証）?) then (yes)
+      :ユーザー名入力 ("test user");
+      :認証成功（常に成功）;
+    else (no)
+      note right: 将来実装
+      :「Google でログイン」ボタン押下;
+      :Google IAP 認証ページへ;
+      if (Google 認証成功?) then (yes)
+        :cc-tunnel にリダイレクト;
+      else (no)
+        :エラー表示\n→ /login に戻る;
+        stop
+      endif
+    endif
+
+    :セッション確立\n（Cookie / JWT 発行）;
+    :/chat へリダイレクト;
+  endif
+}
+
+partition "Agent 認証フロー（Claude Code への認証）" {
+
+  note
+    /settings/agents から開始
+    アプリ認証済みが前提
+  end note
+
+  :/settings/agents を表示;
+  :「Claude Code」ボタン押下;
+
+  :POST /auth/login\n（cc-tunnel 経由）;
+  :cc-remote-agent-auth にプロキシ;
+  :StartLogin() → claude /auth を PTY 起動\n（タイムアウト: 10分）;
+
+  :loginPending = true\n→ AuthTerminal (xterm.js TUI) 表示;
+
+  fork
+    :GET /auth/output?since=N\n（250ms ポーリング）;
+    :base64 デコード → xterm.js に表示;
+    :PTY 出力から認証 URL を抽出\n→「認証URLを開く」ボタン表示;
+  fork again
+    :ユーザーがキー入力 or URL を開く;
+    :POST /auth/input\n（キーストロークを PTY stdin に転送）;
+  end fork
+
+  if (認証成功?) then (yes)
+    :loggedIn = true\nloginPending = false;
+    :ポーリング停止;
+    :/settings/agents に戻る;
+    note right
+      以降のチャットで
+      Claude Code が使用可能
+    end note
+  else (no)
+    if (ユーザーがキャンセル?) then (yes)
+      :POST /auth/cancel;
+      :CancelLogin() → PTY 強制終了;
+      :/settings/agents に戻る;
+    else (no)
+      :タイムアウト（10分）\n→ 自動キャンセル;
+      :/settings/agents に戻る;
+    endif
+  endif
+}
+
+partition "Agent 認証状態の UI 表示（useAuth フック）" {
+
+  :fetchStatus() 実行\n(GET /auth/status);
+
+  if (isLoading && !status?) then (yes)
+    :スピナー表示;
+  elseif (status.loggedIn?) then (yes)
+    :通常 UI 表示\n（チャット使用可能）;
+  elseif (status.loginPending?) then (yes)
+    :AuthTerminal 表示\n（xterm.js TUI, 3秒ポーリング）;
+  else (no)
+    :「Claude でログイン」ボタン表示\n（未認証状態）;
+  endif
+}
+
+note right
+  **認証種別の区別**\nアプリ認証 = cc-tunnel アプリへのログイン\n(モック → 将来 Google IAP)\nAgent 認証 = Claude Code 等の外部 Agent への認証\n(cc-remote-agent-auth 経由の PTY フロー)\nこの 2 つは独立した概念であり、両方が必要
+end note
+
+stop
+
+@enduml

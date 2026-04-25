@@ -17,6 +17,13 @@ docs/ に反映するため、全ドキュメントの最新化を実施。
 - docs/directory-structure.md: ...
 - docs/auth.md: ...
 
+### 足軽2号 (subtask_screen_nav_001a)
+- docs/screen-navigation.md: 新規作成（画面遷移・認証フロー設計ドキュメント）
+- docs/plantuml/screen_navigation.puml: 新規作成（画面遷移 state diagram）
+- docs/plantuml/auth_flow.puml: 新規作成（認証フロー activity diagram）
+- docs/plantuml/out/screen_navigation.svg: SVG 生成
+- docs/plantuml/out/auth_flow.svg: SVG 生成
+
 ### 足軽3号 (subtask_docs_refresh_001c)
 - docs/api.md: 変更あり
 - docs/database.md: 変更なし

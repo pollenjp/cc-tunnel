@@ -1,0 +1,102 @@
+@startuml screen_navigation
+title cc-tunnel 画面遷移図
+
+skinparam state {
+  BackgroundColor LightYellow
+  BorderColor DarkGoldenRod
+  ArrowColor DarkSlateGray
+}
+
+skinparam note {
+  BackgroundColor LightCyan
+  BorderColor SteelBlue
+}
+
+[*] --> Home
+
+state "ホーム画面 (/)" as Home {
+  Home : 未ログインでもアクセス可
+  Home : 右上ユーザーアイコン
+  Home : チャット開始ボタン
+}
+
+state "アプリ認証画面 (/login)" as Login {
+  Login : モック認証 (現在)
+  Login : Google IAP 等 (将来)
+}
+
+state "チャット画面 (/chat)" as Chat {
+  Chat : アプリ認証必須
+  Chat : 左サイドパネル: 会話一覧
+  Chat : 右メイン: 会話内容
+  Chat : Agent 選択 UI
+}
+
+state "アカウント設定 (/settings/account)" as AccountSettings {
+  AccountSettings : ニックネーム設定
+  AccountSettings : (将来) プロフィール画像等
+}
+
+state "Agentログイン設定 (/settings/agents)" as AgentSettings {
+  AgentSettings : Claude Code (対応済み)
+  AgentSettings : GitHub Copilot (将来対応)
+  AgentSettings : Cursor CLI (将来対応)
+}
+
+state "Agent認証フロー" as AgentAuth {
+  AgentAuth : cc-remote-agent-auth 経由
+  AgentAuth : PTY (xterm.js TUI)
+  AgentAuth : claude /auth
+}
+
+' チャットボタン押下
+Home --> Login : チャットボタン\n[未ログイン]
+Home --> Chat : チャットボタン\n[ログイン済み]
+
+' ログイン成功
+Login --> Chat : 認証成功\nリダイレクト
+
+' 右上アイコン (ログイン済み)
+Home --> AccountSettings : 右上アイコン → ドロップダウン\n「アカウント設定」
+Home --> AgentSettings : 右上アイコン → ドロップダウン\n「Agentログイン設定」
+
+' チャット画面からも設定へ
+Chat --> AccountSettings : 右上アイコン → ドロップダウン\n「アカウント設定」
+Chat --> AgentSettings : 右上アイコン → ドロップダウン\n「Agentログイン設定」
+
+' Agent認証
+AgentSettings --> AgentAuth : 「Claude Code」ボタン
+AgentAuth --> AgentSettings : 認証完了 / キャンセル
+
+' ルートガード（未認証時リダイレクト）
+Chat -[dashed,#red]-> Login : <<ルートガード>>\n未認証 → /login?redirect=/chat
+AccountSettings -[dashed,#red]-> Login : <<ルートガード>>\n未認証 → /login?redirect=/settings/account
+AgentSettings -[dashed,#red]-> Login : <<ルートガード>>\n未認証 → /login?redirect=/settings/agents
+
+note left of Chat
+  **保護ルート**
+  アプリ認証必須
+  未認証時: /login へリダイレクト
+  ログイン成功後: 元のルートへ戻る
+end note
+
+note right of Login
+  現在: モック認証
+  ユーザー名 "test user" で常に成功
+  ---
+  将来: Google IAP 等
+end note
+
+note right of AgentAuth
+  Claude Code のみ対応済み
+  GitHub Copilot / Cursor CLI は将来対応
+  (設定画面で「未対応」表示)
+end note
+
+note bottom of Chat
+  現在の実装では / がこの画面に相当
+  Agent 認証 (AuthGuard) のみで保護
+  アプリ認証は未実装
+end note
+
+@enduml
