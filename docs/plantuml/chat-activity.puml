@@ -3,7 +3,7 @@ title Chat機能 アクティビティ図（isRunning / ポーリング / メッ
 
 start
 
-partition "メッセージ送信フロー" {
+partition "メッセージ送信フロー (Frontend)" {
   :ユーザーがメッセージを入力して送信;
   if (content.trim() あり\nかつ conversationId あり\nかつ sending=false?) then (yes)
     :setSending(true)\n→ isRunning = true;
@@ -26,6 +26,32 @@ partition "メッセージ送信フロー" {
   else (no)
     :処理なし（ガード条件不成立）;
   endif
+}
+
+partition "メッセージ送信フロー (Backend: cc-tunnel)" {
+  :POST /conversations/:id/messages 受信;
+  :202 Accepted をフロントエンドに即時返却;
+  fork
+    :goroutine で非同期実行;
+    :ExecutionProvider.Execute(req);
+    note right: EXECUTION_PROVIDER=local → LocalDockerProvider
+    :LocalDockerProvider.Execute(ctx, req, onEvent);
+    :SessionManager.GetOrCreate(conversationID);
+    if (セッションコンテナ存在かつ Running?) then (yes)
+      :既存コンテナの remoteclient.Client を返却;
+    else (no)
+      :DockerRunner.ContainerCreate(opts)\n(イメージ: cc-remote-agent:latest,\nボリューム: claude-sessions → /home/user/.claude);
+      :DockerRunner.ContainerStart(containerID);
+      :ヘルスチェック待機\n(GetAuthStatus ポーリング, 30秒タイムアウト);
+      :remoteclient.Client を生成\n(URL: http://containerName:port);
+    endif
+    :cc-remote-agent-{convID} へ\nExecute API 呼び出し;
+    note right: HTTP/NDJSON\n(DNS: cctunnel-session-{convID[:8]}:port)
+    :cc-remote-agent → Claude CLI 実行\n→ Anthropic API 呼び出し;
+    :NDJSON ストリームでイベント受信\n(onEvent コールバック);
+    :DB にメッセージ保存\n(CreateStreamingMessage/MergeMessageData);
+    :conversation.status = completed;
+  end fork
 }
 
 partition "会話選択/復帰フロー" {

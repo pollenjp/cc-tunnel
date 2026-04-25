@@ -1,18 +1,20 @@
 # Authentication
 
-cc-tunnel の認証は cc-remote-agent 上の Claude CLI に対して行う。2 つの認証方式をサポートし、フロントエンドは認証状態に応じて UI を切り替える。
+cc-tunnel の認証は `cc-remote-agent-auth` コンテナ上の Claude CLI に対して行う。`cc-remote-agent-auth` は `compose.yaml` のデフォルトサービスとして常時起動する**認証専用常駐コンテナ**であり、セッションごとに動的生成される実行用 `cc-remote-agent` コンテナとは別物である。
+
+2 つの認証方式をサポートし、フロントエンドは認証状態に応じて UI を切り替える。
 
 ## 認証方式
 
 ### API キー方式
 
-`ANTHROPIC_API_KEY` 環境変数を cc-remote-agent コンテナに設定する。Claude CLI がこの環境変数を自動的に読み取るため、追加の操作は不要。
+`ANTHROPIC_API_KEY` 環境変数を `cc-remote-agent-auth` コンテナに設定する。Claude CLI がこの環境変数を自動的に読み取るため、追加の操作は不要。
 
 ### claude.ai OAuth 方式
 
-ブラウザ経由で claude.ai アカウントにログインする方式。cc-remote-agent 内で PTY プロセスとして `claude /auth` を起動し、フロントエンドの xterm.js TUI から操作する。
+ブラウザ経由で claude.ai アカウントにログインする方式。`cc-remote-agent-auth` 内で PTY プロセスとして `claude /auth` を起動し、フロントエンドの xterm.js TUI から操作する。
 
-## AuthManager（cc-remote-agent）
+## AuthManager（cc-remote-agent-auth）
 
 `apps/cc-remote-agent/internal/auth/manager.go` の `AuthManager` 構造体が認証状態を管理する。
 
@@ -63,7 +65,7 @@ type AuthStatus struct {
 ## PTY 認証フロー
 
 ```
-フロントエンド                cc-tunnel               cc-remote-agent
+フロントエンド                cc-tunnel               cc-remote-agent-auth
      |                           |                           |
      | POST /auth/login          |                           |
      |-------------------------->|  POST /auth/login         |

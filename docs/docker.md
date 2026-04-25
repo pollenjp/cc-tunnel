@@ -2,16 +2,21 @@
 
 ## サービス一覧
 
-`apps/compose.yaml` で定義された4つのサービス。
+`apps/compose.yaml` で定義されたサービス。
 
-| サービス名        | ビルド/イメージ                            | 公開ポート         | 依存関係                      |
-| ----------------- | ------------------------------------------ | ------------------ | ----------------------------- |
-| `postgres`        | `mirror.gcr.io/library/postgres:18-alpine` | 5432 (expose のみ) | -                             |
-| `cc-remote-agent` | `./cc-remote-agent` (ビルド)               | 9091 (expose のみ) | -                             |
-| `cc-tunnel`       | `./cc-tunnel` (ビルド)                     | 8080 (expose のみ) | `cc-remote-agent`, `postgres` |
-| `frontend`        | `./frontend` (ビルド)                      | **3000→8080**      | `cc-tunnel`                   |
+### デフォルト起動サービス（常時起動）
 
-外部からアクセスできるのは `frontend` の 3000 番ポートのみ。その他のサービスは Docker 内部ネットワーク経由で通信する。
+| サービス名              | ビルド/イメージ                            | 公開ポート                           | 依存関係 |
+| ----------------------- | ------------------------------------------ | ------------------------------------ | -------- |
+| `postgres`              | `mirror.gcr.io/library/postgres:18-alpine` | `127.0.0.1:5432:5432`（ホスト開発用）| -        |
+| `cc-remote-agent-auth`  | `cc-remote-agent:latest`（事前ビルド）     | `127.0.0.1:9091:9091`                | -        |
+
+### `profiles: ["full"]` サービス（フル起動時のみ）
+
+| サービス名  | ビルド/イメージ        | 公開ポート      | 依存関係                               |
+| ----------- | ---------------------- | --------------- | -------------------------------------- |
+| `cc-tunnel` | `./cc-tunnel` (ビルド) | `8080:8080`     | `cc-remote-agent-auth`, `postgres`     |
+| `frontend`  | `./frontend` (ビルド)  | `3000:8080`     | `cc-tunnel`                            |
 
 ---
 
@@ -19,39 +24,79 @@
 
 ### `postgres`
 
-会話・メッセージデータを永続化する PostgreSQL データベース。`cc-tunnel` からのみアクセスされる。ヘルスチェックが成功してから `cc-tunnel` が起動する。
+会話・メッセージデータを永続化する PostgreSQL データベース。`cc-tunnel` からのみアクセスされる。ヘルスチェックが成功してから `cc-tunnel` が起動する。ホスト開発用に `127.0.0.1:5432` を公開。
 
-### `cc-remote-agent`
+### `cc-remote-agent-auth`
 
-Claude CLI (`claude`) をプロセスとして実行する Python/Go サービス。Claude CLI のセッションデータ (`~/.claude`) を `claude-sessions` ボリュームに永続化する。`cc-tunnel` からのみアクセスされる。
+Claude CLI (`claude`) の認証情報を保持する**認証専用常駐コンテナ**。`compose.yaml` のデフォルトサービスとして常時起動する。セッションごとに動的生成される実行用コンテナとは異なり、認証専用として永続稼働する。
+
+- クロード認証情報を `claude-sessions` ボリューム（`/home/user/.claude`）に永続化
+- `cc-tunnel` からの `/auth/*` API を処理する
 
 ### `cc-tunnel`
 
 バックエンド API サーバー (Go)。以下の役割を担う。
 
 - 会話・メッセージの CRUD API (`/conversations`)
-- 認証 API (`/auth/*`)
-- `cc-remote-agent` への Claude CLI コマンド委譲
+- 認証 API (`/auth/*`) → `cc-remote-agent-auth` へプロキシ
+- `EXECUTION_PROVIDER=local` 時: `SessionManager` が per-session `cc-remote-agent` コンテナを Docker SDK 経由で動的生成
 - SSE ストリーミングによるレスポンス配信
+- Docker-out-of-Docker (DooD): `/var/run/docker.sock` をマウントし、コンテナ内から Docker API を操作
 
 ### `frontend`
 
 React SPA を配信する nginx サーバー。
 
 - `/` → Vite ビルド成果物 (SPA ルーティング対応)
-- `/api/conversations/{id}/messages` → SSE 専用設定でバックアップの `cc-tunnel` へプロキシ
+- `/api/conversations/{id}/messages` → SSE 専用設定でバックエンドの `cc-tunnel` へプロキシ
 - `/api/*` → 通常リバースプロキシで `cc-tunnel` へ転送
+
+---
+
+## cc-remote-agent イメージのビルド
+
+`cc-remote-agent-auth` サービスは `cc-remote-agent:latest` イメージを使用する。このイメージは `apps/prepare.compose.yaml` でビルドする（`compose.yaml` には含まれていない）。
+
+```bash
+cd apps/
+docker compose -f prepare.compose.yaml build
+```
+
+`compose.yaml` を使う前に必ずこのビルドを実行すること。
+
+---
+
+## Docker-out-of-Docker (DooD)
+
+`cc-tunnel` サービスはホストの Docker デーモンに `/var/run/docker.sock` をマウントする（`compose.yaml` の `volumes` セクション）。これにより `cc-tunnel` がコンテナ内から Docker SDK を使い、per-session `cc-remote-agent` コンテナを動的に生成・管理できる。
+
+```yaml
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock
+```
 
 ---
 
 ## 起動方法
 
-### Docker Compose
+### デフォルト起動（postgres + cc-remote-agent-auth のみ）
 
 ```bash
-# apps/ ディレクトリで実行
 cd apps/
-docker compose up --build -d
+# cc-remote-agent イメージを事前ビルド
+docker compose -f prepare.compose.yaml build
+# デフォルトサービス起動
+docker compose up -d
+```
+
+### フル起動（全サービス）
+
+```bash
+cd apps/
+# cc-remote-agent イメージを事前ビルド
+docker compose -f prepare.compose.yaml build
+# 全サービス起動（cc-tunnel + frontend も含む）
+docker compose --profile full up --build -d
 # アクセス: http://localhost:3000
 ```
 
@@ -69,24 +114,24 @@ mise run docker:logs  # ログをフォロー
 
 ## 環境変数
 
-| 変数名                     | デフォルト値            | 対象サービス                   | 説明                                      |
-| -------------------------- | ----------------------- | ------------------------------ | ----------------------------------------- |
-| `POSTGRES_PASSWORD`        | `cctunnel_dev`          | `postgres`, `cc-tunnel`        | PostgreSQL パスワード                     |
-| `ANTHROPIC_API_KEY`        | (必須)                  | `cc-remote-agent`              | Anthropic API キー                        |
-| `CC_REMOTE_AGENT_ENV_PORT` | `9091`                  | `cc-remote-agent`, `cc-tunnel` | リモートエージェントのリッスンポート      |
-| `CC_TUNNEL_ENV_PORT`       | `8080`                  | `cc-tunnel`, `frontend`        | バックエンド API のリッスンポート         |
-| `FRONTEND_ENV_PORT`        | `8080`                  | `frontend`                     | フロントエンド nginx のリッスンポート     |
-| `BACKEND_URL`              | `/api`                  | `frontend`                     | フロントエンドが参照する API のベースパス |
-| `API_UPSTREAM`             | `http://cc-tunnel:8080` | `frontend` (nginx)             | nginx がプロキシするバックエンド URL      |
+| 変数名                      | デフォルト値            | 対象サービス                        | 説明                                      |
+| --------------------------- | ----------------------- | ----------------------------------- | ----------------------------------------- |
+| `POSTGRES_PASSWORD`         | `cctunnel_dev`          | `postgres`, `cc-tunnel`             | PostgreSQL パスワード                     |
+| `ANTHROPIC_API_KEY`         | (必須)                  | `cc-remote-agent-auth`              | Anthropic API キー                        |
+| `CC_REMOTE_AGENT_AUTH_PORT` | `9091`                  | `cc-remote-agent-auth`, `cc-tunnel` | 認証エージェントのリッスンポート          |
+| `CC_TUNNEL_ENV_PORT`        | `8080`                  | `cc-tunnel`, `frontend`             | バックエンド API のリッスンポート         |
+| `FRONTEND_ENV_PORT`         | `8080`                  | `frontend`                          | フロントエンド nginx のリッスンポート     |
+| `BACKEND_URL`               | `/api`                  | `frontend`                          | フロントエンドが参照する API のベースパス |
+| `API_UPSTREAM`              | `http://cc-tunnel:8080` | `frontend` (nginx)                  | nginx がプロキシするバックエンド URL      |
 
 ---
 
 ## ボリューム
 
-| ボリューム名      | マウント先                        | 用途                              |
-| ----------------- | --------------------------------- | --------------------------------- |
-| `pgdata`          | `/var/lib/postgresql` (postgres)  | PostgreSQL データ永続化           |
-| `claude-sessions` | `/root/.claude` (cc-remote-agent) | Claude CLI セッション・設定永続化 |
+| ボリューム名      | マウント先                                  | 用途                              |
+| ----------------- | ------------------------------------------- | --------------------------------- |
+| `pgdata`          | `/var/lib/postgresql` (postgres)            | PostgreSQL データ永続化           |
+| `claude-sessions` | `/home/user/.claude` (cc-remote-agent-auth) | Claude CLI セッション・設定永続化 |
 
 ---
 
@@ -94,7 +139,7 @@ mise run docker:logs  # ログをフォロー
 
 compose.yaml ではカスタムネットワークを明示指定していないため、Docker Compose のデフォルトブリッジネットワーク (`apps_default`) が作成される。全サービスはこのネットワークに参加し、サービス名で相互に名前解決できる。
 
-外部からのアクセスは `frontend:3000` のみ。
+フル起動時の外部からのアクセスは `frontend:3000` のみ。
 
 ---
 

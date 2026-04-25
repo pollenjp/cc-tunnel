@@ -23,7 +23,8 @@ cc-tunnel/
 │   │   └── useConversationPoller-activity.puml  # useConversationPoller 内部フロー
 │   └── sequence.md                   # シーケンス図
 └── apps/
-    ├── compose.yaml                  # Docker Compose 定義 (4 サービス)
+    ├── compose.yaml                  # Docker Compose 定義 (デフォルト: postgres + cc-remote-agent-auth, profiles: full で cc-tunnel + frontend 追加)
+    ├── prepare.compose.yaml          # cc-remote-agent イメージビルド専用 (compose.yaml 使用前に実行)
     ├── mise.toml                     # monorepo タスクランナー設定
     ├── openapi/
     │   ├── openapi.yaml              # cc-tunnel REST API スキーマ定義
@@ -55,9 +56,12 @@ cc-tunnel/
     │   ├── .golangci.yml             # golangci-lint 設定
     │   ├── mise.toml                 # サービス固有タスク (build / generate / run)
     │   ├── README.md
+    │   ├── docs/
+    │   │   └── architecture.md       # cc-tunnel アプリ固有アーキテクチャ設計
     │   ├── cmd/
     │   │   └── cc-tunnel/
-    │   │       └── main.go           # エントリーポイント: DB 接続・remoteclient 初期化・HTTP サーバー起動
+    │   │       ├── main.go           # エントリーポイント: DB 接続・ExecutionProvider 選択・HTTP サーバー起動
+    │   │       └── main_test.go      # エントリーポイントテスト
     │   └── internal/
     │       ├── api/
     │       │   ├── handler.go        # HTTP ハンドラー (SendMessage: 202 即時返却 + goroutine 実行)
@@ -72,8 +76,27 @@ cc-tunnel/
     │       │       ├── 002_create_messages.sql            # messages テーブル
     │       │       ├── 003_add_conversation_status.sql    # conversations.status カラム追加
     │       │       └── 004_add_message_status.sql         # messages.status / updated_at カラム追加
+    │       ├── docker/               # Docker デーモン操作の抽象化レイヤー
+    │       │   ├── runner.go         # DockerRunner interface + ContainerCreateOpts / ContainerInfo 型定義
+    │       │   ├── sdk_runner.go     # SDKRunner: Docker SDK を使った DockerRunner 実装
+    │       │   ├── session_manager.go    # SessionManager: per-session cc-remote-agent コンテナの生成・管理
+    │       │   └── session_manager_test.go  # SessionManager ユニットテスト
     │       ├── logging/
     │       │   └── handler.go        # ErrorStackHandler: error 属性検出時にスタックトレース付与
+    │       ├── provider/             # ExecutionProvider 抽象化レイヤー
+    │       │   ├── provider.go       # ExecutionProvider interface 定義
+    │       │   ├── provider_test.go  # インターフェース適合テスト
+    │       │   ├── local/            # LocalDockerProvider: SessionManager 経由の per-session 実行
+    │       │   │   ├── local.go      # LocalDockerProvider 公開コンストラクタ
+    │       │   │   ├── docker_provider.go   # LocalDockerProvider 実装 (Execute メソッド)
+    │       │   │   ├── docker_provider_test.go  # LocalDockerProvider テスト
+    │       │   │   └── local_test.go  # ローカルプロバイダーテスト
+    │       │   ├── cloudrunsandbox/  # CloudRunSandboxProvider (モック実装)
+    │       │   │   ├── mock.go
+    │       │   │   └── mock_test.go
+    │       │   └── dockergce/        # DockerGCEProvider (モック実装)
+    │       │       ├── mock.go
+    │       │       └── mock_test.go
     │       └── remoteclient/
     │           └── client.go         # cc-remote-agent HTTP クライアント (Execute / Auth*)
     │

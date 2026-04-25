@@ -663,45 +663,37 @@ handler := api.NewHandler(repo, authRemote, sessionMgr)
   - `h.remote.Execute()` を直接呼ぶ部分を、`h.sessionMgr.GetOrCreateEndpoint()` → `remoteclient.NewClient()` → `Execute()` に変更
 - 認証系ハンドラ（`GetAuthStatus`, `InitiateLogin`, `Logout`, `CancelLogin`, `SubmitAuthInput`, `GetAuthOutput`）は `h.remote` のまま変更なし
 
-**変更前の `Server` 構造体**（handler.go:18-23）:
+**現在の `Server` 構造体**（handler.go）:
 ```go
 type Server struct {
-    repo          repository
-    remote        remoteClient
-    batchInterval time.Duration
-    doneCh        chan struct{}
+    repo              repository
+    remote            remoteClient              // 認証専用 cc-remote-agent クライアント
+    executionProvider provider.ExecutionProvider // claude CLI 実行バックエンド（LocalDockerProvider 等）
+    batchInterval     time.Duration
+    doneCh            chan struct{}
 }
 ```
 
-**変更後**:
+`LocalDockerProvider` が `sessionProvider`（SessionManager）を内包し、`GetOrCreate(conversationID)` で per-session コンテナのエンドポイントを取得する。
+
+**`SendMessage()` の呼び出し箇所**（handler.go）:
 ```go
-type Server struct {
-    repo          repository
-    remote        remoteClient    // 認証専用 cc-remote-agent クライアント
-    sessionMgr    sessionManager  // per-session ルーティング（新規）
-    batchInterval time.Duration
-    doneCh        chan struct{}
-}
+// 現在の実装: ExecutionProvider 経由で実行
+newSessionID, err := h.executionProvider.Execute(execCtx, executeReq, func(event remoteclient.StreamEvent) {
+    // イベント処理...
+})
 ```
 
-**`SendMessage()` の変更箇所**（handler.go:330 付近）:
+`LocalDockerProvider.Execute()` の内部フロー:
 ```go
-// 変更前
-newSessionID, err := h.remote.Execute(execCtx, executeReq, callback)
-
-// 変更後
-endpoint, err := h.sessionMgr.GetOrCreateEndpoint(execCtx, convIDStr)
-if err != nil {
-    slog.Error("failed to get session endpoint", "err", err, "conversation_id", convIDStr)
-    if serr := h.repo.UpdateMessageStatus(execCtx, assistantMsg.ID, "error"); serr != nil {
-        slog.Error("failed to update message status", "err", serr)
+func (p *LocalDockerProvider) Execute(ctx context.Context, req remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
+    // req.ConversationID で per-session コンテナを取得/作成
+    client, err := p.sessions.GetOrCreate(ctx, req.ConversationID)
+    if err != nil {
+        return "", fmt.Errorf("get session: %w", err)
     }
-    return
+    return client.Execute(ctx, req, onEvent)
 }
-sessionClient := remoteclient.NewClient(
-    fmt.Sprintf("http://%s:%d", endpoint.VMIP, endpoint.Port),
-)
-newSessionID, err := sessionClient.Execute(execCtx, executeReq, callback)
 ```
 
 **影響度**: **大**

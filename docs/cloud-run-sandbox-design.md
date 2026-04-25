@@ -600,79 +600,51 @@ sandboxURL  := flag.String("sandbox-url", "", "Cloud Run Sandbox service WebSock
 - `--default-execution-mode=docker_gce`: API で `execution_mode` を省略した場合のデフォルト
 - `--sandbox-url` が未設定の場合、`cloud_run_sandbox` モードは使用不可
 
-### 8.3 SessionProvider インターフェースによる抽象化設計
+### 8.3 ExecutionProvider インターフェースによる抽象化設計
+
+現在の実装では `apps/cc-tunnel/internal/provider/provider.go` に定義された `ExecutionProvider` インターフェースを使用する。
 
 ```go
-// apps/cc-tunnel/internal/api/interfaces.go に追加
+// apps/cc-tunnel/internal/provider/provider.go
 
-// SessionProvider: 実行方式を抽象化する共通インターフェース
-type SessionProvider interface {
-    // Execute: claude CLI を実行し、NDJSON イベントをコールバックで通知
-    Execute(
-        ctx context.Context,
-        conversationID string,
-        req ExecuteRequest,
-        callback StreamCallback,
-    ) (sessionID string, err error)
-
-    // UpdateLastActivity: アイドル検出用のアクティビティ更新
-    UpdateLastActivity(ctx context.Context, conversationID string) error
-
-    // ReleaseSession: セッションの明示的な解放（会話削除時）
-    ReleaseSession(ctx context.Context, conversationID string) error
+// ExecutionProvider abstracts the execution backend for claude CLI.
+// Implementations: local (via cc-remote-agent), cloud_run_sandbox (mock), docker_gce (mock).
+type ExecutionProvider interface {
+    Execute(ctx context.Context, req remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error)
 }
-
-// ExecuteRequest: claude CLI 実行リクエスト（方式共通）
-type ExecuteRequest struct {
-    Prompt              string
-    SessionID           string
-    Model               string
-    ConversationHistory []ConversationHistoryEntry
-    DangerouslySkipPermissions bool
-}
-
-// StreamCallback: NDJSON イベントのコールバック（既存の remoteclient.StreamCallback と同等）
-type StreamCallback func(event map[string]interface{}) error
 ```
+
+`remoteclient.Request` には `ConversationID` フィールドが含まれており、`LocalDockerProvider` が per-session コンテナのルーティングに使用する。
 
 **実装クラス**:
 
 ```go
-// Docker on GCE 方式
-type DockerGCEProvider struct {
-    sessionMgr *sessionmanager.SessionManager
+// local/docker_provider.go: LocalDockerProvider（Docker DooD 方式）
+type LocalDockerProvider struct {
+    sessions sessionProvider  // SessionManager
 }
 
-func (p *DockerGCEProvider) Execute(ctx context.Context, conversationID string, req ExecuteRequest, callback StreamCallback) (string, error) {
-    // 1. GetOrCreateEndpoint(conversationID)
-    // 2. remoteclient.NewClient(endpoint)
-    // 3. client.Execute(req, callback)
-    // ...
+func (p *LocalDockerProvider) Execute(ctx context.Context, req remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
+    client, err := p.sessions.GetOrCreate(ctx, req.ConversationID)
+    if err != nil {
+        return "", fmt.Errorf("get session: %w", err)
+    }
+    return client.Execute(ctx, req, onEvent)
 }
 
-// Cloud Run Sandbox 方式
-type SandboxProvider struct {
-    sandboxMgr *sandboxmanager.SandboxManager
-}
-
-func (p *SandboxProvider) Execute(ctx context.Context, conversationID string, req ExecuteRequest, callback StreamCallback) (string, error) {
-    // 1. WebSocket /create or /attach
-    // 2. exec("bash", buildClaudeCommand(req))
-    // 3. stdout イベント → NDJSON パース → callback
-    // ...
-}
+// cloudrunsandbox/mock.go: SandboxProvider（Cloud Run Sandbox 方式、将来実装）
+// dockergce/mock.go: DockerGCEProvider（Docker on GCE 方式、将来実装）
 ```
 
 **handler.go での利用**:
 
 ```go
 type Server struct {
-    repo          repository
-    remote        remoteClient      // 認証専用 cc-remote-agent
-    providers     map[string]SessionProvider  // "docker_gce" → DockerGCEProvider, "cloud_run_sandbox" → SandboxProvider
-    defaultMode   string
-    batchInterval time.Duration
-    doneCh        chan struct{}
+    repo              repository
+    remote            remoteClient           // 認証専用 cc-remote-agent
+    executionProvider provider.ExecutionProvider  // claude CLI 実行バックエンド
+    batchInterval     time.Duration
+    doneCh            chan struct{}
 }
 ```
 

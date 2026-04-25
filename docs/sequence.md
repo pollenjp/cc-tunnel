@@ -14,13 +14,15 @@ sequenceDiagram
     T-->>F: 201 Created (Conversation JSON)
 ```
 
-## フロー 2: メッセージ送信 + ストリーミング受信（メインフロー）
+## フロー 2: メッセージ送信（非同期処理 + DB ポーリング）
 
 ```mermaid
 sequenceDiagram
     participant F as Frontend (Browser)
     participant T as cc-tunnel (API Server)
-    participant A as cc-remote-agent
+    participant P as ExecutionProvider<br/>(LocalDockerProvider)
+    participant SM as SessionManager
+    participant A as cc-remote-agent (container)
     participant D as PostgreSQL
     participant C as claude CLI
 
@@ -32,20 +34,40 @@ sequenceDiagram
     Note over T: 最新 assistant メッセージの<br/>metadata["session_id"] を取得
     T->>D: INSERT user message
     D-->>T: ok
+    T->>D: INSERT assistant message (status='streaming')
+    D-->>T: assistant message row
+    T-->>F: 202 Accepted {message_id}
 
-    T->>A: POST /execute<br/>{prompt, session_id, model, conversation_history}
+    Note over T: goroutine で非同期実行
+
+    T->>D: UPDATE conversations SET status='running'
+    T->>P: Execute(ctx, req, onEvent)
+    P->>SM: GetOrCreate(conversationID)
+    SM-->>P: remoteclient.Client (container endpoint)
+    P->>A: POST /execute<br/>{prompt, session_id, conversation_id, model, conversation_history, ...}
     A->>C: claude -p --output-format=stream-json<br/>--verbose --resume <session_id> -- <prompt>
     C-->>A: stream-json lines (ndjson)
-    A-->>T: ndjson stream (chunked)
+    A-->>P: ndjson stream
 
-    loop 各 text チャンク
-        T-->>F: SSE data: {"type":"text","content":"..."}
+    loop content_blocks バッチ保存（2秒間隔）
+        T->>D: UPDATE messages SET message_data (content_blocks, tool_calls)
     end
 
-    T-->>F: SSE data: {"type":"done","session_id":"...","cost_usd":...}
+    A-->>P: ndjson stream 完了
+    P-->>T: newSessionID
+    T->>D: UPDATE messages (content_blocks, session_id, model, cost_usd, duration_ms, ...)
+    T->>D: UPDATE messages SET status='completed'
+    T->>D: UPDATE conversations SET title=<生成タイトル>
+    T->>D: UPDATE conversations SET updated_at=NOW()
+    T->>D: UPDATE conversations SET status='completed'
 
-    T->>D: INSERT assistant message<br/>(metadata: {session_id: new_session_id})
-    T->>D: UPDATE conversations.updated_at
+    loop DB ポーリング（1秒間隔）
+        F->>T: GET /conversations/{id}
+        T->>D: SELECT conversation + messages
+        D-->>T: ConversationDetail (status='running'/'completed')
+        T-->>F: ConversationDetail
+    end
+    Note over F: status='completed' でポーリング停止
 ```
 
 ## フロー 3: 会話一覧取得

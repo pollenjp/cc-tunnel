@@ -7,13 +7,20 @@ title cc-tunnel Component Diagram
 Person(user, "User", "ブラウザユーザー")
 System_Ext(anthropic, "Anthropic API", "Claude AI")
 ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18", "会話・メッセージデータ")
-Container_Ext(remote_agent, "cc-remote-agent", "Go", "Claude CLIラッパー。\n認証・実行・ストリーミング提供。")
+Container_Ext(auth_agent, "cc-remote-agent-auth", "Go", "認証専用常駐コンテナ。\nlogin/logout/status API提供。")
+Container_Ext(session_agent, "cc-remote-agent-{convID}", "Go", "動的セッションコンテナ。\nClaude CLI Execute API提供。")
+System_Ext(docker_daemon, "Docker Daemon", "docker.sock 経由でコンテナ管理")
 
 ' --- cc-tunnel API コンポーネント ---
 Container_Boundary(api_boundary, "cc-tunnel API (Go)") {
   Component(handler, "Handler (Server)", "net/http", "APIエンドポイント処理。\n会話CRUD・メッセージ送信・認証プロキシ。\n202 Accepted後にgoroutineで非同期実行。")
   Component(repository, "Repository", "pgx/v5", "DB操作層。\n会話・メッセージのCRUD。\nCreateStreamingMessage/MergeMessageData等。")
-  Component(remoteclient, "RemoteClient", "net/http", "cc-remote-agentへのHTTPクライアント。\nExecute (NDJSON streaming) / Auth操作。")
+  Component(remoteclient, "RemoteClient (Auth)", "net/http", "cc-remote-agent-auth へのHTTPクライアント。\n認証操作 (login/logout/status) のみ使用。")
+
+  Component(exec_provider, "ExecutionProvider", "interface\n(internal/provider/provider.go)", "Claude CLI実行を抽象化するインタフェース。\nExecute(ctx, req, onEvent) を定義。\nnewProviderFromEnv(EXECUTION_PROVIDER) で実装を選択。")
+  Component(local_provider, "LocalDockerProvider", "local/docker_provider.go", "ExecutionProvider 実装。\nSessionManager.GetOrCreate で\n会話ごとのセッションコンテナを取得し Execute。\nClose() でコンテナを全停止。")
+  Component(session_manager, "SessionManager", "docker/session_manager.go", "会話IDごとのコンテナライフサイクル管理。\nGetOrCreate: 新規作成または既存再利用。\nStop/StopAll: 停止・削除。\nアイドル15分で自動停止。")
+  Component(docker_runner, "DockerRunner (SDKRunner)", "docker/runner.go", "Docker daemon 操作を抽象化するインタフェース。\nContainerCreate/Start/Stop/Remove/Inspect/List。\nSDKRunner が docker/client SDK で実装。")
 }
 
 ' --- Frontend コンポーネント ---
@@ -43,9 +50,16 @@ Rel(apiclient, handler, "REST API呼び出し", "HTTP/JSON")
 
 ' Backend 内部
 Rel(handler, repository, "会話・メッセージDB操作")
-Rel(handler, remoteclient, "Claude CLI実行・認証操作")
+Rel(handler, remoteclient, "認証操作 (login/logout/status)")
+Rel(handler, exec_provider, "Claude CLI実行 (Execute)")
+Rel(exec_provider, local_provider, "local プロバイダ実装")
+Rel(local_provider, session_manager, "GetOrCreate(conversationID)")
+Rel(session_manager, docker_runner, "ContainerCreate/Start/Stop/Remove")
 Rel(repository, db, "SQL", "PostgreSQL (pgx/v5)")
-Rel(remoteclient, remote_agent, "Execute/Auth API", "HTTP/NDJSON")
-Rel(remote_agent, anthropic, "LLM呼び出し", "HTTPS")
+Rel(remoteclient, auth_agent, "Auth API", "HTTP")
+Rel(docker_runner, docker_daemon, "コンテナ管理", "docker.sock")
+Rel(session_manager, session_agent, "Execute API", "HTTP/NDJSON\n(DNS: containerName:port)")
+Rel(auth_agent, anthropic, "LLM呼び出し", "HTTPS")
+Rel(session_agent, anthropic, "LLM呼び出し", "HTTPS")
 
 @enduml

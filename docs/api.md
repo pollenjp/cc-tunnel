@@ -487,6 +487,7 @@ claude CLI を起動してndjsonをストリーミングする。
 | -------------------------- | --------- | ------------------------------------------------------ |
 | `prompt`                   | string    | **必須**。ユーザープロンプト                           |
 | `session_id`               | string?   | `--resume` 用セッションID（省略時は新規セッション）    |
+| `conversation_id`          | string?   | per-session コンテナルーティング用の会話ID（LocalDockerProvider が使用） |
 | `model`                    | string?   | 使用モデル                                             |
 | `system_prompt`            | string?   | システムプロンプト                                     |
 | `conversation_history`     | array?    | 会話履歴（`--resume` 失敗時のフォールバック用）        |
