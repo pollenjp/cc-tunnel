@@ -62,7 +62,7 @@
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  cc-tunnel (Go, Cloud Run)                                      │
-│  APIゲートウェイ・会話管理・SessionManager                       │
+│  APIゲートウェイ・会話管理・DockerGCEProvider (ExecutionProvider) │
 └──────────┬───────────────────────────────┬──────────────────────┘
            │ pgx/v5                        │ HTTP (VPC Connector)
            ▼                               ▼
