@@ -37,6 +37,11 @@ vi.mock('../hooks/useConversationListPoller', () => ({
   useConversationListPoller: vi.fn(),
 }));
 
+vi.mock('../contexts/AppAuthContext', () => ({
+  AppAuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useAppAuth: vi.fn(),
+}));
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useEffect } from 'react';
 import { render, act, screen } from '@testing-library/react';
@@ -45,10 +50,12 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import App from '../App';
 import * as clientModule from '../api/client';
 import type { Conversation } from '../api/client';
+import { useAppAuth } from '../contexts/AppAuthContext';
 
 function makeConv(overrides: Partial<Conversation> & { id: string }): Conversation {
   return {
     title: 'テスト会話',
+    model: 'claude-sonnet-4-6',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     status: 'idle',
@@ -71,10 +78,22 @@ function LocationCapture() {
   return null;
 }
 
+function mockAppAuth(user: { id: string; name: string } | null = { id: 'test-user', name: 'Test User' }) {
+  vi.mocked(useAppAuth).mockReturnValue({
+    user,
+    token: user ? 'test-token' : null,
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    updateNickname: vi.fn(),
+  });
+}
+
 describe('URLルーティング (TDD Cycle 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedPath = '/';
+    mockAppAuth();
   });
 
   it('/ にアクセスすると会話が選択されず ChatView が非表示', async () => {
@@ -107,14 +126,14 @@ describe('URLルーティング (TDD Cycle 1)', () => {
     expect(screen.queryByTestId('chat-view')).not.toBeNull();
   });
 
-  it('サイドバーで会話を選択すると URL が /conversation/{id} に変わる', async () => {
+  it('サイドバーで会話を選択すると URL が /chat/{id} に変わる', async () => {
     const conv = makeConv({ id: 'conv-abc', title: '会話ABC' });
     vi.mocked(clientModule.listConversations).mockResolvedValue([conv]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(clientModule.getConversation).mockResolvedValue({ ...conv, messages: [] } as any);
 
     render(
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={['/chat']}>
         <LocationCapture />
         <App />
       </MemoryRouter>
@@ -126,7 +145,7 @@ describe('URLルーティング (TDD Cycle 1)', () => {
     });
     await flush();
 
-    expect(capturedPath).toBe('/conversation/conv-abc');
+    expect(capturedPath).toBe('/chat/conv-abc');
   });
 
   it('存在しない会話IDにアクセスした場合 / へリダイレクトされ ChatView が非表示', async () => {

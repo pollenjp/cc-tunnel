@@ -4,10 +4,13 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"maps"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,10 +20,41 @@ import (
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
+// AppSession is an in-memory session store for mock authentication.
+// It maps Bearer tokens to AppUser values. Safe for concurrent use.
+type AppSession struct {
+	mu    sync.RWMutex
+	store map[string]AppUser // token → user
+}
+
+func newAppSession() *AppSession {
+	return &AppSession{store: make(map[string]AppUser)}
+}
+
+func (s *AppSession) set(token string, user AppUser) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.store[token] = user
+}
+
+func (s *AppSession) get(token string) (AppUser, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	u, ok := s.store[token]
+	return u, ok
+}
+
+func (s *AppSession) delete(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.store, token)
+}
+
 type Server struct {
 	repo              repository
 	remote            remoteClient
 	executionProvider provider.ExecutionProvider
+	session           *AppSession
 	batchInterval     time.Duration // 0 = default 2s; override for testing
 	doneCh            chan struct{}  // closed when Execute goroutine completes; for testing only
 }
@@ -28,7 +62,7 @@ type Server struct {
 var _ ServerInterface = (*Server)(nil)
 
 func NewHandler(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider) *Server {
-	return &Server{repo: repo, remote: remote, executionProvider: execProvider}
+	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession()}
 }
 
 func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -541,6 +575,85 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 			slog.Error("failed to update conversation updated_at", "err", err, "conversation_id", convIDStr)
 		}
 	}()
+}
+
+func (h *Server) AppAuthLogin(w http.ResponseWriter, r *http.Request) {
+	var req AppAuthLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Username == "" {
+		writeError(w, http.StatusBadRequest, "username is required")
+		return
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+	token := hex.EncodeToString(tokenBytes)
+
+	user := AppUser{Id: uuid.New().String(), Name: req.Username}
+	h.session.set(token, user)
+
+	writeJSON(w, http.StatusOK, AppAuthLoginResponse{Token: token, User: user})
+}
+
+func (h *Server) AppAuthLogout(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+		return
+	}
+	h.session.delete(token)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Server) AppAuthGetMe(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+		return
+	}
+	user, found := h.session.get(token)
+	if !found {
+		writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+		return
+	}
+	writeJSON(w, http.StatusOK, AppAuthMeResponse{User: user})
+}
+
+func (h *Server) AppAuthUpdateMe(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+		return
+	}
+	user, found := h.session.get(token)
+	if !found {
+		writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+		return
+	}
+	var req AppAuthUpdateMeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	user.Name = req.Nickname
+	h.session.set(token, user)
+	writeJSON(w, http.StatusOK, AppAuthMeResponse{User: user})
+}
+
+// bearerToken extracts the Bearer token from the Authorization header.
+func bearerToken(r *http.Request) (string, bool) {
+	auth := r.Header.Get("Authorization")
+	token, found := strings.CutPrefix(auth, "Bearer ")
+	if !found || token == "" {
+		return "", false
+	}
+	return token, true
 }
 
 // --- helper functions ---

@@ -99,6 +99,78 @@ paths:
               schema:
                 $ref: "#/components/schemas/AuthOutputResponse"
 
+  /app-auth/login:
+    post:
+      operationId: AppAuthLogin
+      summary: Login with username
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppAuthLoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppAuthLoginResponse"
+
+  /app-auth/me:
+    get:
+      operationId: AppAuthGetMe
+      summary: Get current user info
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppAuthMeResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppAuthError"
+    patch:
+      operationId: AppAuthUpdateMe
+      summary: Update current user info
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppAuthUpdateMeRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppAuthMeResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppAuthError"
+
+  /app-auth/logout:
+    post:
+      operationId: AppAuthLogout
+      summary: Logout
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: Logout successful
+
   /conversations:
     post:
       operationId: createConversation
@@ -206,6 +278,11 @@ paths:
                 $ref: "#/components/schemas/Error"
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
   parameters:
     ConversationId:
       name: conversationId
@@ -216,6 +293,60 @@ components:
         format: uuid
 
   schemas:
+    AppUser:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+
+    AppAuthLoginRequest:
+      type: object
+      required:
+        - username
+      properties:
+        username:
+          type: string
+
+    AppAuthLoginResponse:
+      type: object
+      required:
+        - token
+        - user
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/AppUser"
+
+    AppAuthMeResponse:
+      type: object
+      required:
+        - user
+      properties:
+        user:
+          $ref: "#/components/schemas/AppUser"
+
+    AppAuthUpdateMeRequest:
+      type: object
+      required:
+        - nickname
+      properties:
+        nickname:
+          type: string
+
+    AppAuthError:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+
     AuthStatus:
       type: object
       required:
