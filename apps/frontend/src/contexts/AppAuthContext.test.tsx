@@ -8,7 +8,8 @@ vi.mock('../api/app-auth', () => ({
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { fireEvent } from '@testing-library/react';
-import { AppAuthProvider, useAppAuth } from './AppAuthContext';
+import { AppAuthProvider } from './AppAuthProvider';
+import { useAppAuth } from '../hooks/useAppAuth';
 import * as appAuthApi from '../api/app-auth';
 
 function TestConsumer() {

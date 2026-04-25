@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useAppAuth } from '../contexts/AppAuthContext'
+import { useAppAuth } from '../hooks/useAppAuth'
 
 export const UserMenu: React.FC = () => {
   const { user, logout } = useAppAuth()

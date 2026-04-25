@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams, Navigate } from 'react-router-dom'
-import { useAppAuth } from '../contexts/AppAuthContext'
+import { useAppAuth } from '../hooks/useAppAuth'
 
 export const LoginPage = () => {
   const [username, setUsername] = useState('')

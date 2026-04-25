@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { useAppAuth } from '../contexts/AppAuthContext'
+import { useAppAuth } from '../hooks/useAppAuth'
 import { UserMenu } from '../components/UserMenu'
 
 export const HomePage = () => {

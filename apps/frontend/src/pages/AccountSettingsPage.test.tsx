@@ -1,4 +1,4 @@
-vi.mock('../contexts/AppAuthContext', () => ({
+vi.mock('../hooks/useAppAuth', () => ({
   useAppAuth: vi.fn(),
 }));
 
@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AccountSettingsPage } from './AccountSettingsPage';
-import { useAppAuth } from '../contexts/AppAuthContext';
+import { useAppAuth } from '../hooks/useAppAuth';
 import type { AppUser } from '../api/app-auth';
 
 type UseAppAuthReturn = {

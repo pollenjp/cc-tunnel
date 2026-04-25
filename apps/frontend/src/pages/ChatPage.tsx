@@ -54,7 +54,7 @@ export function ChatPage() {
     navigate('/chat');
   };
 
-  const handleAgentSelect = async (_agentId: string) => {
+  const handleAgentSelect = async () => {
     try {
       const conv = await createConversation();
       await refreshConversations();

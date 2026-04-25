@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAppAuth } from '../contexts/AppAuthContext'
+import { useAppAuth } from '../hooks/useAppAuth'
 
 export const AccountSettingsPage = () => {
   const { user, updateNickname } = useAppAuth()

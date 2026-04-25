@@ -37,8 +37,11 @@ vi.mock('../hooks/useConversationListPoller', () => ({
   useConversationListPoller: vi.fn(),
 }));
 
-vi.mock('../contexts/AppAuthContext', () => ({
+vi.mock('../contexts/AppAuthProvider', () => ({
   AppAuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('../hooks/useAppAuth', () => ({
   useAppAuth: vi.fn(),
 }));
 
@@ -50,7 +53,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import App from '../App';
 import * as clientModule from '../api/client';
 import type { Conversation } from '../api/client';
-import { useAppAuth } from '../contexts/AppAuthContext';
+import { useAppAuth } from '../hooks/useAppAuth';
 
 function makeConv(overrides: Partial<Conversation> & { id: string }): Conversation {
   return {

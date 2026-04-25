@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from 'react-router-dom';
-import { useAppAuth } from '../contexts/AppAuthContext';
+import { useAppAuth } from '../hooks/useAppAuth';
 
 const AppAuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isLoading } = useAppAuth();

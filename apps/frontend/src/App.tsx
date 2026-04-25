@@ -1,5 +1,5 @@
 import { Routes, Route, useParams, Navigate } from 'react-router-dom';
-import { AppAuthProvider } from './contexts/AppAuthContext';
+import { AppAuthProvider } from './contexts/AppAuthProvider';
 import AppAuthGuard from './components/AppAuthGuard';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
