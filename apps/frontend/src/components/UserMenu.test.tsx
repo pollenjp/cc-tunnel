@@ -76,6 +76,16 @@ describe('UserMenu', () => {
       fireEvent.click(screen.getByTestId('user-menu-button'));
       expect(screen.getByText('ログイン')).toBeTruthy();
     });
+
+    it('右上ログインは現在のURLを redirect に含める', () => {
+      mockAuth({ user: null });
+      renderMenu('/settings/agents?tab=basic');
+
+      fireEvent.click(screen.getByTestId('user-menu-button'));
+      fireEvent.click(screen.getByText('ログイン'));
+
+      expect(capturedPath).toBe('/login?redirect=%2Fsettings%2Fagents%3Ftab%3Dbasic');
+    });
   });
 
   describe('ログイン済み時', () => {

@@ -4,6 +4,8 @@ import { useAppAuth } from '../hooks/useAppAuth';
 const AppAuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isLoading } = useAppAuth();
   const location = useLocation();
+  const redirect = `${location.pathname}${location.search}${location.hash}`;
+  const loginPath = `/login?${new URLSearchParams({ redirect }).toString()}`;
 
   if (isLoading) {
     return (
@@ -14,7 +16,7 @@ const AppAuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   }
 
   if (!user) {
-    return <Navigate to={`/login?redirect=${location.pathname}`} replace />;
+    return <Navigate to={loginPath} replace />;
   }
 
   return <>{children}</>;

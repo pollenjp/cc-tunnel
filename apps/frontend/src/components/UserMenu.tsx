@@ -1,11 +1,14 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAppAuth } from '../hooks/useAppAuth'
 
 export const UserMenu: React.FC = () => {
   const { user, logout } = useAppAuth()
+  const location = useLocation()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
+  const redirect = `${location.pathname}${location.search}${location.hash}`
+  const loginLink = `/login?${new URLSearchParams({ redirect }).toString()}`
 
   const handleLogout = async () => {
     await logout()
@@ -55,7 +58,7 @@ export const UserMenu: React.FC = () => {
             </>
           ) : (
             <Link
-              to="/login"
+              to={loginLink}
               onClick={() => setOpen(false)}
               className="block px-4 py-2 text-[var(--color-accent)] hover:bg-[var(--color-bg-tertiary)] rounded-lg"
             >

@@ -3,8 +3,9 @@ vi.mock('../hooks/useAppAuth', () => ({
 }));
 
 import { describe, it, expect, vi } from 'vitest';
+import { useEffect } from 'react';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import AppAuthGuard from './AppAuthGuard';
 import { useAppAuth } from '../hooks/useAppAuth';
 import type { AppUser } from '../api/app-auth';
@@ -30,9 +31,23 @@ function mockAuth(overrides: Partial<UseAppAuthReturn>) {
   });
 }
 
+let capturedPath = '/';
+
+function LocationCapture() {
+  const location = useLocation();
+
+  useEffect(() => {
+    capturedPath = location.pathname + location.search;
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 function renderGuard(path = '/') {
+  capturedPath = path;
   return render(
     <MemoryRouter initialEntries={[path]}>
+      <LocationCapture />
       <AppAuthGuard>
         <div data-testid="children">protected content</div>
       </AppAuthGuard>
@@ -54,9 +69,10 @@ describe('AppAuthGuard', () => {
   it('未認証 (user=null, isLoading=false) のとき children は非表示（/login にリダイレクト）', () => {
     mockAuth({ isLoading: false, user: null });
 
-    renderGuard('/dashboard');
+    renderGuard('/dashboard?tab=security');
 
     expect(screen.queryByTestId('children')).toBeNull();
+    expect(capturedPath).toBe('/login?redirect=%2Fdashboard%3Ftab%3Dsecurity');
   });
 
   it('認証済み (user存在) のとき children を表示する', () => {
