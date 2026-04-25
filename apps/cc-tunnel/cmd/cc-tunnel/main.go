@@ -4,12 +4,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
+	dockerpkg "github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/docker"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/logging"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/cloudrunsandbox"
@@ -50,12 +54,39 @@ func main() {
 
 	repo := db.NewRepository(pool)
 
-	// Select execution provider via EXECUTION_PROVIDER env var.
-	execProvider, remote, err := newProviderFromEnv(os.Getenv("EXECUTION_PROVIDER"), *agentURL)
+	// Auth remote: always points to the auth agent (cc-remote-agent-auth in compose).
+	remote := remoteclient.NewClient(*agentURL)
+
+	execProvider, err := newProviderFromEnv(os.Getenv("EXECUTION_PROVIDER"))
 	if err != nil {
 		slog.Error("invalid EXECUTION_PROVIDER", "err", err)
 		os.Exit(1)
 	}
+
+	// Cleanup orphaned containers from previous sessions at startup.
+	type orphanCleaner interface {
+		CleanupOrphans(ctx context.Context) error
+	}
+	if cleaner, ok := execProvider.(orphanCleaner); ok {
+		if err := cleaner.CleanupOrphans(ctx); err != nil {
+			slog.Warn("orphan cleanup failed", "err", err)
+		}
+	}
+
+	// Graceful shutdown on SIGTERM/SIGINT.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		slog.Info("received shutdown signal, cleaning up")
+		if c, ok := execProvider.(io.Closer); ok {
+			if err := c.Close(); err != nil {
+				slog.Error("provider close failed", "err", err)
+			}
+		}
+		pool.Close()
+		os.Exit(0)
+	}()
 
 	handler := api.NewHandler(repo, remote, execProvider)
 
@@ -69,19 +100,35 @@ func main() {
 	}
 }
 
+func getEnvOrDefault(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
 // newProviderFromEnv selects the ExecutionProvider based on envVal.
-// agentURL is only used when envVal is "local".
 // Returns an error for unknown or empty envVal.
-func newProviderFromEnv(envVal, agentURL string) (provider.ExecutionProvider, *remoteclient.Client, error) {
+func newProviderFromEnv(envVal string) (provider.ExecutionProvider, error) {
 	switch envVal {
 	case "local":
-		remote := remoteclient.NewClient(agentURL)
-		return localprovider.New(remote), remote, nil
+		runner, err := dockerpkg.NewSDKRunner()
+		if err != nil {
+			return nil, fmt.Errorf("docker runner: %w", err)
+		}
+		sm := dockerpkg.NewSessionManager(runner, dockerpkg.SessionManagerConfig{
+			Image:         getEnvOrDefault("CC_REMOTE_AGENT_IMAGE", "cc-remote-agent:latest"),
+			Network:       getEnvOrDefault("DOCKER_NETWORK", "apps_default"),
+			// apps_claude-sessions
+			VolumeName:    getEnvOrDefault("CLAUDE_SESSIONS_VOLUME", "claude-sessions"),
+			ContainerPort: getEnvOrDefault("CC_REMOTE_AGENT_PORT", "9091"),
+		})
+		return localprovider.NewLocalDockerProvider(sm), nil
 	case "cloud_run_sandbox":
-		return cloudrunsandbox.New(), nil, nil
+		return cloudrunsandbox.New(), nil
 	case "docker_gce":
-		return dockergce.New(), nil, nil
+		return dockergce.New(), nil
 	default:
-		return nil, nil, fmt.Errorf("unknown EXECUTION_PROVIDER: %q", envVal)
+		return nil, fmt.Errorf("unknown EXECUTION_PROVIDER: %q", envVal)
 	}
 }

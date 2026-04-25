@@ -1,0 +1,6 @@
+name: cc-tunnel-prepare
+services:
+  cc-remote-agent:
+    build:
+      context: ./cc-remote-agent
+    image: cc-remote-agent:latest

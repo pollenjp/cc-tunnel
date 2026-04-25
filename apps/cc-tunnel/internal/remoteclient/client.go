@@ -35,6 +35,7 @@ type LoginResponse struct {
 type Request struct {
 	Prompt                 string    `json:"prompt"`
 	SessionID              string    `json:"session_id,omitempty"`
+	ConversationID         string    `json:"conversation_id,omitempty"` // for per-session container routing
 	Model                  string    `json:"model,omitempty"`
 	SystemPrompt           string    `json:"system_prompt,omitempty"`
 	ConversationHistory    []Message `json:"conversation_history,omitempty"`
@@ -304,7 +305,8 @@ func (c *Client) Logout(ctx context.Context) (*AuthStatus, error) {
 
 // Execute calls cc-remote-agent /execute and streams ndjson events to the callback.
 // Returns the session_id from the result event (for --resume in next call).
-func (c *Client) Execute(ctx context.Context, req Request, onEvent func(StreamEvent)) (sessionID string, err error) {
+func (c *Client) Execute(ctx context.Context, req Request, onEvent func(StreamEvent)) (string, error) {
+	var sessionID string
 	body, err := json.Marshal(req)
 	if err != nil {
 		return "", err

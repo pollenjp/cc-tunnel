@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -197,7 +198,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 
 	// ユーザーメッセージを DB に保存
-	_, err = h.repo.CreateMessage(r.Context(), convIDStr, "user", map[string]interface{}{"content": req.Content})
+	_, err = h.repo.CreateMessage(r.Context(), convIDStr, "user", map[string]any{"content": req.Content})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -222,9 +223,9 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		case "user":
 			content, _ = m.MessageData["content"].(string)
 		case "assistant":
-			if cbs, ok := m.MessageData["content_blocks"].([]interface{}); ok {
+			if cbs, ok := m.MessageData["content_blocks"].([]any); ok {
 				for _, cb := range cbs {
-					if block, ok := cb.(map[string]interface{}); ok {
+					if block, ok := cb.(map[string]any); ok {
 						if block["type"] == "text" {
 							if t, ok := block["content"].(string); ok {
 								content += t
@@ -243,6 +244,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	executeReq := remoteclient.Request{
 		Prompt:                 req.Content,
 		SessionID:              resumeSessionID,
+		ConversationID:         convIDStr,
 		Model:                  conv.Model,
 		ConversationHistory:    convHistory,
 		IncludePartialMessages: true,
@@ -571,9 +573,7 @@ func cloneBlocks(blocks []map[string]interface{}) []map[string]interface{} {
 	clone := make([]map[string]interface{}, len(blocks))
 	for i, b := range blocks {
 		m := make(map[string]interface{}, len(b))
-		for k, v := range b {
-			m[k] = v
-		}
+		maps.Copy(m, b)
 		clone[i] = m
 	}
 	return clone
@@ -581,6 +581,7 @@ func cloneBlocks(blocks []map[string]interface{}) []map[string]interface{} {
 
 type responseWriter struct {
 	http.ResponseWriter
+
 	statusCode int
 }
 

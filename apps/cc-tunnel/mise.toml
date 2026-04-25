@@ -3,7 +3,21 @@ go = "1.26.1"
 "golangci-lint" = "2.11.4"
 
 [tasks."cc-tunnel:dev:up"]
-run = 'go run ./cmd/cc-tunnel/ -addr :8080 -runner-url http://localhost:9090'
+description = "Run cc-tunnel in host dev mode (requires: docker compose up -d)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+export EXECUTION_PROVIDER=local
+export DOCKER_NETWORK="${DOCKER_NETWORK:-apps_default}"
+export CLAUDE_SESSIONS_VOLUME=claude-sessions
+export CC_REMOTE_AGENT_PORT=9091
+export DATABASE_URL="postgres://cctunnel:${POSTGRES_PASSWORD:-cctunnel_dev}@localhost:5432/cctunnel?sslmode=disable"
+
+exec go run ./cmd/cc-tunnel/ \
+  -addr :8080 \
+  -agent-url "http://localhost:${CC_REMOTE_AGENT_AUTH_PORT:-9091}"
+'''
 
 [tasks."cc-tunnel:test"]
 run = 'go test ./...'
