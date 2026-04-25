@@ -306,6 +306,11 @@ components:
           default: "claude-sonnet-4-6"
         system_prompt:
           type: string
+        execution_mode:
+          type: string
+          enum: [local, cloud_run_sandbox, docker_gce]
+          default: local
+          description: "実行環境の選択（デフォルト: local）"
 
     Conversation:
       type: object

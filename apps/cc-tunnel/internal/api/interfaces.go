@@ -30,5 +30,4 @@ type remoteClient interface {
 	CancelLogin(ctx context.Context) (*remoteclient.AuthCancelResponse, error)
 	SubmitAuthInput(ctx context.Context, input string) (*remoteclient.AuthInputResponse, error)
 	GetAuthOutput(ctx context.Context, since int) (*remoteclient.AuthOutputResponse, error)
-	Execute(ctx context.Context, req remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error)
 }

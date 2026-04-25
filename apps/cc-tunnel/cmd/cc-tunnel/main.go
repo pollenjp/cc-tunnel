@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,6 +11,10 @@ import (
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/logging"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/cloudrunsandbox"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/dockergce"
+	localprovider "github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/local"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
@@ -44,15 +49,39 @@ func main() {
 	defer pool.Close()
 
 	repo := db.NewRepository(pool)
-	remote := remoteclient.NewClient(*agentURL)
-	handler := api.NewHandler(repo, remote)
+
+	// Select execution provider via EXECUTION_PROVIDER env var.
+	execProvider, remote, err := newProviderFromEnv(os.Getenv("EXECUTION_PROVIDER"), *agentURL)
+	if err != nil {
+		slog.Error("invalid EXECUTION_PROVIDER", "err", err)
+		os.Exit(1)
+	}
+
+	handler := api.NewHandler(repo, remote, execProvider)
 
 	mux := http.NewServeMux()
 	api.HandlerFromMux(handler, mux)
 
-	slog.Info("cc-tunnel listening", "addr", *addr, "agent", *agentURL)
+	slog.Info("cc-tunnel listening", "addr", *addr)
 	if err := http.ListenAndServe(*addr, api.LoggingMiddleware(mux)); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
+	}
+}
+
+// newProviderFromEnv selects the ExecutionProvider based on envVal.
+// agentURL is only used when envVal is "local".
+// Returns an error for unknown or empty envVal.
+func newProviderFromEnv(envVal, agentURL string) (provider.ExecutionProvider, *remoteclient.Client, error) {
+	switch envVal {
+	case "local":
+		remote := remoteclient.NewClient(agentURL)
+		return localprovider.New(remote), remote, nil
+	case "cloud_run_sandbox":
+		return cloudrunsandbox.New(), nil, nil
+	case "docker_gce":
+		return dockergce.New(), nil, nil
+	default:
+		return nil, nil, fmt.Errorf("unknown EXECUTION_PROVIDER: %q", envVal)
 	}
 }

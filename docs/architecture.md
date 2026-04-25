@@ -455,6 +455,62 @@ cc-tunnel に追加する中核コンポーネント。
 
 （変更不要: cc-remote-agent, frontend, openapi）
 
+## ExecutionProvider パターン（実装）
+
+### 概要
+
+cc-remote-agent の実行基盤を `ExecutionProvider` インターフェースで抽象化した実装。
+`execution_mode` パラメータで会話ごとに provider を選択できる。
+
+### Provider 一覧
+
+| provider | パッケージ | 実装状態 | 説明 |
+|----------|------------|---------|------|
+| local | internal/provider/local | 実装済み | 現行 cc-remote-agent を HTTP 呼び出し |
+| cloud_run_sandbox | internal/provider/cloudrunsandbox | mock | Cloud Run Sandbox 方式（将来実装） |
+| docker_gce | internal/provider/dockergce | mock | Docker on GCE 方式（将来実装） |
+
+### インターフェース
+
+```go
+type ExecutionProvider interface {
+    Execute(ctx context.Context, req remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error)
+}
+```
+
+パッケージ: `github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider`
+
+### EXECUTION_PROVIDER 環境変数
+
+| 値 | Provider | 説明 |
+|----|----------|------|
+| `local` | local.Provider | cc-remote-agent を HTTP 呼び出し（agentURL 必須） |
+| `cloud_run_sandbox` | cloudrunsandbox.MockProvider | Cloud Run Sandbox 方式（将来実装） |
+| `docker_gce` | dockergce.MockProvider | Docker on GCE 方式（将来実装） |
+
+**必須**: `EXECUTION_PROVIDER` は必ず明示的に設定すること。未設定・不正値はエラー終了（デフォルト動作なし）。
+
+```
+EXECUTION_PROVIDER=local cc-tunnel -agent-url http://localhost:9091
+```
+
+### 使用方法
+
+`POST /api/conversations` または `POST /api/conversations/{id}/messages` に
+`execution_mode: "local" | "cloud_run_sandbox" | "docker_gce"` を指定。
+`EXECUTION_PROVIDER` 環境変数で起動時に provider を選択（必須、省略不可）。
+
+### 変更箇所の概要
+
+- `internal/provider/provider.go`: `ExecutionProvider` インターフェース定義
+- `internal/provider/local/local.go`: `remoteclient.Client` をラップする local provider
+- `internal/provider/cloudrunsandbox/mock.go`: cloud_run_sandbox mock provider（固定レスポンス）
+- `internal/provider/dockergce/mock.go`: docker_gce mock provider（固定レスポンス）
+- `internal/api/handler.go`: `Server` 構造体に `executionProvider` フィールドを追加、`SendMessage()` で利用
+- `internal/api/interfaces.go`: `remoteClient` インターフェースから `Execute` を削除（`ExecutionProvider` へ移管）
+- `apps/openapi/openapi.yaml`: `CreateConversationRequest` に `execution_mode` フィールドを追加
+- `cmd/cc-tunnel/main.go`: `EXECUTION_PROVIDER` 環境変数で provider を選択
+
 ## セッション隔離アーキテクチャ（Cloud Run Sandbox）
 
 ### 概要

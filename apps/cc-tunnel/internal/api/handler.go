@@ -12,20 +12,22 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
 type Server struct {
-	repo          repository
-	remote        remoteClient
-	batchInterval time.Duration // 0 = default 2s; override for testing
-	doneCh        chan struct{}  // closed when Execute goroutine completes; for testing only
+	repo              repository
+	remote            remoteClient
+	executionProvider provider.ExecutionProvider
+	batchInterval     time.Duration // 0 = default 2s; override for testing
+	doneCh            chan struct{}  // closed when Execute goroutine completes; for testing only
 }
 
 var _ ServerInterface = (*Server)(nil)
 
-func NewHandler(repo *db.Repository, remote *remoteclient.Client) *Server {
-	return &Server{repo: repo, remote: remote}
+func NewHandler(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider) *Server {
+	return &Server{repo: repo, remote: remote, executionProvider: execProvider}
 }
 
 func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +329,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		}()
 
 		slog.Info("message processing started", "conversation_id", convIDStr, "has_resume_session", resumeSessionID != "")
-		newSessionID, err := h.remote.Execute(execCtx, executeReq, func(event remoteclient.StreamEvent) {
+		newSessionID, err := h.executionProvider.Execute(execCtx, executeReq, func(event remoteclient.StreamEvent) {
 			slog.Info("stream event received", "type", event.Type, "subtype", event.SubType)
 			switch event.Type {
 			case "assistant":

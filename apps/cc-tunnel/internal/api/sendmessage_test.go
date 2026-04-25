@@ -277,7 +277,7 @@ func TestSendMessage_Returns202WithMessageID(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, doneCh: done}
+	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -330,7 +330,7 @@ func TestSendMessage_ContextCancelledDuringExecution_AssistantMessageSaved(t *te
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, doneCh: done}
+	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -377,7 +377,7 @@ func TestSendMessage_ExecuteContextIsIndependentOfRequestContext(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, doneCh: done}
+	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -418,7 +418,7 @@ func TestSendMessage_AssistantResponse_TitleUpdated(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, doneCh: done}
+	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -460,7 +460,7 @@ func TestSendMessage_StatusUpdatedToRunningThenCompleted(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, doneCh: done}
+	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -507,7 +507,7 @@ func TestSendMessage_StreamingMessageCreatedAtStart(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, doneCh: done}
+	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -549,7 +549,7 @@ func TestSendMessage_UpdateContentBlocksCalledOnCompletion(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, doneCh: done}
+	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -587,7 +587,7 @@ func TestSendMessage_MessageStatusCompletedOnSuccess(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, doneCh: done}
+	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -694,10 +694,11 @@ func TestSendMessage_BatchTickerSavesToolCalls(t *testing.T) {
 
 	done := make(chan struct{})
 	server := &Server{
-		repo:          repo,
-		remote:        remote,
-		batchInterval: 1 * time.Millisecond,
-		doneCh:        done,
+		repo:              repo,
+		remote:            remote,
+		executionProvider: remote,
+		batchInterval:     1 * time.Millisecond,
+		doneCh:            done,
 	}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
