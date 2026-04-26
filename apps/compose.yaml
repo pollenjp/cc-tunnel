@@ -32,8 +32,6 @@ services:
       - "${CC_REMOTE_AGENT_AUTH_PORT:-9091}"
 
   cc-tunnel:
-    profiles:
-      - full
     build:
       context: ./cc-tunnel
     command:
