@@ -10,6 +10,23 @@ jobs:
   test-cc-tunnel:
     name: "cc-tunnel: test"
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: cctunnel
+          POSTGRES_USER: cctunnel
+          POSTGRES_PASSWORD: cctunnel_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cctunnel -d cctunnel"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+          --health-start-period 10s
+    env:
+      DATABASE_URL: postgres://cctunnel:cctunnel_dev@localhost:5432/cctunnel?sslmode=disable
     defaults:
       run:
         working-directory: apps/cc-tunnel

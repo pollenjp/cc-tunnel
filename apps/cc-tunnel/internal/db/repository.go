@@ -8,6 +8,32 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// --- VMInstance ---
+
+type VMInstance struct {
+	ID               string
+	GCEInstanceName  string
+	Zone             string
+	InternalIP       string
+	Status           string
+	ActiveContainers int
+	IdleSince        *time.Time
+	CreatedAt        time.Time
+}
+
+// --- SessionEndpoint ---
+
+type SessionEndpoint struct {
+	ID             string
+	ConversationID string
+	VMInstanceID   string
+	ContainerName  string
+	Port           int
+	Status         string
+	LastActivity   time.Time
+	CreatedAt      time.Time
+}
+
 // --- Conversation ---
 
 type Conversation struct {
@@ -213,4 +239,206 @@ func (r *Repository) MergeMessageData(ctx context.Context, messageID string, ext
 		`UPDATE messages SET message_data = message_data || $1::jsonb, updated_at = NOW() WHERE id = $2`,
 		dataBytes, messageID)
 	return err
+}
+
+// --- vm_instances ---
+
+func (r *Repository) CreateVMInstance(ctx context.Context, gceInstanceName, zone, internalIP string) (*VMInstance, error) {
+	const q = `
+		INSERT INTO vm_instances (gce_instance_name, zone, internal_ip)
+		VALUES ($1, $2, $3)
+		RETURNING id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+	`
+	row := r.pool.QueryRow(ctx, q, gceInstanceName, zone, internalIP)
+	return scanVMInstance(row)
+}
+
+func (r *Repository) GetVMInstance(ctx context.Context, id string) (*VMInstance, error) {
+	const q = `
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		FROM vm_instances WHERE id = $1
+	`
+	row := r.pool.QueryRow(ctx, q, id)
+	return scanVMInstance(row)
+}
+
+func (r *Repository) GetVMInstanceByName(ctx context.Context, name string) (*VMInstance, error) {
+	const q = `
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		FROM vm_instances WHERE gce_instance_name = $1
+	`
+	row := r.pool.QueryRow(ctx, q, name)
+	return scanVMInstance(row)
+}
+
+func (r *Repository) UpdateVMInstanceStatus(ctx context.Context, id, status string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE vm_instances SET status = $1 WHERE id = $2`, status, id)
+	return err
+}
+
+func (r *Repository) UpdateVMInstanceIP(ctx context.Context, id, internalIP string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE vm_instances SET internal_ip = $1 WHERE id = $2`, internalIP, id)
+	return err
+}
+
+func (r *Repository) IncrementVMActiveContainers(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE vm_instances SET active_containers = active_containers + 1, idle_since = NULL WHERE id = $1`, id)
+	return err
+}
+
+func (r *Repository) DecrementVMActiveContainers(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE vm_instances SET active_containers = GREATEST(active_containers - 1, 0),
+		 idle_since = CASE WHEN active_containers - 1 <= 0 THEN NOW() ELSE idle_since END
+		 WHERE id = $1`, id)
+	return err
+}
+
+func (r *Repository) GetAvailableVMInstance(ctx context.Context, maxContainers int) (*VMInstance, error) {
+	const q = `
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		FROM vm_instances
+		WHERE status = 'running' AND active_containers < $1
+		ORDER BY active_containers DESC
+		LIMIT 1
+	`
+	row := r.pool.QueryRow(ctx, q, maxContainers)
+	return scanVMInstance(row)
+}
+
+func (r *Repository) ListVMInstances(ctx context.Context) ([]*VMInstance, error) {
+	const q = `
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		FROM vm_instances ORDER BY created_at ASC
+	`
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*VMInstance
+	for rows.Next() {
+		vm, err := scanVMInstance(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, vm)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) ListIdleVMInstances(ctx context.Context, idleThreshold time.Duration) ([]*VMInstance, error) {
+	const q = `
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		FROM vm_instances
+		WHERE status = 'running' AND active_containers = 0 AND idle_since < NOW() - $1::interval
+		ORDER BY idle_since ASC
+	`
+	rows, err := r.pool.Query(ctx, q, idleThreshold.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*VMInstance
+	for rows.Next() {
+		vm, err := scanVMInstance(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, vm)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) DeleteVMInstance(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM vm_instances WHERE id = $1`, id)
+	return err
+}
+
+// scanVMInstance scans a row into a VMInstance struct.
+type vmScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanVMInstance(row vmScanner) (*VMInstance, error) {
+	vm := &VMInstance{}
+	if err := row.Scan(&vm.ID, &vm.GCEInstanceName, &vm.Zone, &vm.InternalIP, &vm.Status, &vm.ActiveContainers, &vm.IdleSince, &vm.CreatedAt); err != nil {
+		return nil, err
+	}
+	return vm, nil
+}
+
+// --- session_endpoints ---
+
+func (r *Repository) CreateSessionEndpoint(ctx context.Context, conversationID, vmInstanceID, containerName string, port int) (*SessionEndpoint, error) {
+	const q = `
+		INSERT INTO session_endpoints (conversation_id, vm_instance_id, container_name, port)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, conversation_id, vm_instance_id, container_name, port, status, last_activity, created_at
+	`
+	row := r.pool.QueryRow(ctx, q, conversationID, vmInstanceID, containerName, port)
+	return scanSessionEndpoint(row)
+}
+
+func (r *Repository) GetSessionEndpointByConversationID(ctx context.Context, conversationID string) (*SessionEndpoint, error) {
+	const q = `
+		SELECT id, conversation_id, vm_instance_id, container_name, port, status, last_activity, created_at
+		FROM session_endpoints WHERE conversation_id = $1
+	`
+	row := r.pool.QueryRow(ctx, q, conversationID)
+	return scanSessionEndpoint(row)
+}
+
+func (r *Repository) UpdateSessionEndpointStatus(ctx context.Context, id, status string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE session_endpoints SET status = $1 WHERE id = $2`, status, id)
+	return err
+}
+
+func (r *Repository) UpdateSessionEndpointLastActivity(ctx context.Context, conversationID string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE session_endpoints SET last_activity = NOW() WHERE conversation_id = $1`, conversationID)
+	return err
+}
+
+func (r *Repository) ListIdleSessionEndpoints(ctx context.Context, idleThreshold time.Duration) ([]*SessionEndpoint, error) {
+	const q = `
+		SELECT id, conversation_id, vm_instance_id, container_name, port, status, last_activity, created_at
+		FROM session_endpoints
+		WHERE status = 'running' AND last_activity < NOW() - $1::interval
+		ORDER BY last_activity ASC
+	`
+	rows, err := r.pool.Query(ctx, q, idleThreshold.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*SessionEndpoint
+	for rows.Next() {
+		ep, err := scanSessionEndpoint(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, ep)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) DeleteSessionEndpoint(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM session_endpoints WHERE id = $1`, id)
+	return err
+}
+
+type epScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSessionEndpoint(row epScanner) (*SessionEndpoint, error) {
+	ep := &SessionEndpoint{}
+	if err := row.Scan(&ep.ID, &ep.ConversationID, &ep.VMInstanceID, &ep.ContainerName, &ep.Port, &ep.Status, &ep.LastActivity, &ep.CreatedAt); err != nil {
+		return nil, err
+	}
+	return ep, nil
 }

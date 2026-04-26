@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	dockerclient "github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	dockerclient "github.com/moby/moby/client"
 )
 
 // SDKRunner implements DockerRunner using the Docker SDK.
@@ -21,9 +20,19 @@ var _ DockerRunner = (*SDKRunner)(nil) // コンパイル時インターフェ�
 
 // NewSDKRunner creates a new SDKRunner connected to the local Docker daemon.
 func NewSDKRunner() (*SDKRunner, error) {
-	cli, err := dockerclient.NewClientWithOpts(
+	cli, err := dockerclient.New(
 		dockerclient.FromEnv,
-		dockerclient.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("docker client: %w", err)
+	}
+	return &SDKRunner{cli: cli}, nil
+}
+
+// NewSDKRunnerWithTCP creates a new SDKRunner connected to a remote Docker daemon via TCP.
+func NewSDKRunnerWithTCP(tcpEndpoint string) (*SDKRunner, error) {
+	cli, err := dockerclient.New(
+		dockerclient.WithHost("tcp://" + tcpEndpoint),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
@@ -51,19 +60,17 @@ func (r *SDKRunner) ContainerCreate(ctx context.Context, opts ContainerCreateOpt
 		}
 	}
 
-	resp, err := r.cli.ContainerCreate(
-		ctx,
-		&container.Config{
+	resp, err := r.cli.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
+		Config: &container.Config{
 			Image: opts.Image,
 			Env:   opts.Env,
 		},
-		&container.HostConfig{
+		HostConfig: &container.HostConfig{
 			Mounts: mounts,
 		},
-		netConfig,
-		nil,
-		opts.Name,
-	)
+		NetworkingConfig: netConfig,
+		Name:             opts.Name,
+	})
 	if err != nil {
 		return "", fmt.Errorf("container create: %w", err)
 	}
@@ -72,7 +79,7 @@ func (r *SDKRunner) ContainerCreate(ctx context.Context, opts ContainerCreateOpt
 
 // ContainerStart starts a previously created container.
 func (r *SDKRunner) ContainerStart(ctx context.Context, containerID string) error {
-	if err := r.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := r.cli.ContainerStart(ctx, containerID, dockerclient.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("container start: %w", err)
 	}
 	return nil
@@ -81,7 +88,7 @@ func (r *SDKRunner) ContainerStart(ctx context.Context, containerID string) erro
 // ContainerStop stops a running container (10s timeout).
 func (r *SDKRunner) ContainerStop(ctx context.Context, containerID string) error {
 	timeout := 10
-	if err := r.cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := r.cli.ContainerStop(ctx, containerID, dockerclient.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		return fmt.Errorf("container stop: %w", err)
 	}
 	return nil
@@ -89,7 +96,7 @@ func (r *SDKRunner) ContainerStop(ctx context.Context, containerID string) error
 
 // ContainerRemove removes a container forcefully.
 func (r *SDKRunner) ContainerRemove(ctx context.Context, containerID string) error {
-	if err := r.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
+	if _, err := r.cli.ContainerRemove(ctx, containerID, dockerclient.ContainerRemoveOptions{Force: true}); err != nil {
 		return fmt.Errorf("container remove: %w", err)
 	}
 	return nil
@@ -97,17 +104,17 @@ func (r *SDKRunner) ContainerRemove(ctx context.Context, containerID string) err
 
 // ContainerInspect returns the current state of a container.
 func (r *SDKRunner) ContainerInspect(ctx context.Context, containerID string) (*ContainerInfo, error) {
-	resp, err := r.cli.ContainerInspect(ctx, containerID)
+	resp, err := r.cli.ContainerInspect(ctx, containerID, dockerclient.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("container inspect: %w", err)
 	}
 
 	info := &ContainerInfo{
-		ID:   resp.ID,
-		Name: strings.TrimPrefix(resp.Name, "/"),
+		ID:   resp.Container.ID,
+		Name: strings.TrimPrefix(resp.Container.Name, "/"),
 	}
-	if resp.State != nil {
-		info.State = resp.State.Status
+	if resp.Container.State != nil {
+		info.State = string(resp.Container.State.Status)
 	}
 	return info, nil
 }
@@ -115,16 +122,16 @@ func (r *SDKRunner) ContainerInspect(ctx context.Context, containerID string) (*
 // ContainerList lists containers whose name contains namePrefix.
 // If all is true, includes stopped containers.
 func (r *SDKRunner) ContainerList(ctx context.Context, namePrefix string, all bool) ([]ContainerSummary, error) {
-	containers, err := r.cli.ContainerList(ctx, container.ListOptions{
+	result, err := r.cli.ContainerList(ctx, dockerclient.ContainerListOptions{
 		All:     all,
-		Filters: filters.NewArgs(filters.Arg("name", namePrefix)),
+		Filters: make(dockerclient.Filters).Add("name", namePrefix),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("container list: %w", err)
 	}
 
-	summaries := make([]ContainerSummary, 0, len(containers))
-	for _, c := range containers {
+	summaries := make([]ContainerSummary, 0, len(result.Items))
+	for _, c := range result.Items {
 		name := ""
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
@@ -132,7 +139,7 @@ func (r *SDKRunner) ContainerList(ctx context.Context, namePrefix string, all bo
 		summaries = append(summaries, ContainerSummary{
 			ID:    c.ID,
 			Name:  name,
-			State: c.State,
+			State: string(c.State),
 		})
 	}
 	return summaries, nil

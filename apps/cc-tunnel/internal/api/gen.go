@@ -8,6 +8,7 @@ package api
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -19,6 +20,10 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+)
+
+const (
+	BearerAuthScopes bearerAuthContextKey = "BearerAuth.Scopes"
 )
 
 // Defines values for AuthStatusAuthMethod.
@@ -163,6 +168,38 @@ func (e MessageStatus) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// AppAuthError defines model for AppAuthError.
+type AppAuthError struct {
+	Message string `json:"message"`
+}
+
+// AppAuthLoginRequest defines model for AppAuthLoginRequest.
+type AppAuthLoginRequest struct {
+	Username string `json:"username"`
+}
+
+// AppAuthLoginResponse defines model for AppAuthLoginResponse.
+type AppAuthLoginResponse struct {
+	Token string  `json:"token"`
+	User  AppUser `json:"user"`
+}
+
+// AppAuthMeResponse defines model for AppAuthMeResponse.
+type AppAuthMeResponse struct {
+	User AppUser `json:"user"`
+}
+
+// AppAuthUpdateMeRequest defines model for AppAuthUpdateMeRequest.
+type AppAuthUpdateMeRequest struct {
+	Nickname string `json:"nickname"`
+}
+
+// AppUser defines model for AppUser.
+type AppUser struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // AuthCancelResponse defines model for AuthCancelResponse.
@@ -316,11 +353,20 @@ type ToolCallData struct {
 // ConversationId defines model for ConversationId.
 type ConversationId = openapi_types.UUID
 
+// bearerAuthContextKey is the context key for BearerAuth security scheme
+type bearerAuthContextKey string
+
 // GetAuthOutputParams defines parameters for GetAuthOutput.
 type GetAuthOutputParams struct {
 	// Since Cursor position to start from (0 = all lines)
 	Since *int `form:"since,omitempty" json:"since,omitempty"`
 }
+
+// AppAuthLoginJSONRequestBody defines body for AppAuthLogin for application/json ContentType.
+type AppAuthLoginJSONRequestBody = AppAuthLoginRequest
+
+// AppAuthUpdateMeJSONRequestBody defines body for AppAuthUpdateMe for application/json ContentType.
+type AppAuthUpdateMeJSONRequestBody = AppAuthUpdateMeRequest
 
 // SubmitAuthInputJSONRequestBody defines body for SubmitAuthInput for application/json ContentType.
 type SubmitAuthInputJSONRequestBody = AuthInputRequest
@@ -336,6 +382,18 @@ type SendMessageJSONRequestBody = SendMessageRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Login with username
+	// (POST /app-auth/login)
+	AppAuthLogin(w http.ResponseWriter, r *http.Request)
+	// Logout
+	// (POST /app-auth/logout)
+	AppAuthLogout(w http.ResponseWriter, r *http.Request)
+	// Get current user info
+	// (GET /app-auth/me)
+	AppAuthGetMe(w http.ResponseWriter, r *http.Request)
+	// Update current user info
+	// (PATCH /app-auth/me)
+	AppAuthUpdateMe(w http.ResponseWriter, r *http.Request)
 	// Cancel the in-progress login PTY process
 	// (POST /auth/cancel)
 	CancelLogin(w http.ResponseWriter, r *http.Request)
@@ -379,6 +437,80 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// AppAuthLogin operation middleware
+func (siw *ServerInterfaceWrapper) AppAuthLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AppAuthLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AppAuthLogout operation middleware
+func (siw *ServerInterfaceWrapper) AppAuthLogout(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AppAuthLogout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AppAuthGetMe operation middleware
+func (siw *ServerInterfaceWrapper) AppAuthGetMe(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AppAuthGetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AppAuthUpdateMe operation middleware
+func (siw *ServerInterfaceWrapper) AppAuthUpdateMe(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AppAuthUpdateMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // CancelLogin operation middleware
 func (siw *ServerInterfaceWrapper) CancelLogin(w http.ResponseWriter, r *http.Request) {
@@ -700,6 +832,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/app-auth/login", wrapper.AppAuthLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/app-auth/logout", wrapper.AppAuthLogout)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/app-auth/me", wrapper.AppAuthGetMe)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/app-auth/me", wrapper.AppAuthUpdateMe)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cancel", wrapper.CancelLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/input", wrapper.SubmitAuthInput)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.InitiateLogin)
@@ -718,37 +854,41 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"AP//zo/4SrUfAAA=",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

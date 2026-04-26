@@ -10,10 +10,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
 	dockerpkg "github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/docker"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/gce"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/logging"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/cloudrunsandbox"
@@ -57,7 +59,7 @@ func main() {
 	// Auth remote: always points to the auth agent (cc-remote-agent-auth in compose).
 	remote := remoteclient.NewClient(*agentURL)
 
-	execProvider, err := newProviderFromEnv(os.Getenv("EXECUTION_PROVIDER"))
+	execProvider, err := newProviderFromEnv(ctx, os.Getenv("EXECUTION_PROVIDER"), repo)
 	if err != nil {
 		slog.Error("invalid EXECUTION_PROVIDER", "err", err)
 		os.Exit(1)
@@ -109,7 +111,7 @@ func getEnvOrDefault(key, defaultVal string) string {
 
 // newProviderFromEnv selects the ExecutionProvider based on envVal.
 // Returns an error for unknown or empty envVal.
-func newProviderFromEnv(envVal string) (provider.ExecutionProvider, error) {
+func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository) (provider.ExecutionProvider, error) {
 	switch envVal {
 	case "local":
 		runner, err := dockerpkg.NewSDKRunner()
@@ -127,7 +129,27 @@ func newProviderFromEnv(envVal string) (provider.ExecutionProvider, error) {
 	case "cloud_run_sandbox":
 		return cloudrunsandbox.New(), nil
 	case "docker_gce":
-		return dockergce.New(), nil
+		gceClient, err := gce.NewSDKGCEClient(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("GCE client: %w", err)
+		}
+		gceProjectID := os.Getenv("GCE_PROJECT_ID")
+		if gceProjectID == "" {
+			return nil, fmt.Errorf("GCE_PROJECT_ID environment variable is required for docker_gce provider")
+		}
+		agentImage := os.Getenv("CC_REMOTE_AGENT_IMAGE")
+		if agentImage == "" {
+			return nil, fmt.Errorf("CC_REMOTE_AGENT_IMAGE environment variable is required for docker_gce provider")
+		}
+		cfg := dockergce.DockerGCEConfig{
+			ProjectID:   gceProjectID,
+			Zone:        getEnvOrDefault("GCE_ZONE", "us-central1-a"),
+			MachineType: getEnvOrDefault("GCE_MACHINE_TYPE", "e2-medium"),
+			AgentImage:  agentImage,
+			AgentPort:   9091,
+			IdleTimeout: 15 * time.Minute,
+		}
+		return dockergce.NewDockerGCEProvider(cfg, gceClient, repo), nil
 	default:
 		return nil, fmt.Errorf("unknown EXECUTION_PROVIDER: %q", envVal)
 	}

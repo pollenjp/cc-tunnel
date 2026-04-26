@@ -6,6 +6,7 @@ import type { Conversation } from '../api/client';
 function makeConv(overrides: Partial<Conversation> & { id: string }): Conversation {
   return {
     title: 'テスト会話',
+    model: 'claude-sonnet-4-6',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     status: 'idle',

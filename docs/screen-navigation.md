@@ -6,13 +6,8 @@ cc-tunnel フロントエンドは「アプリ認証」と「Agent 認証」の 
 
 | 認証種別 | 説明 | 現在の実装 | 将来の実装 |
 |----------|------|------------|------------|
-| **アプリ認証** | cc-tunnel アプリへのログイン | モック認証（ユーザー名: `test user`） | Google IAP 等 |
-| **Agent 認証** | Claude Code 等の外部 Agent への認証 | cc-remote-agent-auth 経由（PTY フロー） | 他 Agent 対応拡張 |
-
-> **現在の実装との差異**:
-> 現在の実装（2026-04-25 時点）はアプリ認証を持たず、Agent 認証（Claude CLI への認証）のみが
-> `AuthGuard` により全画面をガードしている。画面ルートも `/` と `/conversation/:id` の 2 つのみ。
-> 本設計書は今後追加予定の画面構成を記述する。
+| **アプリ認証** | cc-tunnel アプリへのログイン | モック認証（ユーザー名: `test user`）— **実装済み** | Google IAP 等 |
+| **Agent 認証** | Claude Code 等の外部 Agent への認証 | cc-remote-agent-auth 経由（PTY フロー）— **実装済み** | 他 Agent 対応拡張 |
 
 ---
 
@@ -214,11 +209,14 @@ Agent 認証は外部 AI Agent（Claude Code 等）への認証。`/settings/age
 
 ## 7. 現在の実装と将来拡張の対応表
 
-| 項目 | 現在の実装 | 将来の拡張 |
-|------|------------|------------|
-| アプリ認証 | なし（モック準備中） | Google IAP 等の外部 IdP |
-| ホーム画面 | `/` = チャット画面兼用 | `/` と `/chat` を分離 |
-| 認証ガード | Agent 認証のみ（`AuthGuard`） | アプリ認証ガード追加（`/chat`, `/settings/*`） |
-| Agent | Claude Code のみ | GitHub Copilot, Cursor CLI を追加 |
-| ルーティング | `/`, `/conversation/:id` のみ | `/login`, `/chat`, `/settings/account`, `/settings/agents` を追加 |
-| ユーザーアイコン | なし | 右上に常時表示 |
+| 項目 | 実装状態 | 将来の拡張 |
+|------|----------|------------|
+| アプリ認証 | モック認証 実装済み（`POST /app-auth/login`、in-memory session） | Google IAP 等の外部 IdP |
+| ホーム画面 | `/` = HomePage 実装済み | - |
+| チャット画面 | `/chat`, `/chat/:id` = ChatPage 実装済み | - |
+| 認証ガード | AppAuthGuard（アプリ認証）+ AuthGuard（Agent 認証）実装済み | - |
+| Agent | Claude Code のみ 実装済み | GitHub Copilot, Cursor CLI を追加 |
+| ルーティング | `/`, `/login`, `/chat`, `/chat/:id`, `/settings/account`, `/settings/agents` 実装済み | - |
+| ユーザーアイコン | UserMenu（右上ドロップダウン）実装済み | - |
+| ニックネーム設定 | AccountSettingsPage 実装済み（`PATCH /app-auth/me`） | プロフィール画像等 |
+| Agent ログイン設定 | AgentSettingsPage 実装済み | GitHub Copilot, Cursor CLI 追加 |

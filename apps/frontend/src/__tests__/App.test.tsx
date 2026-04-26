@@ -41,6 +41,14 @@ vi.mock('../hooks/useConversationListPoller', () => ({
   useConversationListPoller: vi.fn(),
 }));
 
+vi.mock('../contexts/AppAuthProvider', () => ({
+  AppAuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('../hooks/useAppAuth', () => ({
+  useAppAuth: vi.fn(),
+}));
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, act, screen } from '@testing-library/react';
 import { fireEvent } from '@testing-library/react';
@@ -49,10 +57,12 @@ import App from '../App';
 import * as clientModule from '../api/client';
 import type { Conversation } from '../api/client';
 import { useConversationListPoller } from '../hooks/useConversationListPoller';
+import { useAppAuth } from '../hooks/useAppAuth';
 
 function makeConv(overrides: Partial<Conversation> & { id: string }): Conversation {
   return {
     title: 'テスト会話',
+    model: 'claude-sonnet-4-6',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     status: 'idle',
@@ -65,9 +75,21 @@ const flush = async () => {
   await act(async () => { await Promise.resolve(); });
 };
 
+function mockAppAuth(overrides: { user?: { id: string; name: string } | null } = {}) {
+  vi.mocked(useAppAuth).mockReturnValue({
+    user: overrides.user !== undefined ? overrides.user : { id: 'test-user', name: 'Test User' },
+    token: 'test-token',
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    updateNickname: vi.fn(),
+  });
+}
+
 describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAppAuth();
   });
 
   it('選択した会話のIDがChatViewのconversationIdとして渡されること', async () => {
@@ -77,7 +99,7 @@ describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(clientModule.getConversation).mockResolvedValue({ ...conv, messages: [] } as any);
 
-    render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/chat']}><App /></MemoryRouter>);
     await flush();
 
     await act(async () => {
@@ -96,7 +118,7 @@ describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(clientModule.getConversation).mockResolvedValue({ ...conv, messages: [] } as any);
 
-    render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/chat']}><App /></MemoryRouter>);
     await flush();
 
     await act(async () => {
@@ -118,7 +140,7 @@ describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(clientModule.getConversation).mockResolvedValue({ ...conv, messages: [] } as any);
 
-    render(<MemoryRouter initialEntries={['/conversation/conv-spinning']}><App /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/chat/conv-spinning']}><App /></MemoryRouter>);
     await flush();
 
     // 初期状態では hasRunning=false
@@ -141,10 +163,71 @@ describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
   it('会話未選択時は ChatView が表示されないこと', async () => {
     vi.mocked(clientModule.listConversations).mockResolvedValue([]);
 
-    render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/chat']}><App /></MemoryRouter>);
     await flush();
 
     expect(screen.queryByTestId('chat-view')).toBeNull();
-    expect(screen.getByText(/左のサイドバーから/)).toBeTruthy();
+    expect(screen.getByTestId('agent-selector')).toBeTruthy();
+  });
+});
+
+describe('App ルーティング (Phase 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(clientModule.listConversations).mockResolvedValue([]);
+  });
+
+  it('/ → HomePage が表示されること', async () => {
+    mockAppAuth();
+
+    render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
+    await flush();
+
+    expect(screen.getByRole('heading', { name: 'cc-tunnel' })).toBeTruthy();
+    expect(screen.getByText('チャット開始')).toBeTruthy();
+  });
+
+  it('/login → LoginPage が表示されること（未認証時）', async () => {
+    mockAppAuth({ user: null });
+
+    render(<MemoryRouter initialEntries={['/login']}><App /></MemoryRouter>);
+    await flush();
+
+    expect(screen.getByRole('heading', { name: 'ログイン' })).toBeTruthy();
+    expect(screen.getByPlaceholderText('ユーザー名')).toBeTruthy();
+  });
+
+  it('/chat → 未認証時 /login にリダイレクトされること', async () => {
+    mockAppAuth({ user: null });
+
+    render(<MemoryRouter initialEntries={['/chat']}><App /></MemoryRouter>);
+    await flush();
+
+    expect(screen.getByRole('heading', { name: 'ログイン' })).toBeTruthy();
+    expect(screen.queryByText(/左のサイドバーから/)).toBeNull();
+  });
+
+  it('/conversation/:id → /chat/:id にリダイレクトされること', async () => {
+    mockAppAuth();
+    vi.mocked(clientModule.listConversations).mockResolvedValue([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(clientModule.getConversation).mockResolvedValue({ id: 'c1', messages: [] } as any);
+
+    render(<MemoryRouter initialEntries={['/conversation/c1']}><App /></MemoryRouter>);
+    await flush();
+
+    // /chat/c1 にリダイレクトされ ChatPage + ChatView が表示されること
+    const chatView = screen.getByTestId('chat-view');
+    expect(chatView).toBeTruthy();
+    expect(chatView.getAttribute('data-conversation-id')).toBe('c1');
+  });
+
+  it('/settings/account → 未認証時 /login にリダイレクトされること', async () => {
+    mockAppAuth({ user: null });
+
+    render(<MemoryRouter initialEntries={['/settings/account']}><App /></MemoryRouter>);
+    await flush();
+
+    expect(screen.getByRole('heading', { name: 'ログイン' })).toBeTruthy();
   });
 });

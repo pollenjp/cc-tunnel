@@ -13,7 +13,7 @@ echo "Building cc-remote-agent image..."
 docker compose -f prepare.compose.yaml build
 
 echo "Starting infrastructure (postgres + cc-remote-agent-auth)..."
-docker compose up -d
+docker compose up -d --remove-orphans
 
 echo ""
 echo "Infrastructure ready. Run in separate terminals:"
