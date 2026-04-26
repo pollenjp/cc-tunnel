@@ -1,47 +1,72 @@
 @startuml docker_gce_session_start
-' セッション開始〜コンテナ生成のシーケンス図
-title Docker on GCE — セッション開始〜コンテナ生成シーケンス
+' DockerGCEProvider 経由のセッション開始シーケンス（現在: MockProvider / 将来: GCE + Docker）
+title Docker on GCE — セッション開始シーケンス\n現在: MockProvider（即時固定レスポンス）/ 将来: GCE VM + Docker コンテナ起動
 
 participant Browser
-participant "cc-tunnel (Cloud Run)" as CloudRun
-participant SessionManager as SM
+participant "cc-tunnel API\n(handler.go)" as CloudRun
+participant "DockerGCEProvider\n[ExecutionProvider]" as Provider
 participant PostgreSQL as DB
 participant "GCE API" as GCEAPI
 participant "GCE VM" as VM
-participant "Docker Daemon" as Docker
-participant "cc-remote-agent Container" as Container
+participant "Docker Daemon\n(SSH トンネル)" as Docker
+participant "cc-remote-agent\nContainer" as Container
 
 Browser -> CloudRun: POST /api/conversations\n(新規会話作成)
 CloudRun -> DB: INSERT conversation
 CloudRun --> Browser: 201 Created {id, status: "idle"}
 
 Browser -> CloudRun: POST /api/conversations/{id}/messages\n{content: "Hello"}
-CloudRun -> SM: GetOrCreateEndpoint(conversation_id)
 
-alt VM 稼働中 (warm)
-  SM -> DB: SELECT session_endpoint\nWHERE conversation_id = ?
-  note over SM: エンドポイント未登録 → 新規コンテナ作成
-  SM -> Docker: docker run -d -p 909N:9091 cc-remote-agent
-  Docker -> Container: コンテナ起動 (1-3秒)
-  Container --> Docker: Ready
-  SM -> DB: INSERT session_endpoint\n{conversation_id, vm_ip, port, status: "running"}
-  SM --> CloudRun: Endpoint{ip: "10.128.0.5", port: 9093}
-else VM 未稼働 (cold)
-  SM -> GCEAPI: instances.insert\n(e2-standard-2, startup-script)
-  note over GCEAPI,VM: VM 起動 30-60秒
-  GCEAPI --> SM: {status: "RUNNING", internalIP: "10.128.0.5"}
-  SM -> DB: INSERT vm_instance\n{ip, status: "running"}
-  SM -> Docker: docker run -d -p 9091:9091 cc-remote-agent
-  Docker -> Container: コンテナ起動 (1-3秒)
-  Container --> Docker: Ready
-  SM -> DB: INSERT session_endpoint\n{conversation_id, vm_ip, port}
-  SM --> CloudRun: Endpoint{ip: "10.128.0.5", port: 9091}
+CloudRun -> Provider: Execute(ctx, req, onEvent)\n[ExecutionProvider.Execute()]
+
+alt 現在の実装 (MockProvider — provider/dockergce/mock.go)
+  note over Provider
+    GCE/Docker 操作なし。スタブ実装。
+    local provider との違い:
+    ・local: LocalDockerProvider が sessionProvider.GetOrCreate() 経由で
+             DooD (docker.sock) によりローカル Docker コンテナを起動
+    ・docker_gce (現在): 何もせず固定レスポンスを返す
+  end note
+  Provider --> CloudRun: onEvent(assistant: "mock response")\n+ onEvent(result: "success")\nsessionID: "mock-session-{uuid}"
+
+else 将来の実装 (SessionManager + GCE + Docker)
+  note over Provider
+    local との違い:
+    ・local: DooD (docker.sock) でローカル Docker Daemon を操作
+    ・docker_gce: SSH トンネル経由でリモート GCE VM の Docker Daemon を操作
+    SessionManager は local 固有パターン;
+    docker_gce では Provider 内部で同等ロジックを実装予定
+  end note
+  Provider -> DB: SELECT session_endpoints\nWHERE conversation_id = ?
+
+  alt VM 稼働中 (warm)
+    note over Provider: エンドポイント未登録 → 新規コンテナ作成
+    Provider -> Docker: docker run -d -p 909N:9091 cc-remote-agent\n(SSH トンネル経由)
+    Docker -> Container: コンテナ起動 (1-3秒)
+    Container --> Docker: Ready
+    Provider -> DB: INSERT session_endpoint\n{conversation_id, vm_ip, port, status: "running"}
+    Provider -> Container: POST /execute {prompt, session_id}
+    Container -> Container: claude CLI 実行 (ndjson streaming)
+    Container --> Provider: ndjson stream
+    Provider --> CloudRun: onEvent(...) + sessionID
+
+  else VM 未稼働 (cold)
+    Provider -> GCEAPI: instances.insert\n(e2-standard-2, startup-script)
+    note over GCEAPI,VM: VM 起動 30-60秒
+    GCEAPI --> Provider: {status: "RUNNING", internalIP: "10.128.0.5"}
+    Provider -> DB: INSERT vm_instance\n{ip, status: "running"}
+    Provider -> Docker: docker run -d -p 9091:9091 cc-remote-agent\n(SSH トンネル経由)
+    Docker -> Container: コンテナ起動 (1-3秒)
+    Container --> Docker: Ready
+    Provider -> DB: INSERT session_endpoint\n{conversation_id, vm_ip, port}
+    Provider -> Container: POST /execute {prompt, session_id}
+    Container -> Container: claude CLI 実行 (ndjson streaming)
+    Container --> Provider: ndjson stream
+    Provider --> CloudRun: onEvent(...) + sessionID
+  end
 end
 
-CloudRun -> Container: POST /execute\n{prompt, session_id, ...}
-Container -> Container: claude CLI 実行\n(ndjson streaming)
-Container --> CloudRun: ndjson stream
-CloudRun -> DB: UPDATE message\n(content_blocks, status)
+CloudRun -> DB: UPDATE message (content_blocks, status)
 CloudRun --> Browser: 202 Accepted
 
 @enduml

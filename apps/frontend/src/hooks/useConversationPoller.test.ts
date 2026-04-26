@@ -187,9 +187,9 @@ describe('useConversationPoller', () => {
     expect(onCompleted).toHaveBeenCalled();
     // onMessages should be called before onCompleted with msg-final
     expect(callOrder).toEqual(['onMessages', 'onMessages', 'onCompleted']);
-    const lastOnMessageCall = onMessages.mock.calls[onMessages.mock.calls.length - 1][0];
+    const lastOnMessageCall = (onMessages.mock.calls as unknown[][])[onMessages.mock.calls.length - 1]![0];
     expect(lastOnMessageCall).toHaveLength(1);
-    expect(lastOnMessageCall[0]).toMatchObject({ id: 'msg-final' });
+    expect((lastOnMessageCall as unknown[])[0]).toMatchObject({ id: 'msg-final' });
 
     const callCountAfterComplete = mockGetConversation.mock.calls.length;
 
@@ -215,7 +215,7 @@ describe('useConversationPoller', () => {
           onCompleted,
           intervalMs: 2000,
         }),
-      { initialProps: { id: 'conv-1', running: true } },
+      { initialProps: { id: 'conv-1' as string | null, running: true } },
     );
 
     await act(async () => {

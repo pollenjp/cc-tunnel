@@ -2,43 +2,39 @@
 ' Level 2: Container (Docker on GCE Architecture)
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
 
-title Docker on GCE Architecture — C4 Container Diagram
+title Docker on GCE Provider — C4 Container Diagram\n現在: MockProvider スタブ / 将来: SessionManager + GCE VM 実装
 
 Person(user, "User", "ブラウザユーザー")
 
 System_Ext(anthropic, "Anthropic API", "Claude AI (claude-sonnet等)")
 System_Ext(cloudsql, "Cloud SQL (PostgreSQL)", "会話・メッセージ・セッションメタデータ永続化")
-System_Ext(gceapi, "GCE API (Compute Engine)", "VM ライフサイクル管理")
+System_Ext(gceapi, "GCE API (Compute Engine)", "VM ライフサイクル管理 (create/delete)\n【将来実装】")
 
 System_Boundary(cctunnel_system, "cc-tunnel (Cloud Run)") {
   Container(frontend, "Frontend", "nginx + React", "会話UIを提供。\nnginxがAPIリクエスト(/api/*)を\ncc-tunnel APIにリバースプロキシ。\nPort: 3000")
 
   Container(api, "cc-tunnel API", "Go (net/http)", "会話・メッセージ管理REST API。\n202 Accepted後にgoroutineで\nClaude CLI実行・DB保存を行う。\nPort: 8080")
 
-  Container(sessionmanager, "SessionManager", "Go (新規コンポーネント)", "セッション管理。\n会話→エンドポイントのマッピング。\nGCE VM + Docker コンテナのライフサイクル管理。\nIdleChecker / VMScaler goroutine。")
+  Container(dgce_provider, "DockerGCEProvider", "ExecutionProvider 実装 (Go)", "ExecutionProvider interface を実装。\n\n【現在】MockProvider (provider/dockergce/mock.go):\n実際の GCE/Docker 操作なし。固定レスポンスを返すスタブ。\n\n【将来】SessionManager:\n会話→エンドポイントのマッピング。\nGCE VM + Docker コンテナのライフサイクル管理。\nIdleChecker / VMScaler goroutine。\n\n※ local provider (DooD: docker.sock) とは異なり\n　 SSH トンネル経由でリモート Docker Daemon を操作。")
 }
 
-System_Boundary(gce_vm, "GCE VM (Docker Host, Internal IP)") {
+System_Boundary(gce_vm, "GCE VM (Docker Host, Internal IP)\n【将来実装予定】") {
   Container(docker, "Docker Daemon", "Docker Engine", "コンテナのライフサイクル管理。\nSSH トンネル経由で操作。")
 
   Container(session_abc, "session-abc", "cc-remote-agent (Go)", "会話セッション abc 用コンテナ。\nClaude CLIをHTTP APIとしてラップ。\nPort: 9091")
 
   Container(session_def, "session-def", "cc-remote-agent (Go)", "会話セッション def 用コンテナ。\nClaude CLIをHTTP APIとしてラップ。\nPort: 9092")
-
-  Container(session_n, "session-N", "cc-remote-agent (Go)", "会話セッション N 用コンテナ。\nClaude CLIをHTTP APIとしてラップ。\nPort: 909N")
 }
 
 Rel(user, frontend, "Webブラウザでアクセス", "HTTP")
 Rel(frontend, api, "REST API呼び出し (/api/*)", "HTTP")
 Rel(api, cloudsql, "会話・メッセージの読み書き", "PostgreSQL (pgx/v5)")
-Rel(sessionmanager, gceapi, "VM ライフサイクル管理 (create/delete)", "HTTPS (Compute Engine API)")
-Rel(sessionmanager, docker, "コンテナ管理 (docker run/stop/rm)", "SSH トンネル, Docker API")
-Rel(api, sessionmanager, "GetOrCreateEndpoint(conversation_id)")
-Rel(api, session_abc, "Claude CLI実行 (VPC Connector経由)", "HTTP")
-Rel(api, session_def, "Claude CLI実行 (VPC Connector経由)", "HTTP")
-Rel(api, session_n, "Claude CLI実行 (VPC Connector経由)", "HTTP")
+Rel(api, dgce_provider, "Execute(ctx, req, onEvent)\n[ExecutionProvider interface]")
+Rel(dgce_provider, gceapi, "【将来】VM ライフサイクル管理 (create/delete)", "HTTPS (Compute Engine API)")
+Rel(dgce_provider, docker, "【将来】コンテナ管理 (docker run/stop/rm)", "SSH トンネル, Docker API")
+Rel(dgce_provider, session_abc, "【将来】Claude CLI実行 (VPC Connector経由)", "HTTP")
+Rel(dgce_provider, session_def, "【将来】Claude CLI実行 (VPC Connector経由)", "HTTP")
 Rel(session_abc, anthropic, "LLM呼び出し", "HTTPS")
 Rel(session_def, anthropic, "LLM呼び出し", "HTTPS")
-Rel(session_n, anthropic, "LLM呼び出し", "HTTPS")
 
 @enduml

@@ -106,6 +106,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/app-auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login with username */
+        post: operations["AppAuthLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app-auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current user info */
+        get: operations["AppAuthGetMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update current user info */
+        patch: operations["AppAuthUpdateMe"];
+        trace?: never;
+    };
+    "/app-auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["AppAuthLogout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations": {
         parameters: {
             query?: never;
@@ -163,6 +215,26 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AppUser: {
+            id: string;
+            name: string;
+        };
+        AppAuthLoginRequest: {
+            username: string;
+        };
+        AppAuthLoginResponse: {
+            token: string;
+            user: components["schemas"]["AppUser"];
+        };
+        AppAuthMeResponse: {
+            user: components["schemas"]["AppUser"];
+        };
+        AppAuthUpdateMeRequest: {
+            nickname: string;
+        };
+        AppAuthError: {
+            message: string;
+        };
         AuthStatus: {
             loggedIn: boolean;
             /** @enum {string} */
@@ -206,6 +278,12 @@ export interface components {
             /** @default claude-sonnet-4-6 */
             model: string;
             system_prompt?: string;
+            /**
+             * @description 実行環境の選択（デフォルト: local）
+             * @default local
+             * @enum {string}
+             */
+            execution_mode: "local" | "cloud_run_sandbox" | "docker_gce";
         };
         Conversation: {
             /** Format: uuid */
@@ -411,6 +489,110 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AuthOutputResponse"];
                 };
+            };
+        };
+    };
+    AppAuthLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppAuthLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Login successful */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAuthLoginResponse"];
+                };
+            };
+        };
+    };
+    AppAuthGetMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAuthMeResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAuthError"];
+                };
+            };
+        };
+    };
+    AppAuthUpdateMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppAuthUpdateMeRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAuthMeResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAuthError"];
+                };
+            };
+        };
+    };
+    AppAuthLogout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Logout successful */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
