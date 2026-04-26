@@ -1,5 +1,6 @@
 locals {
   activate_apis = [
+    "artifactregistry.googleapis.com",
     "compute.googleapis.com",
     "iam.googleapis.com",
   ]

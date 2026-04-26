@@ -21,7 +21,7 @@ locals {
   )
 
   developer_principals = {
-    local = [ "user:polleninjp@gmail.com", ],
+    local = ["user:polleninjp@gmail.com", ],
   }[local.env]
 
   gcp_project_id = {
@@ -42,7 +42,7 @@ locals {
     read_terragrunt_config("${get_terragrunt_dir()}/vars_for_root.hcl"),
     { locals = {} }
   )
-  provider_default_region = lookup(local.each_unit_vars.locals, "provider_default_region", "asia-northeast1")
+  provider_default_region = lookup(local.each_unit_vars.locals, "provider_default_region", "us-central1")
   provider_default_labels = merge(
     {
       env        = local.env
@@ -71,12 +71,12 @@ terraform {
     }
   }
 
-  %{ if local.tfstate_bucket_name != null ~}
+  %{if local.tfstate_bucket_name != null~}
   backend "gcs" {
     bucket = "${local.tfstate_bucket_name}"
     prefix = "${path_relative_to_include()}"
   }
-  %{ endif ~}
+  %{endif~}
 }
 EOF
 }
@@ -91,10 +91,10 @@ provider "google" {
   region         = "${local.provider_default_region}"
   default_labels = ${jsonencode(local.provider_default_labels)}
 
-  %{ if local.terraform_runner_sa_email != null
-        && path_relative_to_include() != "prepare/${local.env}/terraform_sa" ~}
+  %{if local.terraform_runner_sa_email != null
+&& path_relative_to_include() != "prepare/${local.env}/terraform_sa"~}
   impersonate_service_account = "${local.terraform_runner_sa_email}"
-  %{ endif ~}
+  %{endif~}
 }
 EOF
 }

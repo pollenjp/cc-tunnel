@@ -51,3 +51,19 @@ depends = ["clean:*"]
 [tasks."clean:terragrunt"]
 description = "Remove all .terragrunt-cache directories"
 run = 'find . -type d -name ".terragrunt-cache" -prune -exec rm -rf {} +'
+
+[tasks."tf:fmt"]
+description = "Format all terragrunt files"
+run = 'terragrunt hcl fmt'
+
+[tasks."tf:lint"]
+description = "Lint all terragrunt files"
+depends = ["tf:lint:*"]
+
+[tasks."tf:lint:validate"]
+description = "Validate all terragrunt files"
+run = 'terragrunt hcl validate'
+
+[tasks."tf:lint:format"]
+description = "Check formatting of all terragrunt files"
+run = 'terragrunt hcl fmt --check'
