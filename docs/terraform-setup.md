@@ -94,6 +94,30 @@ terragrunt apply
 state が正常であれば再 apply しても SA 名は変わらない。
 `terragrunt plan` で差分を必ず確認すること。
 
+## modules/cc-tunnel について
+
+`terraform/modules/cc-tunnel/` は以下のリソースを管理する:
+- Cloud Build BuilderSA (google_service_account)
+- BuilderSA に logging.logWriter / AR writer 権限付与
+- GitHub push trigger (google_cloudbuild_trigger, 1st gen)
+- apply 後の初回ビルド実行 (terraform_data + local-exec gcloud)
+
+### 前提: Cloud Build GitHub App connection（手動操作必須）
+
+1st gen の GitHub trigger を使う場合、事前に Cloud Build GitHub App のインストールが必要:
+1. GCP Console > Cloud Build > Triggers > Manage repositories を開く
+2. Cloud Build GitHub App をインストールし、cc-tunnel リポジトリを接続する
+
+この接続は Terraform では自動化されていない。apply 前に手動で完了させること。
+
+### Terraform Runner SA に必要な追加ロール
+
+| ロール | 用途 |
+|--------|------|
+| roles/cloudbuild.builds.editor | Cloud Build trigger 作成・更新 + run/describe |
+
+このロールは `terraform/modules/prepare_terraform_sa/main.tf` で管理される。
+
 ## docker_gce Provider との関係
 
 `cmd_cctunnel_docker_gce_impl` で実装された DockerGCEProvider は、
