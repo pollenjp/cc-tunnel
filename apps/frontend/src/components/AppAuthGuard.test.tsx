@@ -5,7 +5,7 @@ vi.mock('../hooks/useAppAuth', () => ({
 import { describe, it, expect, vi } from 'vitest';
 import { useEffect } from 'react';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import AppAuthGuard from './AppAuthGuard';
 import { useAppAuth } from '../hooks/useAppAuth';
 import type { AppUser } from '../api/app-auth';
@@ -35,22 +35,28 @@ let capturedPath = '/';
 
 function LocationCapture() {
   const location = useLocation();
-
   useEffect(() => {
     capturedPath = location.pathname + location.search;
   }, [location.pathname, location.search]);
-
   return null;
 }
 
+// <Routes> is required: without it, AppAuthGuard stays mounted after Navigate fires and infinitely recomputes redirect URLs.
 function renderGuard(path = '/') {
   capturedPath = path;
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <LocationCapture />
-      <AppAuthGuard>
-        <div data-testid="children">protected content</div>
-      </AppAuthGuard>
+      <Routes>
+        <Route path="/login" element={<LocationCapture />} />
+        <Route
+          path="*"
+          element={
+            <AppAuthGuard>
+              <div data-testid="children">protected content</div>
+            </AppAuthGuard>
+          }
+        />
+      </Routes>
     </MemoryRouter>,
   );
 }
