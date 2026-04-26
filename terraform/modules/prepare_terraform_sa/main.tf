@@ -26,7 +26,7 @@ resource "google_project_iam_member" "sa_roles" {
 
     # "roles/run.admin",                      # Cloud Run サービスの作成・更新・削除
     # "roles/cloudbuild.builds.editor",        # Cloud Build トリガーの作成・更新
-    # "roles/artifactregistry.admin",          # Artifact Registry リポジトリの管理
+    "roles/artifactregistry.admin",          # Artifact Registry リポジトリの管理
 
     # https://docs.cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run#terraform
     # "roles/iap.admin",

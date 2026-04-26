@@ -7,7 +7,7 @@ uv = "0.11.7"
 [tasks."tf:init:all"]
 description = "Run terragrunt init on all units"
 dir = "{{ cwd }}"
-run = 'terragrunt run --all -- init "${@}"'
+run = 'terragrunt --non-interactive run --all -- init "${@}"'
 
 [tasks."tf:plan:single"]
 description = "Run terragrunt plan on a single unit"
@@ -27,7 +27,7 @@ run = 'terragrunt run -- apply "${@}"'
 [tasks."tf:apply:all"]
 description = "Run terragrunt apply on all units"
 dir = "{{ cwd }}"
-run = 'terragrunt run --all -- apply "${@}"'
+run = 'terragrunt --non-interactive run --all -- apply "${@}"'
 
 [tasks."tf:destroy:single"]
 description = "Run terragrunt destroy on a single unit"
