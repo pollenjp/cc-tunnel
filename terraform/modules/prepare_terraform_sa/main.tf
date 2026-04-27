@@ -25,6 +25,8 @@ resource "google_project_iam_member" "sa_roles" {
     "roles/storage.admin",
 
     "roles/run.admin",                        # Cloud Run v2 サービス管理 (cc-tunnel module)
+    "roles/cloudsql.admin",                  # Cloud SQL Instance 管理 (cc-tunnel module)
+    "roles/secretmanager.admin",             # Secret Manager 管理 (cc-tunnel module / DB password)
     "roles/cloudbuild.builds.editor",        # Cloud Build trigger 作成・更新 + run/describe (cc-tunnel module)
     "roles/artifactregistry.admin",          # Artifact Registry リポジトリの管理
 

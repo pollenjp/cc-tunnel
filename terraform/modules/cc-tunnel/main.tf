@@ -175,8 +175,37 @@ resource "google_cloud_run_v2_service" "cloud_run" {
       #   name  = "PORT"
       #   value = tostring(var.container_port)
       # }
+      volume_mounts {
+        name       = "cloudsql"
+        mount_path = "/cloudsql"
+      }
+      env {
+        name = "DB_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.cs_password_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name  = "DATABASE_URL"
+        value = "postgres://${local.cs_user_name}:$(DB_PASSWORD)@/${local.cs_db_name}?host=/cloudsql/${google_sql_database_instance.cs_instance.connection_name}&sslmode=disable"
+      }
+    }
+    volumes {
+      name = "cloudsql"
+      cloud_sql_instance {
+        instances = [google_sql_database_instance.cs_instance.connection_name]
+      }
     }
   }
+
+  depends_on = [
+    google_project_iam_member.cs_runtime_sql_client,
+    google_secret_manager_secret_iam_member.cs_runtime_secret_accessor,
+    google_secret_manager_secret_version.cs_password_secret_version,
+  ]
 
   lifecycle {
     ignore_changes = [

@@ -17,4 +17,8 @@ inputs = {
   artifact_registry_repository_name     = "${dependency.artifact_registry.outputs.artifact_registry_repository_name}"
   terraform_runner_sa_email             = "${include.root.locals.terraform_runner_sa_email}"
   deploy_env                            = "${include.root.locals.env}"
+
+  frontend_image_name           = "frontend"
+  frontend_container_port       = 8080
+  frontend_enable_public_access = false
 }

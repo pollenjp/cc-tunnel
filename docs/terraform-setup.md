@@ -12,14 +12,16 @@ terraform/
 ├── root.hcl              # 共通設定（impersonation、provider 生成）
 ├── modules/
 │   ├── prepare_terraform_sa/  # Terraform Runner SA とその IAM を管理
-│   └── artifact_registry/     # Artifact Registry リポジトリを管理
+│   ├── artifact_registry/     # Artifact Registry リポジトリを管理
+│   └── cc-tunnel/             # Cloud Build trigger + Cloud Run（cc-tunnel API + frontend）
 ├── prepare/
 │   └── local/
 │       └── terraform_sa/      # SA の apply（ADC 直接、impersonation なし）
 └── live/
     └── local/
         ├── init/              # GCP API 有効化
-        └── artifact_registry/ # Artifact Registry リポジトリ作成
+        ├── artifact_registry/ # Artifact Registry リポジトリ作成
+        └── cc-tunnel/         # cc-tunnel API + frontend デプロイ
 ```
 
 ## Apply 順序
@@ -58,14 +60,19 @@ terragrunt apply
 
 ### 4. live/local/cc-tunnel（SA impersonation で実行）
 
-Cloud Build trigger と Cloud Run サービスを作成する。  
-事前に Cloud Build GitHub App connection（手動）が完了していること。
+cc-tunnel API + frontend + Cloud SQL インスタンス（PostgreSQL）の Cloud Build trigger と
+Cloud Run サービスを作成する。Cloud Build GitHub App connection が必要（手動設定）。
+apply 後に `frontend_url` / `cc_tunnel_url` / `cloud_sql_instance_connection_name` が outputs に表示される。
 
 ```bash
 cd terraform/live/local/cc-tunnel
 terragrunt plan   # 差分確認（必須）
 terragrunt apply
 ```
+
+初回 apply 時に Cloud Build trigger が発火して Docker image がビルドされる。
+Cloud Run サービスは image が push された後に起動可能となる。
+初回 apply 後に cc-tunnel が起動すると goose によってスキーマが自動 migrate される。
 
 ## 前提条件と必要な権限
 
@@ -107,7 +114,10 @@ state が正常であれば再 apply しても SA 名は変わらない。
 
 ## modules/cc-tunnel について
 
-`terraform/modules/cc-tunnel/` は以下のリソースを管理する:
+`terraform/modules/cc-tunnel/` は以下のリソースを管理する。
+modules/cc-tunnel/ には cc-tunnel API、frontend（nginx + React SPA）、
+Cloud SQL for PostgreSQL インスタンスが統合されており、cc-tunnel と同時に apply される。
+DB パスワードは Secret Manager で管理され、Cloud Run には Cloud SQL Auth Proxy（Unix socket）で接続する。
 
 **Cloud Build リソース:**
 - Cloud Build BuilderSA (google_service_account)
@@ -155,6 +165,34 @@ state が正常であれば再 apply しても SA 名は変わらない。
 | `deploy_env` | Cloud Run 名生成に使用（必須） | `include.root.locals.env` |
 | `enable_public_access` | 全公開 IAM binding (bool, default: false) | 省略可 |
 | `container_port` | コンテナ待受ポート (number, default: 5173) | 省略可 |
+
+## Cloud SQL 接続方式
+
+| 項目 | 内容 |
+|------|------|
+| 接続方式 | Cloud Run の Cloud SQL connection（Unix socket `/cloudsql/INSTANCE_CONNECTION_NAME`）|
+| DATABASE_URL | `postgres://USER:PASS@/DB?host=/cloudsql/INSTANCE_CONNECTION_NAME&sslmode=disable` |
+| sslmode=disable の理由 | Cloud SQL Auth Proxy が TLS を担当するため |
+| パスワード管理 | Secret Manager に自動保存（`random_password` で Terraform が生成） |
+
+Cloud Run サービス定義の `cloud_sql_instances` に `INSTANCE_CONNECTION_NAME` を指定することで、
+Cloud SQL Auth Proxy が自動的にサイドカーとして起動し Unix socket 経由の接続を提供する。
+
+## マイグレーション適用方式
+
+- **方式**: cc-tunnel 起動時に `goose embed` で自動適用（手動 migration 不要）
+- **競合安全**: 複数 revision 同時起動時は `goose advisory lock` で競合を安全に解消
+
+Cloud Run が新しい revision にトラフィックを切り替える際、複数インスタンスが同時起動しても
+goose の advisory lock により migration は 1 度だけ実行される。
+
+## Cloud SQL に関する注意事項
+
+| ID | 内容 |
+|----|------|
+| C001 | POSTGRES_17 を使用（Cloud SQL の GA 版）。`compose/` や CI は `postgres:18-alpine` を使用しており差異がある |
+| C002 | Cloud Run スケール時の Cloud SQL connection 数増加に注意（`max_connections` デフォルト 400）|
+| C003 | `deletion_protection = false`（dev 用。本番では `true` を推奨）|
 
 ## docker_gce Provider との関係
 

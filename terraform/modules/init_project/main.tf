@@ -5,6 +5,8 @@ locals {
     "compute.googleapis.com",
     "iam.googleapis.com",
     "run.googleapis.com",           # Cloud Run v2
+    "sqladmin.googleapis.com",      # Cloud SQL (cc-tunnel module)
+    "secretmanager.googleapis.com", # Secret Manager (cc-tunnel module / DB password)
   ]
 }
 

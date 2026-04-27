@@ -37,3 +37,48 @@ variable "container_port" {
   description = "Port the container listens on"
   default     = 8080
 }
+
+variable "frontend_image_name" {
+  type    = string
+  default = "frontend"
+}
+
+variable "frontend_container_port" {
+  type    = number
+  default = 8080
+}
+
+variable "frontend_enable_public_access" {
+  type    = bool
+  default = false
+}
+
+variable "cloud_sql_region" {
+  type        = string
+  description = "Cloud SQL region"
+  default     = "us-central1"
+}
+
+variable "cloud_sql_version" {
+  type        = string
+  description = "Cloud SQL Postgres version (POSTGRES_17 or POSTGRES_18 if GA)"
+  default     = "POSTGRES_17"
+}
+
+variable "cloud_sql_tier" {
+  type        = string
+  description = "Cloud SQL machine tier"
+  default     = "db-custom-1-3840"
+}
+
+variable "cloud_sql_db_name" {
+  type        = string
+  description = "Cloud SQL database name"
+  default     = "cctunnel"
+}
+
+variable "cloud_sql_user" {
+  type        = string
+  description = "Cloud SQL user name"
+  default     = "cctunnel"
+}
