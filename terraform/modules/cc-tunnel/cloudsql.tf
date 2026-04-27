@@ -6,9 +6,11 @@ locals {
 }
 
 resource "random_password" "cs_password" {
-  length           = 24
-  special          = true
-  override_special = "!@#$%^&*()-_=+[]"
+  length  = 32
+  special = false
+  upper   = true
+  lower   = true
+  numeric = true
 }
 
 resource "google_sql_database_instance" "cs_instance" {
@@ -47,16 +49,22 @@ resource "google_sql_user" "cs_user" {
   password = random_password.cs_password.result
 }
 
-resource "google_secret_manager_secret" "cs_password_secret" {
-  secret_id = "${local.cs_instance_name}-password"
+resource "google_secret_manager_secret" "cs_database_url_secret" {
+  secret_id = "${local.cs_instance_name}-database-url"
   replication {
     auto {}
   }
 }
 
-resource "google_secret_manager_secret_version" "cs_password_secret_version" {
-  secret      = google_secret_manager_secret.cs_password_secret.id
-  secret_data = random_password.cs_password.result
+resource "google_secret_manager_secret_version" "cs_database_url_secret_version" {
+  secret = google_secret_manager_secret.cs_database_url_secret.id
+  secret_data = format(
+    "postgres://%s:%s@/%s?host=/cloudsql/%s&sslmode=disable",
+    local.cs_user_name,
+    random_password.cs_password.result,
+    local.cs_db_name,
+    google_sql_database_instance.cs_instance.connection_name,
+  )
 }
 
 resource "google_project_iam_member" "cs_runtime_sql_client" {
@@ -65,8 +73,8 @@ resource "google_project_iam_member" "cs_runtime_sql_client" {
   member  = "serviceAccount:${google_service_account.runtime_sa.email}"
 }
 
-resource "google_secret_manager_secret_iam_member" "cs_runtime_secret_accessor" {
-  secret_id = google_secret_manager_secret.cs_password_secret.id
+resource "google_secret_manager_secret_iam_member" "cs_runtime_database_url_accessor" {
+  secret_id = google_secret_manager_secret.cs_database_url_secret.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runtime_sa.email}"
 }

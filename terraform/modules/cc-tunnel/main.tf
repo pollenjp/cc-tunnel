@@ -3,17 +3,17 @@ locals {
   fqim = "${var.artifact_registry_repository_location}-docker.pkg.dev/${var.project_id}/${var.artifact_registry_repository_name}/${var.image_name}:latest"
 
   # SA name length restriction: at least 6 characters, at most 30 characters
-  builder_suffix = "-${random_string.unique_id.result}-builder"
+  builder_suffix  = "-${random_string.unique_id.result}-builder"
   builder_sa_name = "${substr("${var.image_name}", 0, 30 - length(local.builder_suffix))}${local.builder_suffix}"
 
   # https://docs.cloud.google.com/build/docs/api/reference/rest/v1/projects.triggers
   trigger_suffix = "-${random_string.unique_id.result}-trigger"
-  trigger_name    = "${substr("${var.image_name}", 0, 64 - length(local.trigger_suffix))}${local.trigger_suffix}"
+  trigger_name   = "${substr("${var.image_name}", 0, 64 - length(local.trigger_suffix))}${local.trigger_suffix}"
 
-  github_owner = "pollenjp"
-  github_repo_name  = "cc-tunnel"
+  github_owner       = "pollenjp"
+  github_repo_name   = "cc-tunnel"
   github_branch_name = "main"
-  dockerfile_dir = "apps/cc-tunnel"
+  dockerfile_dir     = "apps/cc-tunnel"
 }
 
 resource "random_string" "unique_id" {
@@ -143,11 +143,11 @@ locals {
 
   # SA name length restriction: at least 6 characters, at most 30 characters
   cloud_run_name_suffix = "-${random_string.unique_id.result}-cr"
-  cloud_run_name = "${substr("${var.deploy_env}", 0, 30 - length(local.cloud_run_name_suffix))}${local.cloud_run_name_suffix}"
+  cloud_run_name        = "${substr("${var.deploy_env}", 0, 30 - length(local.cloud_run_name_suffix))}${local.cloud_run_name_suffix}"
 
   # SA name length restriction: at least 6 characters, at most 30 characters
   cr_runtime_sa_suffix = "-${random_string.unique_id.result}-runtime"
-  cr_runtime_sa_name = "${substr("${local.cloud_run_name}", 0, 30 - length(local.cr_runtime_sa_suffix))}${local.cr_runtime_sa_suffix}"
+  cr_runtime_sa_name   = "${substr("${local.cloud_run_name}", 0, 30 - length(local.cr_runtime_sa_suffix))}${local.cr_runtime_sa_suffix}"
 }
 
 resource "google_service_account" "runtime_sa" {
@@ -180,17 +180,13 @@ resource "google_cloud_run_v2_service" "cloud_run" {
         mount_path = "/cloudsql"
       }
       env {
-        name = "DB_PASSWORD"
+        name = "DATABASE_URL"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.cs_password_secret.secret_id
+            secret  = google_secret_manager_secret.cs_database_url_secret.secret_id
             version = "latest"
           }
         }
-      }
-      env {
-        name  = "DATABASE_URL"
-        value = "postgres://${local.cs_user_name}:$(DB_PASSWORD)@/${local.cs_db_name}?host=/cloudsql/${google_sql_database_instance.cs_instance.connection_name}&sslmode=disable"
       }
     }
     volumes {
@@ -203,8 +199,8 @@ resource "google_cloud_run_v2_service" "cloud_run" {
 
   depends_on = [
     google_project_iam_member.cs_runtime_sql_client,
-    google_secret_manager_secret_iam_member.cs_runtime_secret_accessor,
-    google_secret_manager_secret_version.cs_password_secret_version,
+    google_secret_manager_secret_iam_member.cs_runtime_database_url_accessor,
+    google_secret_manager_secret_version.cs_database_url_secret_version,
   ]
 
   lifecycle {

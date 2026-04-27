@@ -17,7 +17,8 @@ output "cloud_sql_db_name" {
   description = "Cloud SQL database name"
 }
 
-output "cloud_sql_password_secret_id" {
-  value       = google_secret_manager_secret.cs_password_secret.secret_id
-  description = "Secret Manager secret_id for DB password"
+output "cloud_sql_database_url_secret_id" {
+  value       = google_secret_manager_secret.cs_database_url_secret.secret_id
+  description = "Secret Manager secret_id for DATABASE_URL"
+  sensitive   = true
 }

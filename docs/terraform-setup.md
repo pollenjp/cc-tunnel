@@ -194,6 +194,18 @@ goose の advisory lock により migration は 1 度だけ実行される。
 | C002 | Cloud Run スケール時の Cloud SQL connection 数増加に注意（`max_connections` デフォルト 400）|
 | C003 | `deletion_protection = false`（dev 用。本番では `true` を推奨）|
 
+## Cloud Run v2 env 展開の落とし穴
+
+Cloud Run v2 の env 定義に関して以下の制約に注意すること。
+
+- `value` フィールド内の `$(VAR_NAME)` 記法は **static value（同じ containers ブロック内の他の value env）のみ** 参照可能
+- `value_source.secret_key_ref` で注入される env は `$(VAR_NAME)` 展開の対象外（起動時の動的解決のため展開タイミングが異なる）
+- `$(DB_PASSWORD)` のように secret_key_ref 由来の env を `value` 内で参照すると、リテラル文字列 `"$(DB_PASSWORD)"` がそのままアプリに渡され認証エラーになる
+
+**正しい実装**: DATABASE_URL 全体（`postgres://user:pass@/db?host=...`）を Secret Manager に格納し、
+`secret_key_ref` で `DATABASE_URL` env を直接注入すること。`random_password` には `special = false` を設定して
+URL エンコードが不要な英数字のみのパスワードを生成すること。
+
 ## docker_gce Provider との関係
 
 `cmd_cctunnel_docker_gce_impl` で実装された DockerGCEProvider は、
