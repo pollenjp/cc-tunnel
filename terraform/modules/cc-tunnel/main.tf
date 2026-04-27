@@ -3,12 +3,12 @@ locals {
   fqim = "${var.artifact_registry_repository_location}-docker.pkg.dev/${var.project_id}/${var.artifact_registry_repository_name}/${var.image_name}:latest"
 
   # SA name length restriction: at least 6 characters, at most 30 characters
-  builder_postfix = "-${random_string.unique_id.result}-builder"
-  builder_sa_name = "${substr("${var.image_name}", 0, 30 - length(local.builder_postfix))}${local.builder_postfix}"
+  builder_suffix = "-${random_string.unique_id.result}-builder"
+  builder_sa_name = "${substr("${var.image_name}", 0, 30 - length(local.builder_suffix))}${local.builder_suffix}"
 
   # https://docs.cloud.google.com/build/docs/api/reference/rest/v1/projects.triggers
-  trigger_postfix = "-${random_string.unique_id.result}-trigger"
-  trigger_name    = "${substr("${var.image_name}", 0, 64 - length(local.trigger_postfix))}${local.trigger_postfix}"
+  trigger_suffix = "-${random_string.unique_id.result}-trigger"
+  trigger_name    = "${substr("${var.image_name}", 0, 64 - length(local.trigger_suffix))}${local.trigger_suffix}"
 
   github_owner = "pollenjp"
   github_repo_name  = "cc-tunnel"
@@ -134,4 +134,68 @@ resource "terraform_data" "run_trigger_once" {
       echo "==> Verified: ${local.fqim} exists."
     EOT
   }
+}
+
+# ==============================================================================
+
+locals {
+  cloud_run_location = var.artifact_registry_repository_location
+
+  # SA name length restriction: at least 6 characters, at most 30 characters
+  cloud_run_name_suffix = "-${random_string.unique_id.result}-cr"
+  cloud_run_name = "${substr("${var.deploy_env}", 0, 30 - length(local.cloud_run_name_suffix))}${local.cloud_run_name_suffix}"
+
+  # SA name length restriction: at least 6 characters, at most 30 characters
+  cr_runtime_sa_suffix = "-${random_string.unique_id.result}-runtime"
+  cr_runtime_sa_name = "${substr("${local.cloud_run_name}", 0, 30 - length(local.cr_runtime_sa_suffix))}${local.cr_runtime_sa_suffix}"
+}
+
+resource "google_service_account" "runtime_sa" {
+  account_id   = local.cr_runtime_sa_name
+  display_name = "Cloud Run Runtime SA"
+}
+
+resource "google_cloud_run_v2_service" "cloud_run" {
+  name                = local.cloud_run_name
+  location            = local.cloud_run_location
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
+
+  template {
+    service_account = google_service_account.runtime_sa.email
+    timeout         = "3600s" # 60min
+    containers {
+      image = local.fqim
+      ports {
+        container_port = var.container_port
+      }
+      # 'PORT' is a special environment variable in Cloud Run
+      # https://docs.cloud.google.com/run/docs/configuring/services/environment-variables#best-practices
+      # env {
+      #   name  = "PORT"
+      #   value = tostring(var.container_port)
+      # }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      # NOTE: ignore changes to annotations to avoid unnecessary recreation
+      #       'deploy-timestamp' is added by terraform-google-cloud-run-auto-deploy module
+      template[0].annotations["deploy-timestamp"],
+    ]
+  }
+
+  # NOTE:
+  # Allow Terraform to create the service even if the image doesn't exist yet (though it might fail on first run)
+  # In a real scenario, you'd run the build once before applying this, or use a placeholder image.
+}
+
+resource "google_cloud_run_v2_service_iam_member" "public_access" {
+  count = var.enable_public_access ? 1 : 0
+
+  location = google_cloud_run_v2_service.cloud_run.location
+  name     = google_cloud_run_v2_service.cloud_run.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }

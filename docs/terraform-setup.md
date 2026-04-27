@@ -56,6 +56,17 @@ terragrunt plan
 terragrunt apply
 ```
 
+### 4. live/local/cc-tunnel（SA impersonation で実行）
+
+Cloud Build trigger と Cloud Run サービスを作成する。  
+事前に Cloud Build GitHub App connection（手動）が完了していること。
+
+```bash
+cd terraform/live/local/cc-tunnel
+terragrunt plan   # 差分確認（必須）
+terragrunt apply
+```
+
 ## 前提条件と必要な権限
 
 ### 殿の ADC ユーザー（polleninjp@gmail.com）に必要なロール
@@ -97,10 +108,17 @@ state が正常であれば再 apply しても SA 名は変わらない。
 ## modules/cc-tunnel について
 
 `terraform/modules/cc-tunnel/` は以下のリソースを管理する:
+
+**Cloud Build リソース:**
 - Cloud Build BuilderSA (google_service_account)
 - BuilderSA に logging.logWriter / AR writer 権限付与
 - GitHub push trigger (google_cloudbuild_trigger, 1st gen)
 - apply 後の初回ビルド実行 (terraform_data + local-exec gcloud)
+
+**Cloud Run リソース (staged 追加):**
+- Cloud Run ランタイム SA (google_service_account.runtime_sa)
+- Cloud Run v2 サービス (google_cloud_run_v2_service.cloud_run)
+- 全公開 IAM binding (google_cloud_run_v2_service_iam_member.public_access, `enable_public_access=true` 時のみ)
 
 ### 前提: Cloud Build GitHub App connection（手動操作必須）
 
@@ -115,8 +133,28 @@ state が正常であれば再 apply しても SA 名は変わらない。
 | ロール | 用途 |
 |--------|------|
 | roles/cloudbuild.builds.editor | Cloud Build trigger 作成・更新 + run/describe |
+| roles/run.admin | Cloud Run サービスの作成・更新・削除 |
 
-このロールは `terraform/modules/prepare_terraform_sa/main.tf` で管理される。
+これらのロールは `terraform/modules/prepare_terraform_sa/main.tf` で管理される。
+
+### modules/cc-tunnel に必要な GCP API
+
+| API | 用途 |
+|-----|------|
+| `cloudbuild.googleapis.com` | Cloud Build trigger 管理 |
+| `run.googleapis.com` | Cloud Run v2 サービス管理 |
+| `iam.googleapis.com` | SA 作成 |
+| `artifactregistry.googleapis.com` | イメージ pull |
+
+`run.googleapis.com` は `terraform/modules/init_project/main.tf` の `activate_apis` で有効化が必要。
+
+### modules/cc-tunnel の変数（live/local/cc-tunnel/terragrunt.hcl に追加が必要）
+
+| 変数 | 用途 | terragrunt.hcl での指定例 |
+|------|------|--------------------------|
+| `deploy_env` | Cloud Run 名生成に使用（必須） | `include.root.locals.env` |
+| `enable_public_access` | 全公開 IAM binding (bool, default: false) | 省略可 |
+| `container_port` | コンテナ待受ポート (number, default: 5173) | 省略可 |
 
 ## docker_gce Provider との関係
 

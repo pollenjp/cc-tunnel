@@ -24,7 +24,7 @@ resource "google_project_iam_member" "sa_roles" {
     # tfstate 等の bucket 管理
     "roles/storage.admin",
 
-    # "roles/run.admin",                      # Cloud Run サービスの作成・更新・削除
+    "roles/run.admin",                        # Cloud Run v2 サービス管理 (cc-tunnel module)
     "roles/cloudbuild.builds.editor",        # Cloud Build trigger 作成・更新 + run/describe (cc-tunnel module)
     "roles/artifactregistry.admin",          # Artifact Registry リポジトリの管理
 
