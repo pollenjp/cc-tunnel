@@ -35,5 +35,5 @@ variable "enable_public_access" {
 variable "container_port" {
   type        = number
   description = "Port the container listens on"
-  default     = 5173
+  default     = 8080
 }
