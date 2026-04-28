@@ -45,7 +45,7 @@
               └───────────────────────┘
 ```
 
-### 将来（Cloud Run + GCE 構成）
+### 本番（Cloud Run + GCE 構成）
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -354,7 +354,7 @@ SendMessage 開始
   │
   ├─ remote.Execute (Claude CLI)
   │   ├─ SSE callback: mu.Lock → contentBlocksList append → mu.Unlock
-  │   ├─ [5s] ticker fires → UpdateMessageContentBlocks(snapshot)
+  │   ├─ [2s] ticker fires → UpdateMessageContentBlocks(snapshot)
   │   └─ ...
   │
   ├─ UpdateMessageContentBlocks (最終 content_blocks)

@@ -6,7 +6,7 @@ title cc-tunnel Component Diagram
 
 Person(user, "User", "ブラウザユーザー")
 System_Ext(anthropic, "Anthropic API", "Claude AI")
-ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18", "会話・メッセージデータ")
+ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18-alpine", "会話・メッセージデータ")
 Container_Ext(auth_agent, "cc-remote-agent-auth", "Go", "認証専用常駐コンテナ。\nlogin/logout/status API提供。")
 Container_Ext(session_agent, "cc-remote-agent-{convID}", "Go", "動的セッションコンテナ。\nClaude CLI Execute API提供。")
 System_Ext(docker_daemon, "Docker Daemon", "docker.sock 経由でコンテナ管理")

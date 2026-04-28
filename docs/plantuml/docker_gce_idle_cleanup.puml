@@ -1,50 +1,61 @@
 @startuml docker_gce_idle_cleanup
-' Idle検知〜コンテナ削除〜GCE削除のシーケンス図
-' 現在: MockProvider で未実装 / 将来: IdleChecker + VMScaler goroutine
-title Docker on GCE — Idle検知〜コンテナ削除〜VM削除シーケンス\n現在: MockProvider で未実装 / 将来: IdleChecker + VMScaler goroutine\n\n[local との違い: local は DooD でコンテナのみ管理、docker_gce はコンテナ＋VM の2段階管理]
+' Idle検知〜セッションエンドポイント削除〜GCE VM削除のシーケンス図
+title Docker on GCE — Idle検知〜セッション削除〜VM削除シーケンス\n\n[local との違い: local は DooD でコンテナのみ管理、docker_gce はセッションエンドポイント＋VMの2段階管理]
 
-participant "IdleChecker\n(60秒間隔 goroutine)\n【将来実装予定】" as IdleChecker
-participant "VMScaler\n(5分間隔 goroutine)\n【将来実装予定】" as VMScaler
+participant "IdleChecker\n(設定間隔 goroutine)" as IdleChecker
+participant "VMScaler\n(別設定間隔 goroutine)" as VMScaler
+participant "DockerGCEProvider\nCleanupOrphans()" as Provider
 participant PostgreSQL as DB
-participant "Docker Daemon\n(SSH トンネル)" as Docker
 participant "GCE API" as GCEAPI
 
 note over IdleChecker, GCEAPI
-  【現在】MockProvider にはアイドル検知・クリーンアップ機能なし。
-  以下は将来の DockerGCEProvider 実装時のフロー。
-
   local provider との違い:
   ・local: CleanupOrphans() で停止済みコンテナを削除 (DooD, docker.sock)
            VM 管理なし (ホストの Docker daemon を直接操作)
-  ・docker_gce: コンテナ削除 (SSH 経由) + VM 削除の2段階管理
+  ・docker_gce: アイドルセッションエンドポイント削除 +
+               アイドル GCE VM削除の2段階管理
+               (cc-remote-agent コンテナは VM 削除時に消滅)
 end note
 
-loop 60秒ごと
-  IdleChecker -> DB: SELECT session_endpoints\nWHERE last_activity < NOW() - 15min\nAND status = 'running'
-  alt 該当セッションあり
-    IdleChecker -> Docker: docker stop session-{id}\n(SSH トンネル経由)
-    Docker --> IdleChecker: Stopped
-    IdleChecker -> Docker: docker rm session-{id}
-    Docker --> IdleChecker: Removed
-    IdleChecker -> DB: UPDATE session_endpoint\nSET status = 'terminated'
-    IdleChecker -> DB: UPDATE vm_instance\nSET active_containers -= 1
-    alt active_containers == 0
-      IdleChecker -> DB: SET idle_since = NOW()
-    end
-  else 該当なし
-    IdleChecker -> IdleChecker: 次のサイクルまで待機
-  end
-end
+note over IdleChecker, VMScaler
+  IdleChecker と VMScaler は独立した goroutine として定義。
+  どちらも同じ CleanupOrphans() を呼び出す。
+  間隔はそれぞれ独自に設定可能（例: IdleChecker=60秒）。
+end note
 
-loop 5分ごと
-  VMScaler -> DB: SELECT vm_instances\nWHERE active_containers = 0\nAND idle_since < NOW() - 5min
-  alt 該当 VM あり
-    VMScaler -> GCEAPI: instances.delete({vm_name})
-    GCEAPI --> VMScaler: Operation started
-    VMScaler -> DB: UPDATE vm_instance\nSET status = 'terminated'
-  else 該当なし
-    VMScaler -> VMScaler: 次のサイクルまで待機
+loop 設定間隔ごと（IdleChecker または VMScaler のいずれかがトリガー）
+  alt IdleChecker がトリガー
+    IdleChecker -> Provider: CleanupOrphans(ctx)
+  else VMScaler がトリガー
+    VMScaler -> Provider: CleanupOrphans(ctx)
   end
+
+  Provider -> DB: ListIdleSessionEndpoints(\n  idleThreshold: 15min)
+  note right: last_activity < NOW() - idleThreshold\nかつ status = 'running'
+
+  alt アイドルセッションエンドポイントあり
+    loop 各アイドルエンドポイント
+      Provider -> DB: DecrementVMActiveContainers(vmInstanceID)
+      Provider -> DB: DeleteSessionEndpoint(endpointID)
+    end
+  else なし
+    note over Provider: スキップ
+  end
+
+  Provider -> DB: ListIdleVMInstances(\n  idleThreshold: 15min)
+  note right: active_containers = 0\nかつ updated_at < NOW() - idleThreshold
+
+  alt アイドル VM あり
+    loop 各アイドル VM
+      Provider -> GCEAPI: DeleteInstance(project, zone, vmName)
+      GCEAPI --> Provider: OK
+      Provider -> DB: DeleteVMInstance(vmID)
+    end
+  else なし
+    note over Provider: スキップ
+  end
+
+  Provider --> IdleChecker: error or nil
 end
 
 @enduml

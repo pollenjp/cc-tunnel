@@ -2,24 +2,30 @@
 ' Level 3: Component (Docker on GCE — cc-tunnel 内部コンポーネント)
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
 
-title Docker on GCE — cc-tunnel Component Diagram\n現在: MockProvider スタブ実装 / 将来: SessionManager + Provisioner + IdleChecker + VMScaler
+title Docker on GCE — cc-tunnel Component Diagram
 
-System_Ext(docker_api, "Docker API (SSH経由) 【将来】", "GCE VM 上の Docker Daemon\nコンテナ管理 (run/stop/rm)")
-System_Ext(compute_api, "Compute Engine API 【将来】", "Google Cloud\nVM ライフサイクル管理 (create/delete)")
-ContainerDb_Ext(db, "PostgreSQL 【将来】", "PostgreSQL", "session_endpoints・vm_instances テーブル\n（将来実装時に追加予定）")
+System_Ext(cc_remote_agent, "cc-remote-agent (GCE VM上)", "GCE VM の startup script で起動。\nClaude CLI を HTTP API でラップ。\nPort: 9091")
+System_Ext(compute_api, "Compute Engine API", "Google Cloud\nVM ライフサイクル管理 (create/delete)")
+ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18-alpine", "session_endpoints: 会話ID↔エンドポイント\nvm_instances: GCE VM 管理")
 
 Container_Boundary(api_boundary, "cc-tunnel API (Go, Cloud Run)") {
   Component(handler, "API Handler", "net/http\n(api/handler.go)", "HTTPリクエスト処理。\n会話CRUD・メッセージ送信。\n202 Accepted後にgoroutineで非同期実行。\nexecutionProvider.Execute() 経由で\nDockerGCEProvider を呼び出す。")
 
-  Component(exec_provider, "ExecutionProvider", "interface\n(provider/provider.go)", "claude CLI 実行バックエンド抽象。\nExecute(ctx, req, onEvent) を定義。\nlocal.LocalDockerProvider と\ndockergce.MockProvider が実装。")
+  Component(exec_provider, "ExecutionProvider", "interface\n(provider/provider.go)", "claude CLI 実行バックエンド抽象。\nExecute(ctx, req, onEvent) を定義。\nnewProviderFromEnv(EXECUTION_PROVIDER) で実装を選択。")
 
-  Component(mock_provider, "DockerGCEProvider (MockProvider)", "Go stub\n(provider/dockergce/mock.go)", "【現在実装】ExecutionProvider を実装するスタブ。\nGCE/Docker 操作なし。uuid 付き固定レスポンスを返す。\n\n【将来実装予定コンポーネント】\n・SessionManager: 会話→エンドポイントマッピング\n  GetOrCreate(conversationID) でコンテナ確保\n・Provisioner: GCE VM + Docker コンテナ操作 (SSH)\n  VM create/delete、docker run/stop/rm\n・IdleChecker: 60秒間隔でコンテナ idle 検出\n  last_activity 15分超 → docker stop + rm\n・VMScaler: 5分間隔で空き VM 削除\n  active_containers = 0 かつ idle_since 5分超 → VM delete")
+  Component(dgce_provider, "DockerGCEProvider", "Go\n(provider/dockergce/provider.go)", "ExecutionProvider 実装。\n\ngetOrCreateEndpoint(conversationID):\n  DB: GetSessionEndpointByConversationID\n  → なければ GetAvailableVMInstance\n    → なければ createGCEVM + waitForVMReady\n  → CreateSessionEndpoint (DB)\n  → IncrementVMActiveContainers (DB)\n\nwaitForVMReady:\n  Stage1: GCE RUNNING + internalIP (3分タイムアウト)\n  Stage2: HTTP /auth/status 応答 (1分タイムアウト)\n\nCleanupOrphans:\n  アイドルセッション削除 + アイドルVM削除")
+
+  Component(idle_checker, "IdleChecker", "Go goroutine\n(provider/dockergce/idle_checker.go)", "設定した間隔 (推奨: 60秒) で\nCleanupOrphans() を定期実行。\nアイドルセッションエンドポイントと\nアイドル GCE VM を削除。")
+
+  Component(vmscaler, "VMScaler", "Go goroutine\n(provider/dockergce/vmscaler.go)", "設定した間隔で\nCleanupOrphans() を定期実行。\nIdleChecker と同じ CleanupOrphans() を使用。\nGCE VM のスケールダウン専用 goroutine として定義。")
 }
 
 Rel(handler, exec_provider, "Execute(ctx, req, onEvent)")
-Rel(exec_provider, mock_provider, "MockProvider が実装")
-Rel(mock_provider, docker_api, "【将来】docker run/stop/rm\nコンテナ状態確認", "SSH トンネル")
-Rel(mock_provider, compute_api, "【将来】instances.insert / instances.delete", "HTTPS (REST)")
-Rel(mock_provider, db, "【将来】session_endpoints / vm_instances CRUD", "PostgreSQL (pgx/v5)")
+Rel(exec_provider, dgce_provider, "DockerGCEProvider が実装")
+Rel(dgce_provider, cc_remote_agent, "Claude CLI実行\nremoteclient.NewClient(vmIP:9091).Execute()", "HTTP")
+Rel(dgce_provider, compute_api, "instances.insert / instances.delete", "HTTPS (REST)")
+Rel(dgce_provider, db, "session_endpoints / vm_instances CRUD", "PostgreSQL (pgx/v5)")
+Rel(idle_checker, dgce_provider, "CleanupOrphans() を定期呼び出し")
+Rel(vmscaler, dgce_provider, "CleanupOrphans() を定期呼び出し")
 
 @enduml

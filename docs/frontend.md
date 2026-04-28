@@ -2,7 +2,7 @@
 
 ## 技術スタック
 
-- React 18 + TypeScript
+- React 19 + TypeScript
 - Vite (ビルドツール)
 - Tailwind CSS v4
 - react-router-dom v7 (URLルーティング)

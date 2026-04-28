@@ -75,7 +75,9 @@ cc-tunnel/
     │       │       ├── 001_create_conversations.sql       # conversations テーブル
     │       │       ├── 002_create_messages.sql            # messages テーブル
     │       │       ├── 003_add_conversation_status.sql    # conversations.status カラム追加
-    │       │       └── 004_add_message_status.sql         # messages.status / updated_at カラム追加
+    │       │       ├── 004_add_message_status.sql         # messages.status / updated_at カラム追加
+    │       │       ├── 005_create_vm_instances.sql        # vm_instances テーブル (DockerGCEProvider 用)
+    │       │       └── 006_create_session_endpoints.sql   # session_endpoints テーブル (DockerGCEProvider 用)
     │       ├── docker/               # Docker デーモン操作の抽象化レイヤー
     │       │   ├── runner.go         # DockerRunner interface + ContainerCreateOpts / ContainerInfo 型定義
     │       │   ├── sdk_runner.go     # SDKRunner: Docker SDK を使った DockerRunner 実装
@@ -94,8 +96,13 @@ cc-tunnel/
     │       │   ├── cloudrunsandbox/  # CloudRunSandboxProvider (モック実装)
     │       │   │   ├── mock.go
     │       │   │   └── mock_test.go
-    │       │   └── dockergce/        # DockerGCEProvider (モック実装)
-    │       │       ├── mock.go
+    │       │   └── dockergce/        # DockerGCEProvider (本格実装済み)
+    │       │       ├── provider.go       # DockerGCEProvider 本体 (Execute / getOrCreateEndpoint / waitForVMReady / Close)
+    │       │       ├── provider_test.go  # DockerGCEProvider テスト
+    │       │       ├── idle_checker.go   # IdleChecker goroutine (コンテナ idle 検出)
+    │       │       ├── idle_checker_test.go
+    │       │       ├── vmscaler.go       # VMScaler goroutine (アイドル VM 削除)
+    │       │       ├── mock.go           # MockProvider (フォールバック用スタブ)
     │       │       └── mock_test.go
     │       └── remoteclient/
     │           └── client.go         # cc-remote-agent HTTP クライアント (Execute / Auth*)

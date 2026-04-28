@@ -11,7 +11,7 @@ System_Ext(docker_daemon, "Docker Daemon", "ホストの Docker デーモン。\
 System_Boundary(cctunnel_system, "cc-tunnel") {
   Container(frontend, "Frontend", "React/Vite + nginx", "会話UIを提供。\nnginxがAPIリクエスト(/api/*)を\ncc-tunnel APIにリバースプロキシ。\nPort: 3000\n[compose profile: full]")
 
-  Container(api, "cc-tunnel API", "Go (net/http)", "会話・メッセージ管理REST API。\n202 Accepted後にgoroutineで\nClaude CLI実行・DB保存を行う。\nDooD: docker.sock マウント済み。\nPort: 8080\n[compose profile: full]")
+  Container(api, "cc-tunnel API", "Go (net/http)", "会話・メッセージ管理REST API。\n202 Accepted後にgoroutineで\nClaude CLI実行・DB保存を行う。\nDooD: docker.sock マウント済み。\nPort: 8080\n[compose デフォルトサービス]")
 
   Container(auth_agent, "cc-remote-agent-auth", "Go (cc-remote-agent)", "認証専用常駐コンテナ。\nClaude CLI認証情報を管理。\n/home/user/.claude をボリュームマウント。\nPort: CC_REMOTE_AGENT_AUTH_PORT (default: 9091)\n[compose デフォルトサービス]")
 
