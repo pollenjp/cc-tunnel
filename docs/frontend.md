@@ -583,6 +583,57 @@ location / {
 }
 ```
 
+### nginx reverse proxy（/api/ → cc-tunnel API）
 
+frontend と cc-tunnel API は別々の Cloud Run サービスであり、ブラウザから直接 cc-tunnel URL に
+リクエストを送ると CORS や認証の問題が生じる。
+同オリジン化（候補B）として、frontend の nginx が `/api/*` を cc-tunnel API に reverse proxy する。
+
+**仕組み:**
+
+1. Terraform (`frontend.tf`) が `API_UPSTREAM` env として cc-tunnel の Cloud Run URI を注入
+2. `docker-entrypoint.sh` が `BACKEND_URL` env から `window.__ENV__.BACKEND_URL` を `/usr/share/nginx/html/env.js` に書き出す
+3. nginx の `envsubst` テンプレート機能が `nginx.conf.template` の `$API_UPSTREAM` を展開して nginx.conf を生成
+4. nginx が `/api/*` リクエストを cc-tunnel URI に転送する
+
+```nginx
+# SSE ストリーミング専用（conversations/{id}/messages）
+location ~ ^/api/conversations/[^/]+/messages {
+    rewrite ^/api(.*)$ $1 break;
+    proxy_pass $API_UPSTREAM;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_set_header X-Accel-Buffering no;
+    proxy_set_header Connection '';
+    proxy_set_header Host $host;
+    proxy_read_timeout 300s;
+}
+
+# 通常 API リクエスト
+location /api/ {
+    proxy_pass $API_UPSTREAM/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+**フロントエンドコード側:** `src/api/client.ts` は `window.__ENV__?.BACKEND_URL ?? '/api'` を baseUrl として使用。
+`BACKEND_URL="/api"` が注入されることで、API リクエストは常に同一オリジンの `/api/` パスに向かう。
+
+**CORS 不要の理由:** ブラウザから見ると frontend と API が同一オリジン（nginx が同一 Port で両方を提供）のため
+preflight が発生しない。
+
+### Phase 2: LB 経由配信
+
+frontend Cloud Run は Global HTTPS LB の serverless NEG 経由でアクセス。
+LB の default backend が frontend を配信するため、nginx の /api/ proxy_pass は使用されない。
+ローカル開発環境（compose.yaml）では引き続き nginx の /api/ proxy_pass が動作する。
+
+- ingress: `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`（LB 経由のみ）
+- SPA ルーティング: nginx の `try_files $uri $uri/ /index.html` で対応（変更なし）
 
 

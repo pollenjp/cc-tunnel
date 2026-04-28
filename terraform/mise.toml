@@ -1,0 +1,69 @@
+[tools]
+gcloud = "565.0.0"
+terraform = "1.14.9"
+terragrunt = "1.0.2"
+uv = "0.11.7"
+
+[tasks."tf:init:all"]
+description = "Run terragrunt init on all units"
+dir = "{{ cwd }}"
+run = 'terragrunt --non-interactive run --all -- init "${@}"'
+
+[tasks."tf:plan:single"]
+description = "Run terragrunt plan on a single unit"
+dir = "{{ cwd }}"
+run = 'terragrunt run -- plan "${@}"'
+
+[tasks."tf:plan:all"]
+description = "Run terragrunt plan on all units"
+dir = "{{ cwd }}"
+run = 'terragrunt run --all -- plan "${@}"'
+
+[tasks."tf:apply:single"]
+description = "Run terragrunt apply on a single unit"
+dir = "{{ cwd }}"
+run = 'terragrunt run -- apply "${@}"'
+
+[tasks."tf:apply:all"]
+description = "Run terragrunt apply on all units"
+dir = "{{ cwd }}"
+run = 'terragrunt --non-interactive run --all -- apply "${@}"'
+
+[tasks."tf:destroy:single"]
+description = "Run terragrunt destroy on a single unit"
+dir = "{{ cwd }}"
+run = 'terragrunt run -- destroy "${@}"'
+
+[tasks."tf:destroy:all"]
+description = "Run terragrunt destroy on all units"
+dir = "{{ cwd }}"
+run = 'terragrunt run --all -- destroy "${@}"'
+
+[tasks."tf:find:init"]
+description = "Find terragrunt init units"
+dir = "{{ cwd }}"
+run = 'terragrunt find --filter "./init*" --filter "./**/init*"'
+
+[tasks.clean]
+description = "Run all clean subtasks"
+depends = ["clean:*"]
+
+[tasks."clean:terragrunt"]
+description = "Remove all .terragrunt-cache directories"
+run = 'find . -type d -name ".terragrunt-cache" -prune -exec rm -rf {} +'
+
+[tasks."tf:fmt"]
+description = "Format all terragrunt files"
+run = 'terragrunt hcl fmt'
+
+[tasks."tf:lint"]
+description = "Lint all terragrunt files"
+depends = ["tf:lint:*"]
+
+[tasks."tf:lint:validate"]
+description = "Validate all terragrunt files"
+run = 'terragrunt hcl validate'
+
+[tasks."tf:lint:format"]
+description = "Check formatting of all terragrunt files"
+run = 'terragrunt hcl fmt --check'
