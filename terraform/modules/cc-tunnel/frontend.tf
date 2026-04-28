@@ -136,7 +136,7 @@ resource "google_service_account" "fe_runtime_sa" {
 resource "google_cloud_run_v2_service" "fe_cloud_run" {
   name                = local.fe_cloud_run_name
   location            = var.artifact_registry_repository_location
-  ingress             = "INGRESS_TRAFFIC_ALL"
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   deletion_protection = false
 
   template {
@@ -154,10 +154,6 @@ resource "google_cloud_run_v2_service" "fe_cloud_run" {
       env {
         name  = "BACKEND_URL"
         value = "/api"
-      }
-      env {
-        name  = "PORT"
-        value = tostring(var.frontend_container_port)
       }
     }
   }

@@ -166,6 +166,19 @@ DB パスワードは Secret Manager で管理され、Cloud Run には Cloud SQ
 | `enable_public_access` | 全公開 IAM binding (bool, default: false) | 省略可 |
 | `container_port` | コンテナ待受ポート (number, default: 5173) | 省略可 |
 
+## frontend nginx reverse proxy の env 注入
+
+`frontend.tf` の `fe_cloud_run` に以下の env が注入される:
+
+| env 名 | 値 | 用途 |
+|--------|-----|------|
+| `API_UPSTREAM` | `google_cloud_run_v2_service.cloud_run.uri` | nginx が `/api/*` をプロキシする先の cc-tunnel URI |
+| `BACKEND_URL` | `"/api"` | フロントエンドコードが使う API base path（同オリジン化済み） |
+| `PORT` | `var.frontend_container_port` | nginx 待受ポート |
+
+nginx は `apps/frontend/nginx.conf.template` の `envsubst` テンプレートで `$API_UPSTREAM` を展開し、
+`/api/*` リクエストを cc-tunnel Cloud Run に転送する。circular dependency なし（frontend → cc-tunnel 片方向参照）。
+
 ## Cloud SQL 接続方式
 
 | 項目 | 内容 |
@@ -214,3 +227,91 @@ GCE VM 上でコンテナを起動する。
 
 Artifact Registry セットアップが完了していることが docker_gce Provider
 本番運用の前提条件となる。
+
+## cc-remote-agent 統合（modules/cc-tunnel）
+
+`modules/cc-tunnel/cc-remote-agent.tf` が cc-remote-agent の Cloud Build trigger と
+Artifact Registry push を管理する。
+
+### 構成方針
+
+| 項目 | 内容 |
+|------|------|
+| イメージ管理 | Cloud Build trigger で `apps/cc-remote-agent/` 変更時に自動ビルド＆push |
+| VM 管理 | GCE VM は Go コード（`dockergce/provider.go`）が動的作成（Terraform は VM resource を持たない） |
+| GCE VM OS | COS（Go コードで hardcode。Terraform 設定不要） |
+| デフォルト compute SA | `cra_default_compute_sa_reader` で `artifactregistry.reader` を付与（VM が AR から pull するため） |
+| Cloud Run runtime SA | `cr_runtime_compute_admin`（roles/compute.instanceAdmin.v1）+ `cr_runtime_default_compute_sa_user`（roles/iam.serviceAccountUser）を付与 |
+
+### Cloud Run env 変数
+
+以下の env が Cloud Run に渡される:
+
+| env 名 | 値 | 用途 |
+|--------|----|------|
+| `EXECUTION_PROVIDER` | `docker_gce` | 実行プロバイダー選択 |
+| `GCE_PROJECT_ID` | `var.project_id` | VM 作成先プロジェクト |
+| `GCE_ZONE` | `var.gce_zone` (default: `us-central1-a`) | VM 作成ゾーン |
+| `GCE_MACHINE_TYPE` | `var.gce_machine_type` (default: `e2-medium`) | VM マシンタイプ |
+| `CC_REMOTE_AGENT_IMAGE` | `local.cra_fqim` | AR 上の cc-remote-agent イメージ URL |
+
+### outputs
+
+`cc_remote_agent_image` output に cc-remote-agent の Artifact Registry イメージ URL が出力される。
+
+## Phase 2: External Global HTTPS LB + serverless NEG 構成
+
+Phase 2 では External Global HTTPS LB を採用し、cc-tunnel と frontend を
+単一ドメイン（cctunnel.pollenjp.com）に統合する:
+- LB の path matcher: /api/* → cc-tunnel backend（url_rewrite で /api prefix を削除）
+- LB の default: frontend backend
+- cc-tunnel/frontend ともに ingress=INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER（LB 経由のみ）
+- SSL: Google-managed SSL certificate（DNS 認証、cctunnel.pollenjp.com）
+
+### アーキテクチャ
+
+```
+Browser → DNS (cctunnel.pollenjp.com → LB IP) → Global HTTPS LB
+          ├── /api/* → cc-tunnel Cloud Run (path rewrite: /api を削除、timeout=3600s for SSE)
+          └── /*    → frontend Cloud Run (SPA + nginx try_files)
+```
+
+### Apply 後の手順（殿の作業）
+
+1. `terragrunt apply` で Global LB / managed cert を一括作成
+   （cert は PROVISIONING 状態で apply 完了）
+2. outputs の `lb_ip` を確認し、Cloudflare で A レコード設定:
+   - Record: `cctunnel.pollenjp.com` → `<lb_ip>`
+   - Proxy: DNS only（灰色雲、Proxy OFF）
+3. DNS 伝搬後、Google が cert を発行（数十分〜数時間）
+4. cert の ACTIVE を確認:
+   ```bash
+   gcloud compute ssl-certificates describe <cert-name> \
+     --global --format="value(managed.status)"
+   ```
+   cert-name は `${deploy_env}-${random_id}-lb-cert` 形式。apply 後 `terragrunt output` でリソース名を確認すること。
+   `ACTIVE` になれば `https://cctunnel.pollenjp.com/` でアクセス可能
+
+### Terraform 変数
+
+| 変数 | 値 | 説明 |
+|------|----|------|
+| `lb_fqdn` | `cctunnel.pollenjp.com` | SSL cert のドメイン |
+
+### 注意事項
+
+- serverless NEG 経由（Global LB）でも Cloud Run の IAM invoker チェックは有効。
+  `ingress=INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` で `.run.app` 直接アクセスをブロックしつつ、
+  `allUsers` に `roles/run.invoker` を付与して LB からのアクセスを許可すること（`enable_public_access=true`）。
+  Phase 3 で IAP を有効化する際は `allUsers` invoker を削除し、IAP サービスアカウントに invoker を付与する。
+- cert が ACTIVE になるまでは HTTPS アクセス不可（ERR_SSL_PROTOCOL_ERROR）
+- ingress=INTERNAL_LOAD_BALANCING 切替後、Cloud Run の `.run.app` URL への直接アクセスは拒否される
+- ローカル開発（compose.yaml）は引き続き nginx の /api/ proxy_pass で動作（Cloud Run 側の変更は影響なし）
+- serverless NEG を持つ backend_service は `timeout_sec` 非対応（apply エラー）。
+  リクエスト timeout は Cloud Run の `template.timeout` で制御する
+  （cc-tunnel デフォルト 300s、変更が必要な場合は main.tf の timeout_seconds を調整）
+
+### Phase 3 IAP 移行時の差分
+
+- backend service に `iap { }` ブロックを追加するだけで IAP 有効化可能（LB 構成の変更最小）
+- AppAuth との責務整理（IAP 一本化 or 並走）は Phase 3 cmd で別途決定

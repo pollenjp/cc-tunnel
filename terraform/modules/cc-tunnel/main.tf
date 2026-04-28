@@ -158,7 +158,7 @@ resource "google_service_account" "runtime_sa" {
 resource "google_cloud_run_v2_service" "cloud_run" {
   name                = local.cloud_run_name
   location            = local.cloud_run_location
-  ingress             = "INGRESS_TRAFFIC_ALL"
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   deletion_protection = false
 
   template {
@@ -169,12 +169,8 @@ resource "google_cloud_run_v2_service" "cloud_run" {
       ports {
         container_port = var.container_port
       }
-      # 'PORT' is a special environment variable in Cloud Run
+      # 'PORT' is a special environment variable in Cloud Run. Don't set it manually.
       # https://docs.cloud.google.com/run/docs/configuring/services/environment-variables#best-practices
-      # env {
-      #   name  = "PORT"
-      #   value = tostring(var.container_port)
-      # }
       volume_mounts {
         name       = "cloudsql"
         mount_path = "/cloudsql"
@@ -187,6 +183,26 @@ resource "google_cloud_run_v2_service" "cloud_run" {
             version = "latest"
           }
         }
+      }
+      env {
+        name  = "EXECUTION_PROVIDER"
+        value = "docker_gce"
+      }
+      env {
+        name  = "GCE_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "GCE_ZONE"
+        value = var.gce_zone
+      }
+      env {
+        name  = "GCE_MACHINE_TYPE"
+        value = var.gce_machine_type
+      }
+      env {
+        name  = "CC_REMOTE_AGENT_IMAGE"
+        value = local.cra_fqim
       }
     }
     volumes {
@@ -201,6 +217,10 @@ resource "google_cloud_run_v2_service" "cloud_run" {
     google_project_iam_member.cs_runtime_sql_client,
     google_secret_manager_secret_iam_member.cs_runtime_database_url_accessor,
     google_secret_manager_secret_version.cs_database_url_secret_version,
+    google_project_iam_member.cr_runtime_compute_admin,
+    google_service_account_iam_member.cr_runtime_default_compute_sa_user,
+    google_artifact_registry_repository_iam_member.cra_default_compute_sa_reader,
+    terraform_data.cra_run_trigger_once,
   ]
 
   lifecycle {
@@ -223,4 +243,16 @@ resource "google_cloud_run_v2_service_iam_member" "public_access" {
   name     = google_cloud_run_v2_service.cloud_run.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+resource "google_project_iam_member" "cr_runtime_compute_admin" {
+  project = var.project_id
+  role    = "roles/compute.instanceAdmin.v1"
+  member  = "serviceAccount:${google_service_account.runtime_sa.email}"
+}
+
+resource "google_service_account_iam_member" "cr_runtime_default_compute_sa_user" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.runtime_sa.email}"
 }

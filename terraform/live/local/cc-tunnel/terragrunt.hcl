@@ -20,5 +20,9 @@ inputs = {
 
   frontend_image_name           = "frontend"
   frontend_container_port       = 8080
-  frontend_enable_public_access = false
+
+  enable_public_access          = true   # LB 経由のみだが allUsers invoker 必須（ingress=INTERNAL_LOAD_BALANCER で .run.app 直接アクセスはブロック済）
+  frontend_enable_public_access = true   # LB 経由のみだが allUsers invoker 必須（ingress=INTERNAL_LOAD_BALANCER で .run.app 直接アクセスはブロック済）
+
+  lb_fqdn = "cctunnel.pollenjp.com"
 }

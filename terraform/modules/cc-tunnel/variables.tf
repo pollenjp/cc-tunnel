@@ -82,3 +82,25 @@ variable "cloud_sql_user" {
   description = "Cloud SQL user name"
   default     = "cctunnel"
 }
+
+variable "gce_zone" {
+  type        = string
+  description = "GCE zone for VM (docker_gce provider)"
+  default     = "us-central1-a"
+}
+
+variable "gce_machine_type" {
+  type        = string
+  description = "GCE machine type for VM (docker_gce provider)"
+  default     = "e2-medium"
+}
+
+variable "cc_remote_agent_image_name" {
+  type    = string
+  default = "cc-remote-agent"
+}
+
+variable "lb_fqdn" {
+  type        = string
+  description = "FQDN for HTTPS LB (Google-managed SSL cert はこのドメインで発行)"
+}
