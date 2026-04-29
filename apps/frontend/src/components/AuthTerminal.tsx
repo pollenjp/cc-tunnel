@@ -5,9 +5,10 @@ import { getAuthOutput, submitAuthInput } from '../api/client';
 
 interface Props {
   conversationId?: string;
+  onTextOutput?: (text: string) => void;
 }
 
-export function AuthTerminal({ conversationId = '' }: Props) {
+export function AuthTerminal({ conversationId = '', onTextOutput }: Props) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const cursorRef = useRef(0);
@@ -25,6 +26,7 @@ export function AuthTerminal({ conversationId = '' }: Props) {
           bytes[i] = binary.charCodeAt(i);
         }
         xtermRef.current?.write(bytes);
+        onTextOutput?.(binary);
 
         fullOutputRef.current += binary;
         const flat = fullOutputRef.current.replace(/[\r\n]/g, '');
@@ -35,7 +37,7 @@ export function AuthTerminal({ conversationId = '' }: Props) {
       }
       cursorRef.current = res.cursor;
     } catch { /* ignore */ }
-  }, [conversationId]);
+  }, [conversationId, onTextOutput]);
 
   useEffect(() => {
     if (!terminalRef.current) return;

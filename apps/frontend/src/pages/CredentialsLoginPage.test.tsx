@@ -9,18 +9,24 @@ vi.mock('../api/credentials', () => ({
 
 vi.mock('../api/client', () => ({
   initiateLogin: vi.fn(),
-  getAuthOutput: vi.fn(),
-  submitAuthInput: vi.fn(),
+}));
+
+let capturedOnTextOutput: ((text: string) => void) | undefined;
+vi.mock('../components/AuthTerminal', () => ({
+  AuthTerminal: ({ onTextOutput }: { onTextOutput?: (text: string) => void }) => {
+    capturedOnTextOutput = onTextOutput;
+    return <div aria-label="pty-output" data-testid="auth-terminal" />;
+  },
 }));
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { CredentialsLoginPage } from './CredentialsLoginPage';
 import { useAppAuth } from '../hooks/useAppAuth';
 import { startRelogin, finalizeRelogin } from '../api/credentials';
-import { initiateLogin, getAuthOutput, submitAuthInput } from '../api/client';
+import { initiateLogin } from '../api/client';
 
 let capturedPath = '/login/credentials';
 
@@ -47,6 +53,7 @@ function renderPage(search = '?reason=missing&conversationId=conv-001') {
 
 describe('CredentialsLoginPage', () => {
   beforeEach(() => {
+    capturedOnTextOutput = undefined;
     vi.mocked(useAppAuth).mockReturnValue({
       user: { id: 'u1', name: 'alice' },
       token: 'test-token',
@@ -57,9 +64,7 @@ describe('CredentialsLoginPage', () => {
     });
     vi.mocked(startRelogin).mockResolvedValue({ ready: true });
     vi.mocked(initiateLogin).mockResolvedValue({ message: 'ok' } as never);
-    vi.mocked(getAuthOutput).mockResolvedValue({ data: '', cursor: 0 } as never);
     vi.mocked(finalizeRelogin).mockResolvedValue({ registered: true, isValid: true });
-    vi.mocked(submitAuthInput).mockResolvedValue({ ok: true } as never);
   });
 
   it('起動時に startRelogin と initiateLogin を呼ぶ', async () => {
@@ -71,21 +76,24 @@ describe('CredentialsLoginPage', () => {
     });
   });
 
-  it('PTY フェーズに入ると pty-output エリアが表示される', async () => {
+  it('PTY フェーズに入ると AuthTerminal が表示される', async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByLabelText('pty-output')).toBeTruthy();
+      expect(screen.getByTestId('auth-terminal')).toBeTruthy();
     });
   });
 
-  it('Login successful 検知で finalizeRelogin が呼ばれチャット画面へ navigate', async () => {
-    vi.mocked(getAuthOutput)
-      .mockResolvedValueOnce({ data: '', cursor: 0 } as never)
-      .mockResolvedValueOnce({ data: btoa('Login successful'), cursor: 20 } as never)
-      .mockResolvedValue({ data: '', cursor: 20 } as never);
-
+  it('onTextOutput で "Login successful" を渡すと finalizeRelogin が呼ばれチャット画面へ navigate', async () => {
     renderPage('?reason=missing&conversationId=conv-001');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('auth-terminal')).toBeTruthy();
+    });
+
+    await act(async () => {
+      capturedOnTextOutput?.('Login successful');
+    });
 
     await waitFor(() => {
       expect(finalizeRelogin).toHaveBeenCalledWith('test-token', 'conv-001');
@@ -104,26 +112,6 @@ describe('CredentialsLoginPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeTruthy();
       expect(screen.getByRole('alert').textContent).toContain('container start failed');
-    });
-  });
-
-  it('入力を送信できる', async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('pty-output')).toBeTruthy();
-    });
-
-    const input = screen.getByPlaceholderText('入力…');
-    act(() => {
-      fireEvent.change(input, { target: { value: 'my-code' } });
-    });
-    act(() => {
-      fireEvent.click(screen.getByRole('button', { name: '送信' }));
-    });
-
-    await waitFor(() => {
-      expect(submitAuthInput).toHaveBeenCalledWith('conv-001', 'my-code');
     });
   });
 });

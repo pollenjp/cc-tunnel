@@ -142,10 +142,9 @@ func (m *AuthManager) StartLogin(ctx context.Context, method string) (LoginRespo
 		for {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, buf[:n])
+				stripped := []byte(stripANSI(string(buf[:n])))
 				m.mu.Lock()
-				m.outputBuf = append(m.outputBuf, chunk...)
+				m.outputBuf = append(m.outputBuf, stripped...)
 				m.mu.Unlock()
 			}
 			if err != nil {
