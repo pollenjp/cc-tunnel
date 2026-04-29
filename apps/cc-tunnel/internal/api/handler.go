@@ -264,6 +264,34 @@ func (h *Server) DeleteConversation(w http.ResponseWriter, r *http.Request, conv
 	writeJSON(w, http.StatusOK, StatusResponse{Status: "ok"})
 }
 
+func (h *Server) GetCredentialsStatus(w http.ResponseWriter, r *http.Request) {
+	if h.credService == nil {
+		writeJSON(w, http.StatusOK, CredentialsStatusResponse{Registered: true, IsValid: true})
+		return
+	}
+	token, ok := bearerToken(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	user, found := h.session.get(token)
+	if !found {
+		writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+		return
+	}
+	_, err := h.credService.FetchAndDecrypt(r.Context(), user.Name)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, CredentialsStatusResponse{Registered: true, IsValid: true})
+	case errors.Is(err, credential.ErrNotFound):
+		writeJSON(w, http.StatusOK, CredentialsStatusResponse{Registered: false, IsValid: false})
+	case errors.Is(err, credential.ErrCredentialsInvalid):
+		writeJSON(w, http.StatusOK, CredentialsStatusResponse{Registered: true, IsValid: false})
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	}
+}
+
 func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
 	var req SendMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

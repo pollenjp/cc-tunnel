@@ -202,6 +202,26 @@ paths:
         "204":
           description: Logout successful
 
+  /credentials/status:
+    get:
+      operationId: GetCredentialsStatus
+      summary: Check if credentials are registered and valid
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Credentials status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialsStatusResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /credentials/relogin/start:
     post:
       operationId: PostReloginStart
@@ -683,6 +703,17 @@ components:
         conversationId:
           type: string
           format: uuid
+
+    CredentialsStatusResponse:
+      type: object
+      required:
+        - registered
+        - isValid
+      properties:
+        registered:
+          type: boolean
+        isValid:
+          type: boolean
 
     ReloginFinalizeResponse:
       type: object

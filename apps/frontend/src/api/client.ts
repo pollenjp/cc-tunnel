@@ -92,6 +92,15 @@ export async function sendMessage(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content }),
   });
-  if (!res.ok) throw new Error(`sendMessage failed: ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 401) {
+      const body = await res.json().catch(() => ({}));
+      if (body.redirect) {
+        window.location.assign(body.redirect);
+        return { message_id: '' };
+      }
+    }
+    throw new Error(`sendMessage failed: ${res.status}`);
+  }
   return res.json();
 }

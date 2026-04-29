@@ -441,7 +441,56 @@ CredentialsLoginPage）でよい。本改訂は backend 側の構造変更が主
 | Q4 | 認証中もアイドルタイマーが回るリスクへの対処 | 推奨：`/auth/*` 操作で last_activity を更新する小修正を Phase 1 に含める | 軍師判断で実装ガイドに含める |
 | Q5 | concurrency=80 でも cc-tunnel API ハンドラ自体は共有プロセス上で動く点 | コンテナ単位の隔離は credentials の保管・展開フェーズで担保される。cc-tunnel ハンドラは memory 上で credentials を扱うが、関数局所スコープゆえユーザー間でリークしない（goroutine ローカル） | 説明済 |
 
-## 14. 実装サマリ（完了 2026-04-29）
+## 14. セッション認証ゲート（Session Auth Gate）
+
+`cmd_cctunnel_session_auth_gate` で追加された機能。
+ユーザーが `/chat/:id` を開いた瞬間に credential 状態を確認し、
+未登録・失効の場合はログイン画面へ自動誘導する。
+
+### /chat/:id 入室時フロー
+
+```
+[ユーザー] /chat/:id にアクセス
+        ↓
+[AppAuthGuard] (JWT 検証 — 既存)
+        ↓ token 有
+[CredentialGuard] (新規追加)
+        ↓ GET /api/credentials/status
+    ┌──────────────┬──────────────────┬──────────────────┐
+ registered=true  registered=false  registered=true
+ isValid=true     (未登録)          isValid=false (失効)
+    │                  │                  │
+    ↓                  ↓                  ↓
+[ChatPage 表示]  /login/credentials  /login/credentials
+                 ?reason=missing     ?reason=expired
+                 &conversationId=:id &conversationId=:id
+```
+
+### `GET /api/credentials/status` レスポンス仕様
+
+| 状態 | `registered` | `isValid` |
+|------|-------------|-----------|
+| 登録済み・有効 | `true` | `true` |
+| 未登録 | `false` | `false` |
+| 登録済み・失効 | `true` | `false` |
+| no-auth mode (`credService == nil`) | `true` | `true` |
+
+### sendMessage 401 reactive fallback
+
+`sendMessage` が 401 を受けた際、response body の `redirect` フィールドを読んで
+`window.location.assign(redirect)` で遷移する。
+これは `/chat/:id` 入室後に他端末で credential が削除された race condition への第二ゲート。
+
+### CredentialGuard 適用ルート
+
+| ルート | CredentialGuard | 理由 |
+|--------|----------------|------|
+| `/chat/:id` | ✅ 適用 | 会話実行に credential が必要 |
+| `/chat` (no id) | ✗ 適用しない | 会話作成前は credential 不要 |
+
+---
+
+## 15. 実装サマリ（完了 2026-04-29）
 
 | 足軽 | 担当 subtask | 内容 |
 |------|-------------|------|
