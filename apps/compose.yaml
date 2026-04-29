@@ -53,6 +53,24 @@ services:
       postgres:
         condition: service_healthy
 
+  cc-login:
+    build:
+      context: ./cc-login
+    environment:
+      PORT: "9092"
+      DATABASE_URL: "postgres://cctunnel:${POSTGRES_PASSWORD:-cctunnel_dev}@postgres:5432/cctunnel?sslmode=disable"
+      CC_LOGIN_ENCRYPTION_KEY: "${CC_LOGIN_ENCRYPTION_KEY}"
+      CC_TUNNEL_URL: "http://cc-tunnel:${CC_TUNNEL_ENV_PORT:-8080}"
+    expose:
+      - "9092"
+    ports:
+      - "127.0.0.1:9092:9092"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cc-tunnel:
+        condition: service_started
+
   frontend:
     profiles:
       - full

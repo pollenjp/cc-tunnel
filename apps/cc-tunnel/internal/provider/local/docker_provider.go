@@ -10,7 +10,7 @@ import (
 
 // sessionProvider abstracts SessionManager operations for testability.
 type sessionProvider interface {
-	GetOrCreate(ctx context.Context, convID string) (*remoteclient.Client, error)
+	GetOrCreate(ctx context.Context, convID string, credentials []byte) (*remoteclient.Client, error)
 	StopAll(ctx context.Context) error
 	CleanupOrphans(ctx context.Context) error
 }
@@ -28,7 +28,7 @@ func NewLocalDockerProvider(sessions sessionProvider) *LocalDockerProvider {
 }
 
 func (p *LocalDockerProvider) Execute(ctx context.Context, req remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
-	client, err := p.sessions.GetOrCreate(ctx, req.ConversationID)
+	client, err := p.sessions.GetOrCreate(ctx, req.ConversationID, req.Credentials)
 	if err != nil {
 		return "", fmt.Errorf("get session: %w", err)
 	}

@@ -13,16 +13,18 @@ import (
 
 // mockSessionProvider implements sessionProvider for testing.
 type mockSessionProvider struct {
-	client     *remoteclient.Client
-	getCalled  bool
-	lastConvID string
-	getErr     error
-	stopErr    error
+	client      *remoteclient.Client
+	getCalled   bool
+	lastConvID  string
+	lastCredLen int
+	getErr      error
+	stopErr     error
 }
 
-func (m *mockSessionProvider) GetOrCreate(ctx context.Context, convID string) (*remoteclient.Client, error) {
+func (m *mockSessionProvider) GetOrCreate(ctx context.Context, convID string, credentials []byte) (*remoteclient.Client, error) {
 	m.getCalled = true
 	m.lastConvID = convID
+	m.lastCredLen = len(credentials)
 	return m.client, m.getErr
 }
 

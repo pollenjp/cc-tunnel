@@ -56,6 +56,7 @@ func main() {
 	handler := api.NewHandler(authMgr)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/init", handler.Init)
 	mux.HandleFunc("/execute", handler.Execute)
 	mux.HandleFunc("/health", handler.Health)
 	mux.HandleFunc("/auth/status", handler.AuthStatus)

@@ -41,6 +41,7 @@ type Request struct {
 	ConversationHistory    []Message `json:"conversation_history,omitempty"`
 	IncludePartialMessages bool      `json:"include_partial_messages,omitempty"`
 	IncludeHookEvents      bool      `json:"include_hook_events,omitempty"`
+	Credentials            []byte    `json:"-"` // decrypted credentials JSON; not sent to cc-remote-agent
 }
 
 type Message struct {
@@ -301,6 +302,33 @@ func (c *Client) Logout(ctx context.Context) (*AuthStatus, error) {
 		return nil, err
 	}
 	return &status, nil
+}
+
+// InitCredentials calls cc-remote-agent POST /init to write credentials to the container.
+func (c *Client) InitCredentials(ctx context.Context, credJSON []byte) error {
+	bodyData, err := json.Marshal(map[string]string{"credentialsJson": string(credJSON)})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/init", bytes.NewReader(bodyData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("init credentials: status %d: %s", resp.StatusCode, body)
+	}
+	return nil
 }
 
 // Execute calls cc-remote-agent /execute and streams ndjson events to the callback.

@@ -7,6 +7,12 @@ import (
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
+// credentialService abstracts credential fetching for testability.
+type credentialService interface {
+	FetchAndDecrypt(ctx context.Context, username string) ([]byte, error)
+	MarkInvalid(ctx context.Context, username string) error
+}
+
 type repository interface {
 	CreateConversation(ctx context.Context, title, model string, systemPrompt *string) (*db.Conversation, error)
 	GetConversation(ctx context.Context, id string) (*db.Conversation, error)

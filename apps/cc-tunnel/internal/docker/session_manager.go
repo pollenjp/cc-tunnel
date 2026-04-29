@@ -55,7 +55,10 @@ func NewSessionManager(runner DockerRunner, config SessionManagerConfig) *Sessio
 
 // GetOrCreate returns the remoteclient.Client for the given convID,
 // creating a new container if one does not exist.
-func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string) (*remoteclient.Client, error) {
+// When credentials is non-nil, they are injected into the container via POST /init
+// after the container starts. On a cache hit the container already has credentials,
+// so credentials is ignored.
+func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string, credentials []byte) (*remoteclient.Client, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -83,8 +86,8 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string) (*remo
 		Image:   sm.config.Image,
 		Env:     []string{"PORT=" + sm.config.ContainerPort},
 		Network: sm.config.Network,
-		VolumeMounts: []VolumeMount{
-			{Source: sm.config.VolumeName, Target: "/home/user/.claude"},
+		TmpfsMounts: map[string]string{
+			"/home/user/.claude": "rw,size=64m",
 		},
 	}
 	containerID, err := sm.runner.ContainerCreate(ctx, opts)
@@ -104,6 +107,15 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string) (*remo
 		_ = sm.runner.ContainerStop(ctx, containerID)
 		_ = sm.runner.ContainerRemove(ctx, containerID)
 		return nil, fmt.Errorf("container health check: %w", err)
+	}
+
+	// Inject credentials into the container if provided.
+	if len(credentials) > 0 {
+		if err := client.InitCredentials(ctx, credentials); err != nil {
+			_ = sm.runner.ContainerStop(ctx, containerID)
+			_ = sm.runner.ContainerRemove(ctx, containerID)
+			return nil, fmt.Errorf("init credentials: %w", err)
+		}
 	}
 
 	s := &session{

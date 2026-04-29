@@ -6,16 +6,18 @@ title cc-tunnel Component Diagram
 
 Person(user, "User", "ブラウザユーザー")
 System_Ext(anthropic, "Anthropic API", "Claude AI")
-ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18-alpine", "会話・メッセージデータ")
-Container_Ext(auth_agent, "cc-remote-agent-auth", "Go", "認証専用常駐コンテナ。\nlogin/logout/status API提供。")
-Container_Ext(session_agent, "cc-remote-agent-{convID}", "Go", "動的セッションコンテナ。\nClaude CLI Execute API提供。")
+ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18-alpine", "会話・メッセージデータ\n+ credentials (暗号化)")
+Container_Ext(auth_agent, "cc-remote-agent-auth", "Go", "[Phase1: 残置]\n認証専用常駐コンテナ。\nlogin/logout/status API提供。\n（Phase2 で cc-login へ統合・廃止予定）")
+Container_Ext(cc_login, "cc-login", "Go (HTTP+PTY)", "[Phase1: 新設]\nclaude /auth PTY 管理。\nAES-256-GCM 暗号化で\ncredentials を DB に保存。")
+Container_Ext(session_agent, "cc-remote-agent-{convID}", "Go", "動的セッションコンテナ。\nClaude CLI Execute API提供。\n+ /init で credentials を受領。")
 System_Ext(docker_daemon, "Docker Daemon", "docker.sock 経由でコンテナ管理")
 
 ' --- cc-tunnel API コンポーネント ---
 Container_Boundary(api_boundary, "cc-tunnel API (Go)") {
-  Component(handler, "Handler (Server)", "net/http", "APIエンドポイント処理。\n会話CRUD・メッセージ送信・認証プロキシ。\n202 Accepted後にgoroutineで非同期実行。")
+  Component(handler, "Handler (Server)", "net/http", "APIエンドポイント処理。\n会話CRUD・メッセージ送信・認証プロキシ。\n202 Accepted後にgoroutineで非同期実行。\n+ Bearer token から username 解決。")
   Component(repository, "Repository", "pgx/v5", "DB操作層。\n会話・メッセージのCRUD。\nCreateStreamingMessage/MergeMessageData等。")
-  Component(remoteclient, "RemoteClient (Auth)", "net/http", "cc-remote-agent-auth へのHTTPクライアント。\n認証操作 (login/logout/status) のみ使用。")
+  Component(cred_service, "CredentialService", "internal/credential/", "[Phase1: 新設]\nDB から credentials を取り出し復号。\nAES-256-GCM Open。\nMarkInvalid で is_valid=FALSE 更新。")
+  Component(remoteclient, "RemoteClient (Auth)", "net/http", "cc-remote-agent-auth へのHTTPクライアント。\n認証操作 (login/logout/status) のみ使用。\n（Phase2 で削除予定）")
 
   Component(exec_provider, "ExecutionProvider", "interface\n(internal/provider/provider.go)", "Claude CLI実行を抽象化するインタフェース。\nExecute(ctx, req, onEvent) を定義。\nnewProviderFromEnv(EXECUTION_PROVIDER) で実装を選択。")
   Component(local_provider, "LocalDockerProvider", "local/docker_provider.go", "ExecutionProvider 実装。\nSessionManager.GetOrCreate で\n会話ごとのセッションコンテナを取得し Execute。\nClose() でコンテナを全停止。")
@@ -33,6 +35,8 @@ Container_Boundary(frontend_boundary, "Frontend (React/Vite)") {
   Component(apiclient, "APIClient", "fetch (api/client.ts)", "REST API呼び出しラッパー。\nlistConversations/getConversation/\nsendMessage/deleteConversation等。")
   Component(authguard, "AuthGuard", "React", "認証状態チェック。\n未認証時にAuthTerminalを表示。")
   Component(useauth, "useAuth", "React Hook", "認証状態管理。\nlogin/logout/status取得。")
+  Component(credguard, "CredentialGuard", "React", "[Phase1: 新設]\napp-auth ログイン後に\n/credentials/status を確認。\n未登録/無効なら /login/credentials へ遷移。")
+  Component(credlogin_page, "CredentialsLoginPage", "React", "[Phase1: 新設]\ncc-login の PTY 出力を表示。\nユーザー入力を /credentials/input に送信。")
 }
 
 ' Frontend → Backend
@@ -51,15 +55,23 @@ Rel(apiclient, handler, "REST API呼び出し", "HTTP/JSON")
 ' Backend 内部
 Rel(handler, repository, "会話・メッセージDB操作")
 Rel(handler, remoteclient, "認証操作 (login/logout/status)")
-Rel(handler, exec_provider, "Claude CLI実行 (Execute)")
+Rel(handler, cred_service, "FetchAndDecrypt(username)\nMarkInvalid(username)")
+Rel(cred_service, db, "credentials テーブル CRUD", "PostgreSQL (pgx/v5)")
+Rel(handler, exec_provider, "Claude CLI実行 (Execute)\n+ credentials_json")
 Rel(exec_provider, local_provider, "local プロバイダ実装")
 Rel(local_provider, session_manager, "GetOrCreate(conversationID)")
 Rel(session_manager, docker_runner, "ContainerCreate/Start/Stop/Remove")
 Rel(repository, db, "SQL", "PostgreSQL (pgx/v5)")
 Rel(remoteclient, auth_agent, "Auth API", "HTTP")
 Rel(docker_runner, docker_daemon, "コンテナ管理", "docker.sock")
-Rel(session_manager, session_agent, "Execute API", "HTTP/NDJSON\n(DNS: containerName:port)")
+Rel(session_manager, session_agent, "Execute API + /init で\ncredentials_json 注入", "HTTP/NDJSON\n(DNS: containerName:port)")
 Rel(auth_agent, anthropic, "LLM呼び出し", "HTTPS")
 Rel(session_agent, anthropic, "LLM呼び出し", "HTTPS")
+
+' --- Phase 1 新設: cc-login 経路 ---
+Rel(credlogin_page, cc_login, "/credentials/* API", "HTTP/JSON")
+Rel(credguard, cc_login, "GET /credentials/status", "HTTP/JSON")
+Rel(cc_login, db, "credentials INSERT/UPDATE/DELETE\n(暗号化済データ)", "PostgreSQL (pgx/v5)")
+Rel(cc_login, anthropic, "claude /auth (PTY 経由 OAuth)", "HTTPS")
 
 @enduml

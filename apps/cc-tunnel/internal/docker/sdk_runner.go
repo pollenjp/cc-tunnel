@@ -67,6 +67,7 @@ func (r *SDKRunner) ContainerCreate(ctx context.Context, opts ContainerCreateOpt
 		},
 		HostConfig: &container.HostConfig{
 			Mounts: mounts,
+			Tmpfs:  opts.TmpfsMounts,
 		},
 		NetworkingConfig: netConfig,
 		Name:             opts.Name,

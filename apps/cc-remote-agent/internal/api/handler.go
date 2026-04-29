@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/auth"
@@ -189,6 +191,52 @@ func (h *Handler) AuthCancel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Login cancelled"}); err != nil {
 		slog.Error("failed to encode cancel response", "error", err)
+	}
+}
+
+// POST /init — credentials JSON をコンテナ内 ~/.claude/.credentials.json に書き込む
+// body: {"credentialsJson": "<JSON string>"}
+func (h *Handler) Init(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		CredentialsJSON string `json:"credentialsJson"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if body.CredentialsJSON == "" {
+		http.Error(w, `{"error":"credentialsJson is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Error("failed to get home dir", "error", err)
+		http.Error(w, `{"error":"failed to resolve home directory"}`, http.StatusInternalServerError)
+		return
+	}
+	claudeDir := filepath.Join(homeDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		slog.Error("failed to create .claude dir", "error", err)
+		http.Error(w, `{"error":"failed to create .claude directory"}`, http.StatusInternalServerError)
+		return
+	}
+	credPath := filepath.Join(claudeDir, ".credentials.json")
+	if err := os.WriteFile(credPath, []byte(body.CredentialsJSON), 0o600); err != nil {
+		slog.Error("failed to write credentials file", "error", err)
+		http.Error(w, `{"error":"failed to write credentials file"}`, http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("credentials initialized", "path", credPath)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"message": "credentials initialized"}); err != nil {
+		slog.Error("failed to encode init response", "error", err)
 	}
 }
 

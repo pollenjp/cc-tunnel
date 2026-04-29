@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/credential"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
@@ -55,14 +57,20 @@ type Server struct {
 	remote            remoteClient
 	executionProvider provider.ExecutionProvider
 	session           *AppSession
-	batchInterval     time.Duration // 0 = default 2s; override for testing
-	doneCh            chan struct{}  // closed when Execute goroutine completes; for testing only
+	credService       credentialService // nil = skip credential check (testing / no-auth mode)
+	batchInterval     time.Duration     // 0 = default 2s; override for testing
+	doneCh            chan struct{}      // closed when Execute goroutine completes; for testing only
 }
 
 var _ ServerInterface = (*Server)(nil)
 
 func NewHandler(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider) *Server {
 	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession()}
+}
+
+// NewHandlerWithCredentials creates a Server with credential validation enabled.
+func NewHandlerWithCredentials(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider, credSvc credentialService) *Server {
+	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession(), credService: credSvc}
 }
 
 func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -219,6 +227,41 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 
 	convIDStr := conversationId.String()
 
+	// Credential check: fetch and decrypt if credService is configured.
+	var credJSON []byte
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		user, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+		var credErr error
+		credJSON, credErr = h.credService.FetchAndDecrypt(r.Context(), user.Name)
+		if errors.Is(credErr, credential.ErrNotFound) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error":    "credentials_required",
+				"redirect": "/login/credentials?reason=missing",
+			})
+			return
+		}
+		if errors.Is(credErr, credential.ErrCredentialsInvalid) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error":    "credentials_invalid",
+				"redirect": "/login/credentials?reason=expired",
+			})
+			return
+		}
+		if credErr != nil {
+			writeError(w, http.StatusInternalServerError, credErr.Error())
+			return
+		}
+	}
+
 	// 会話の存在確認 + 過去メッセージ取得
 	conv, err := h.repo.GetConversation(r.Context(), convIDStr)
 	if err != nil {
@@ -283,6 +326,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		ConversationHistory:    convHistory,
 		IncludePartialMessages: true,
 		IncludeHookEvents:      true,
+		Credentials:            credJSON,
 	}
 	if conv.SystemPrompt != nil {
 		executeReq.SystemPrompt = *conv.SystemPrompt

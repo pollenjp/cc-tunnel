@@ -9,6 +9,7 @@ type ContainerCreateOpts struct {
 	Env          []string
 	Network      string
 	VolumeMounts []VolumeMount
+	TmpfsMounts  map[string]string // container path → mount options (e.g. "rw,size=64m")
 }
 
 // VolumeMount はコンテナへのボリュームマウント設定。

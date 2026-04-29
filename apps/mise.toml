@@ -44,6 +44,10 @@ run = 'docker compose down -v'
 description = "Follow logs of all services with docker compose"
 run = 'docker compose logs -f'
 
+[tasks."test:cc-login"]
+dir = "cc-login"
+run = 'mise run cc-login:test'
+
 [tasks."test:cc-tunnel"]
 dir = "cc-tunnel"
 run = 'mise run cc-tunnel:test'
@@ -58,6 +62,10 @@ depends = ["test:*"]
 [tasks."lint:cc-remote-agent"]
 dir = "cc-remote-agent"
 run = 'mise run cc-remote-agent:lint'
+
+[tasks."lint:cc-login"]
+dir = "cc-login"
+run = 'mise run cc-login:lint'
 
 [tasks."lint:cc-tunnel"]
 dir = "cc-tunnel"
