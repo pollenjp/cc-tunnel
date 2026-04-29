@@ -13,6 +13,11 @@ type credentialService interface {
 	MarkInvalid(ctx context.Context, username string) error
 }
 
+// credentialStorer abstracts credential encryption and storage for testability.
+type credentialStorer interface {
+	StoreCredential(ctx context.Context, username, credJSON string) error
+}
+
 type repository interface {
 	CreateConversation(ctx context.Context, title, model string, systemPrompt *string) (*db.Conversation, error)
 	GetConversation(ctx context.Context, id string) (*db.Conversation, error)
@@ -27,6 +32,7 @@ type repository interface {
 	UpdateMessageContentBlocks(ctx context.Context, messageID string, contentBlocks []map[string]interface{}) error
 	UpdateMessageStatus(ctx context.Context, messageID, status string) error
 	MergeMessageData(ctx context.Context, messageID string, extra map[string]interface{}) error
+	UpdateSessionEndpointLastActivity(ctx context.Context, conversationID string) error
 }
 
 type remoteClient interface {

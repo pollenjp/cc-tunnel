@@ -14,6 +14,7 @@ type mockRepo struct {
 	cred        *credential.Credential
 	getErr      error
 	markInvalid bool
+	upserted    *credential.Credential
 }
 
 func (m *mockRepo) GetByUsername(_ context.Context, _ string) (*credential.Credential, error) {
@@ -22,6 +23,11 @@ func (m *mockRepo) GetByUsername(_ context.Context, _ string) (*credential.Crede
 
 func (m *mockRepo) MarkInvalid(_ context.Context, _ string) error {
 	m.markInvalid = true
+	return nil
+}
+
+func (m *mockRepo) Upsert(_ context.Context, c *credential.Credential) error {
+	m.upserted = c
 	return nil
 }
 

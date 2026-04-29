@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -237,6 +238,40 @@ func (h *Handler) Init(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"message": "credentials initialized"}); err != nil {
 		slog.Error("failed to encode init response", "error", err)
+	}
+}
+
+// POST /auth/finalize-credentials — PTY ログイン完了後、tmpfs 上の credentials.json を読み返す
+// response: {"credentialsJson": "<file content>"}
+func (h *Handler) FinalizeCredentials(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Error("failed to get home dir", "error", err)
+		http.Error(w, `{"error":"failed to resolve home directory"}`, http.StatusInternalServerError)
+		return
+	}
+	credPath := filepath.Join(homeDir, ".claude", ".credentials.json")
+	data, err := os.ReadFile(credPath)
+	if errors.Is(err, os.ErrNotExist) {
+		http.Error(w, `{"error":"credentials file not found","hint":"complete /auth/login flow first"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("failed to read credentials", "error", err)
+		http.Error(w, `{"error":"failed to read credentials"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"credentialsJson": string(data),
+	}); err != nil {
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 

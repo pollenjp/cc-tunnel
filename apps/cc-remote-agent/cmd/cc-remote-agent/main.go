@@ -65,6 +65,7 @@ func main() {
 	mux.HandleFunc("/auth/input", handler.AuthInput)
 	mux.HandleFunc("/auth/output", handler.AuthOutput)
 	mux.HandleFunc("/auth/cancel", handler.AuthCancel)
+	mux.HandleFunc("/auth/finalize-credentials", handler.FinalizeCredentials)
 
 	slog.Info("cc-remote-agent listening", "addr", addr)
 	if err := http.ListenAndServe(addr, loggingMiddleware(mux)); err != nil {

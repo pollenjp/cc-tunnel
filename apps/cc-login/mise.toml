@@ -1,9 +1,0 @@
-[tools]
-go = "1.25.0"
-"golangci-lint" = "2.11.4"
-
-[tasks."cc-login:test"]
-run = 'go test ./...'
-
-[tasks."cc-login:lint"]
-run = 'golangci-lint run ./...'

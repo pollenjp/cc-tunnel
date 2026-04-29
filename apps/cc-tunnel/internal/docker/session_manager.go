@@ -152,6 +152,17 @@ func (sm *SessionManager) waitForReady(ctx context.Context, client *remoteclient
 	}
 }
 
+// GetClient returns the remoteclient.Client for an existing session, if any.
+func (sm *SessionManager) GetClient(convID string) (*remoteclient.Client, bool) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	s, ok := sm.sessions[convID]
+	if !ok {
+		return nil, false
+	}
+	return s.client, true
+}
+
 // Stop stops and removes the container for the given convID.
 func (sm *SessionManager) Stop(ctx context.Context, convID string) error {
 	sm.mu.Lock()

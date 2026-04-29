@@ -171,6 +171,82 @@ paths:
         "204":
           description: Logout successful
 
+  /credentials/relogin/start:
+    post:
+      operationId: PostReloginStart
+      summary: Start a re-login flow for a conversation session
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReloginStartRequest"
+      responses:
+        "200":
+          description: Session container ready for re-login
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReloginStartResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /credentials/relogin/finalize:
+    post:
+      operationId: PostReloginFinalize
+      summary: Finalize re-login and store the new credentials
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReloginFinalizeRequest"
+      responses:
+        "200":
+          description: Credentials stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReloginFinalizeResponse"
+        "400":
+          description: Credentials not ready (login not completed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: Bad gateway (error communicating with session container)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /conversations:
     post:
       operationId: createConversation
@@ -540,6 +616,43 @@ components:
         status:
           type: string
           example: "ok"
+
+    ReloginStartRequest:
+      type: object
+      required:
+        - conversationId
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+
+    ReloginStartResponse:
+      type: object
+      required:
+        - ready
+      properties:
+        ready:
+          type: boolean
+
+    ReloginFinalizeRequest:
+      type: object
+      required:
+        - conversationId
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+
+    ReloginFinalizeResponse:
+      type: object
+      required:
+        - registered
+        - isValid
+      properties:
+        registered:
+          type: boolean
+        isValid:
+          type: boolean
 
     Error:
       type: object

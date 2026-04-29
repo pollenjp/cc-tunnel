@@ -5,11 +5,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 )
+
+// ErrCredentialsNotReady is returned by FinalizeCredentials when the login
+// flow has not yet completed and credentials.json does not exist on the remote agent.
+var ErrCredentialsNotReady = errors.New("credentials file not ready (login not completed)")
 
 // AuthStatus mirrors cc-remote-agent's auth status response
 type AuthStatus struct {
@@ -329,6 +334,42 @@ func (c *Client) InitCredentials(ctx context.Context, credJSON []byte) error {
 		return fmt.Errorf("init credentials: status %d: %s", resp.StatusCode, body)
 	}
 	return nil
+}
+
+// FinalizeCredentials calls cc-remote-agent POST /auth/finalize-credentials and returns
+// the raw credentials JSON string. Returns ErrCredentialsNotReady when the remote agent
+// responds with 404 (login not yet completed).
+func (c *Client) FinalizeCredentials(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/auth/finalize-credentials", nil)
+	if err != nil {
+		return "", fmt.Errorf("new request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("do request: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("resp.Body.Close failed", "error", err)
+		}
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", ErrCredentialsNotReady
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+	var body struct {
+		CredentialsJSON string `json:"credentialsJson"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+	if body.CredentialsJSON == "" {
+		return "", errors.New("empty credentialsJson in response")
+	}
+	return body.CredentialsJSON, nil
 }
 
 // Execute calls cc-remote-agent /execute and streams ndjson events to the callback.

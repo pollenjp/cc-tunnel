@@ -15,6 +15,12 @@ func New() *MockProvider {
 	return &MockProvider{}
 }
 
+func (p *MockProvider) PrepareForRelogin(_ context.Context, _ string) error { return nil }
+
+func (p *MockProvider) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
+	return `{"mock":true}`, nil
+}
+
 func (p *MockProvider) Execute(_ context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
 	onEvent(remoteclient.StreamEvent{
 		Type: "assistant",

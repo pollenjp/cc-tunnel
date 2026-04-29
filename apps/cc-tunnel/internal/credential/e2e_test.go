@@ -3,6 +3,7 @@ package credential_test
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -62,13 +63,13 @@ func setupE2ETestDB(t *testing.T) *pgxpool.Pool {
 }
 
 // TestCredentialFlow_SaveAndFetch tests the end-to-end flow:
-// cc-login encrypts and saves credentials to the DB,
-// cc-tunnel fetches and decrypts them via CredentialService.
+// TODO: cc-login is removed (integrated into session container). Update this test to reflect new design.
+// cc-tunnel fetches and decrypts credentials via CredentialService.
 func TestCredentialFlow_SaveAndFetch(t *testing.T) {
 	pool := setupE2ETestDB(t)
 	ctx := context.Background()
 
-	// Shared encryption key (same key used by both cc-login and cc-tunnel)
+	// Shared encryption key
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		t.Fatal(err)
@@ -77,7 +78,7 @@ func TestCredentialFlow_SaveAndFetch(t *testing.T) {
 	username := "e2e-user"
 	plaintext := []byte(`{"access_token":"e2e-token","refresh_token":"e2e-refresh"}`)
 
-	// --- cc-login side: encrypt and save ---
+	// --- encrypt and save ---
 	encryptor, err := credential.NewEncryptor(key, keyVersion)
 	if err != nil {
 		t.Fatalf("NewEncryptor: %v", err)
@@ -107,5 +108,67 @@ func TestCredentialFlow_SaveAndFetch(t *testing.T) {
 
 	if string(got) != string(plaintext) {
 		t.Errorf("decrypted data mismatch: got %q, want %q", got, plaintext)
+	}
+}
+
+// TestCredentialReloginFlow_E2E tests the re-login flow end-to-end:
+// 1. Store initial credentials and mark them invalid (simulating expired/invalidated session).
+// 2. Simulate relogin/finalize: mock cc-remote-agent returns new credJSON → StoreCredential saves to DB.
+// 3. Verify FetchAndDecrypt succeeds with the newly stored credentials.
+func TestCredentialReloginFlow_E2E(t *testing.T) {
+	pool := setupE2ETestDB(t)
+	ctx := context.Background()
+
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	const keyVersion = 1
+	username := "relogin-user"
+
+	encryptor, err := credential.NewEncryptor(key, keyVersion)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+
+	repo := credential.NewCredentialRepository(pool)
+	svc := credential.NewCredentialService(repo, encryptor)
+
+	// Step 1: store initial credentials and mark them invalid.
+	initialPlain := []byte(`{"access_token":"old-token"}`)
+	ciphertext, nonce, err := encryptor.Seal(initialPlain, username)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	if err := repo.Upsert(ctx, &credential.Credential{
+		Username:      username,
+		EncryptedData: ciphertext,
+		Nonce:         nonce,
+		KeyVersion:    keyVersion,
+	}); err != nil {
+		t.Fatalf("Upsert initial: %v", err)
+	}
+	if err := repo.MarkInvalid(ctx, username); err != nil {
+		t.Fatalf("MarkInvalid: %v", err)
+	}
+
+	// Verify that FetchAndDecrypt returns ErrCredentialsInvalid before re-login.
+	if _, err := svc.FetchAndDecrypt(ctx, username); !errors.Is(err, credential.ErrCredentialsInvalid) {
+		t.Fatalf("expected ErrCredentialsInvalid before relogin, got %v", err)
+	}
+
+	// Step 2: simulate relogin/finalize — mock cc-remote-agent returned new credJSON.
+	newCredJSON := `{"access_token":"new-token","refresh_token":"new-refresh"}`
+	if err := svc.StoreCredential(ctx, username, newCredJSON); err != nil {
+		t.Fatalf("StoreCredential (relogin finalize): %v", err)
+	}
+
+	// Step 3: FetchAndDecrypt must now succeed with the new credentials.
+	got, err := svc.FetchAndDecrypt(ctx, username)
+	if err != nil {
+		t.Fatalf("FetchAndDecrypt after relogin: %v", err)
+	}
+	if string(got) != newCredJSON {
+		t.Errorf("decrypted data mismatch: got %q, want %q", got, newCredJSON)
 	}
 }

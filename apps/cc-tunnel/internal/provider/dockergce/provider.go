@@ -271,6 +271,30 @@ docker run -d \
 `, p.config.AgentImage, p.config.AgentPort, p.config.AgentPort, p.config.AgentImage)
 }
 
+// PrepareForRelogin ensures a session endpoint exists for the given conversation
+// without running the execute flow, so the frontend can initiate a PTY-based
+// re-login flow against the container.
+func (p *DockerGCEProvider) PrepareForRelogin(ctx context.Context, conversationID string) error {
+	_, err := p.getOrCreateEndpoint(ctx, conversationID)
+	return err
+}
+
+// PullCredentialsFromSession fetches the credentials.json written by the PTY
+// login flow from the GCE session container.
+func (p *DockerGCEProvider) PullCredentialsFromSession(ctx context.Context, conversationID string) (string, error) {
+	ep, err := p.db.GetSessionEndpointByConversationID(ctx, conversationID)
+	if err != nil {
+		return "", fmt.Errorf("get session endpoint: %w", err)
+	}
+	vm, err := p.db.GetVMInstance(ctx, ep.VMInstanceID)
+	if err != nil {
+		return "", fmt.Errorf("get VM instance: %w", err)
+	}
+	agentURL := fmt.Sprintf("http://%s:%d", vm.InternalIP, ep.Port)
+	client := p.newClient(agentURL)
+	return client.FinalizeCredentials(ctx)
+}
+
 // Close stops the IdleChecker and releases resources held by the provider.
 func (p *DockerGCEProvider) Close() error {
 	if p.idleChecker != nil {

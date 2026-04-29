@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage';
 import { ChatPage } from './pages/ChatPage';
 import { AccountSettingsPage } from './pages/AccountSettingsPage';
 import { AgentSettingsPage } from './pages/AgentSettingsPage';
+import { CredentialsLoginPage } from './pages/CredentialsLoginPage';
 
 export interface ToolCall {
   index: number;
@@ -33,6 +34,7 @@ function App() {
         {/* 公開ルート */}
         <Route path="/" element={<HomePage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/login/credentials" element={<AppAuthGuard><CredentialsLoginPage /></AppAuthGuard>} />
 
         {/* 保護ルート: AppAuthGuard */}
         <Route path="/chat" element={<AppAuthGuard><ChatPage /></AppAuthGuard>} />

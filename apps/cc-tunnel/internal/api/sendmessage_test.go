@@ -119,6 +119,10 @@ func (m *mockRepoCheckCtx) MergeMessageData(_ context.Context, _ string, data ma
 	return nil
 }
 
+func (m *mockRepoCheckCtx) UpdateSessionEndpointLastActivity(_ context.Context, _ string) error {
+	return nil
+}
+
 // --- Test doubles for remoteClient ---
 
 // mockRemoteWithCancel cancels the caller's r.Context() mid-execution to simulate
@@ -157,6 +161,14 @@ func (m *mockRemoteWithCancel) Execute(_ context.Context, _ remoteclient.Request
 		onEvent(e)
 	}
 	return m.sessionID, nil
+}
+
+func (m *mockRemoteWithCancel) PrepareForRelogin(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockRemoteWithCancel) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
+	return "", nil
 }
 
 // mockRemoteWithCancelAndCtxCheck cancels r.Context() then reports whether the
@@ -203,6 +215,14 @@ func (m *mockRemoteWithCancelAndCtxCheck) Execute(ctx context.Context, _ remotec
 		onEvent(e)
 	}
 	return m.sessionID, nil
+}
+
+func (m *mockRemoteWithCancelAndCtxCheck) PrepareForRelogin(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockRemoteWithCancelAndCtxCheck) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
+	return "", nil
 }
 
 // --- Failing ResponseWriter (simulates broken SSE connection) ---
@@ -640,6 +660,14 @@ func (m *mockRemoteSlowExec) Execute(_ context.Context, _ remoteclient.Request, 
 	}
 	time.Sleep(m.sleepDur)
 	return m.sessionID, nil
+}
+
+func (m *mockRemoteSlowExec) PrepareForRelogin(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockRemoteSlowExec) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
+	return "", nil
 }
 
 // makeToolUseStartStreamEvent builds a stream_event/content_block_start event

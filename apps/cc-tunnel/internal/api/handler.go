@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -58,6 +59,7 @@ type Server struct {
 	executionProvider provider.ExecutionProvider
 	session           *AppSession
 	credService       credentialService // nil = skip credential check (testing / no-auth mode)
+	credStorer        credentialStorer  // nil = credential storage unavailable
 	batchInterval     time.Duration     // 0 = default 2s; override for testing
 	doneCh            chan struct{}      // closed when Execute goroutine completes; for testing only
 }
@@ -71,6 +73,11 @@ func NewHandler(repo *db.Repository, remote *remoteclient.Client, execProvider p
 // NewHandlerWithCredentials creates a Server with credential validation enabled.
 func NewHandlerWithCredentials(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider, credSvc credentialService) *Server {
 	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession(), credService: credSvc}
+}
+
+// NewHandlerFull creates a Server with both credential validation and credential storage enabled.
+func NewHandlerFull(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider, credSvc credentialService, credStore credentialStorer) *Server {
+	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession(), credService: credSvc, credStorer: credStore}
 }
 
 func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -245,14 +252,14 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		if errors.Is(credErr, credential.ErrNotFound) {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{
 				"error":    "credentials_required",
-				"redirect": "/login/credentials?reason=missing",
+				"redirect": fmt.Sprintf("/login/credentials?reason=missing&conversationId=%s", convIDStr),
 			})
 			return
 		}
 		if errors.Is(credErr, credential.ErrCredentialsInvalid) {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{
 				"error":    "credentials_invalid",
-				"redirect": "/login/credentials?reason=expired",
+				"redirect": fmt.Sprintf("/login/credentials?reason=expired&conversationId=%s", convIDStr),
 			})
 			return
 		}
@@ -619,6 +626,101 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 			slog.Error("failed to update conversation updated_at", "err", err, "conversation_id", convIDStr)
 		}
 	}()
+}
+
+// PostReloginStart starts a re-login flow for a conversation by ensuring its
+// session container is running (without credentials), so the frontend can
+// trigger the PTY-based /auth/* flow against it.
+func (h *Server) PostReloginStart(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	_, found := h.session.get(token)
+	if !found {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var body ReloginStartRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if body.ConversationId == (uuid.UUID{}) {
+		writeError(w, http.StatusBadRequest, "conversationId is required")
+		return
+	}
+
+	convIDStr := body.ConversationId.String()
+	if err := h.executionProvider.PrepareForRelogin(r.Context(), convIDStr); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	defer func() {
+		if err := h.repo.UpdateSessionEndpointLastActivity(r.Context(), convIDStr); err != nil {
+			slog.Warn("failed to update last_activity on relogin start", "err", err, "conversation_id", convIDStr)
+		}
+	}()
+
+	writeJSON(w, http.StatusOK, ReloginStartResponse{Ready: true})
+}
+
+// PostReloginFinalize reads the credentials written by the PTY login flow from
+// the session container, encrypts them, and stores them in the DB.
+func (h *Server) PostReloginFinalize(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	user, found := h.session.get(token)
+	if !found {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var body ReloginFinalizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if body.ConversationId == (uuid.UUID{}) {
+		writeError(w, http.StatusBadRequest, "conversationId is required")
+		return
+	}
+
+	convIDStr := body.ConversationId.String()
+	defer func() {
+		if err := h.repo.UpdateSessionEndpointLastActivity(r.Context(), convIDStr); err != nil {
+			slog.Warn("failed to update last_activity on relogin finalize", "err", err, "conversation_id", convIDStr)
+		}
+	}()
+
+	credJSON, err := h.executionProvider.PullCredentialsFromSession(r.Context(), convIDStr)
+	if errors.Is(err, remoteclient.ErrCredentialsNotReady) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "credentials not ready, complete /auth/login first",
+		})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	if h.credStorer == nil {
+		writeError(w, http.StatusInternalServerError, "credential storage not configured")
+		return
+	}
+	if err := h.credStorer.StoreCredential(r.Context(), user.Name, credJSON); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ReloginFinalizeResponse{Registered: true, IsValid: true})
 }
 
 func (h *Server) AppAuthLogin(w http.ResponseWriter, r *http.Request) {

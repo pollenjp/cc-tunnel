@@ -15,6 +15,7 @@ var (
 type credentialRepo interface {
 	GetByUsername(ctx context.Context, username string) (*Credential, error)
 	MarkInvalid(ctx context.Context, username string) error
+	Upsert(ctx context.Context, c *Credential) error
 }
 
 // CredentialService fetches and decrypts user credentials from the DB.
@@ -47,4 +48,18 @@ func (s *CredentialService) FetchAndDecrypt(ctx context.Context, username string
 // MarkInvalid marks the credentials for username as invalid in the DB.
 func (s *CredentialService) MarkInvalid(ctx context.Context, username string) error {
 	return s.repo.MarkInvalid(ctx, username)
+}
+
+// StoreCredential encrypts credJSON and upserts it into the credentials store.
+func (s *CredentialService) StoreCredential(ctx context.Context, username, credJSON string) error {
+	ciphertext, nonce, err := s.encryptor.Seal([]byte(credJSON), username)
+	if err != nil {
+		return err
+	}
+	return s.repo.Upsert(ctx, &Credential{
+		Username:      username,
+		EncryptedData: ciphertext,
+		Nonce:         nonce,
+		KeyVersion:    s.encryptor.KeyVersion(),
+	})
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/credential"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
 	dockerpkg "github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/docker"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/gce"
@@ -90,7 +92,26 @@ func main() {
 		os.Exit(0)
 	}()
 
-	handler := api.NewHandler(repo, remote, execProvider)
+	// CC_LOGIN_ENCRYPTION_KEY must be set (64 hex chars = 32 bytes for AES-256).
+	encKeyHex := os.Getenv("CC_LOGIN_ENCRYPTION_KEY")
+	if encKeyHex == "" {
+		slog.Error("CC_LOGIN_ENCRYPTION_KEY is not set; set a 64-char hex key (32 bytes)")
+		os.Exit(1)
+	}
+	encKeyBytes, err := hex.DecodeString(encKeyHex)
+	if err != nil {
+		slog.Error("CC_LOGIN_ENCRYPTION_KEY is not valid hex", "err", err)
+		os.Exit(1)
+	}
+	encryptor, err := credential.NewEncryptor(encKeyBytes, 1)
+	if err != nil {
+		slog.Error("failed to initialize encryptor", "err", err)
+		os.Exit(1)
+	}
+	credRepo := credential.NewCredentialRepository(pool)
+	credSvc := credential.NewCredentialService(credRepo, encryptor)
+
+	handler := api.NewHandlerFull(repo, remote, execProvider, credSvc, credSvc)
 
 	mux := http.NewServeMux()
 	api.HandlerFromMux(handler, mux)

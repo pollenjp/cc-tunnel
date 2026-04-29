@@ -28,6 +28,13 @@ func (m *mockSessionProvider) GetOrCreate(ctx context.Context, convID string, cr
 	return m.client, m.getErr
 }
 
+func (m *mockSessionProvider) GetClient(_ string) (*remoteclient.Client, bool) {
+	if m.client == nil {
+		return nil, false
+	}
+	return m.client, true
+}
+
 func (m *mockSessionProvider) StopAll(_ context.Context) error {
 	return m.stopErr
 }
@@ -113,5 +120,43 @@ func TestLocalDockerProvider_Close_propagatesError(t *testing.T) {
 
 	if err := p.Close(); !errors.Is(err, expectedErr) {
 		t.Errorf("expected %v, got %v", expectedErr, err)
+	}
+}
+
+func TestLocalDockerProvider_PrepareForRelogin_OK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Auth status for health check
+		if r.URL.Path == "/auth/status" {
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`{"loggedIn":false,"authMethod":"none","loginPending":false}`)); err != nil {
+				t.Errorf("write: %v", err)
+			}
+		}
+	}))
+	defer srv.Close()
+
+	mock := &mockSessionProvider{
+		client: remoteclient.NewClient(srv.URL),
+	}
+	p := &LocalDockerProvider{sessions: mock}
+
+	if err := p.PrepareForRelogin(context.Background(), "conv-relogin"); err != nil {
+		t.Fatalf("PrepareForRelogin: %v", err)
+	}
+	if !mock.getCalled {
+		t.Error("GetOrCreate was not called")
+	}
+	if mock.lastCredLen != 0 {
+		t.Errorf("expected nil credentials (len 0), got len %d", mock.lastCredLen)
+	}
+}
+
+func TestLocalDockerProvider_PullCredentialsFromSession_NoSession(t *testing.T) {
+	mock := &mockSessionProvider{client: nil} // nil → GetClient returns false
+	p := &LocalDockerProvider{sessions: mock}
+
+	_, err := p.PullCredentialsFromSession(context.Background(), "conv-no-session")
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
