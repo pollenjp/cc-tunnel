@@ -24,6 +24,7 @@ type CreateInstanceRequest struct {
 	MachineType   string
 	StartupScript string
 	Labels        map[string]string
+	Tags          []string `json:"tags,omitempty"` // network tags for firewall rules
 }
 
 // Instance は GCE VM インスタンスの情報

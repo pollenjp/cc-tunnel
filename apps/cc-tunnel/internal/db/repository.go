@@ -375,8 +375,8 @@ func scanVMInstance(row vmScanner) (*VMInstance, error) {
 
 func (r *Repository) CreateSessionEndpoint(ctx context.Context, conversationID, vmInstanceID, containerName string, port int) (*SessionEndpoint, error) {
 	const q = `
-		INSERT INTO session_endpoints (conversation_id, vm_instance_id, container_name, port)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO session_endpoints (conversation_id, vm_instance_id, container_name, port, status)
+		VALUES ($1, $2, $3, $4, 'running')
 		RETURNING id, conversation_id, vm_instance_id, container_name, port, status, last_activity, created_at
 	`
 	row := r.pool.QueryRow(ctx, q, conversationID, vmInstanceID, containerName, port)

@@ -130,6 +130,44 @@ func TestMockGCEClient_ListInstances(t *testing.T) {
 	}
 }
 
+func TestCreateInstance_WithNetworkTags(t *testing.T) {
+	ctx := context.Background()
+	client := gce.NewMockGCEClient()
+
+	var capturedReq *gce.CreateInstanceRequest
+	client.CreateInstanceFn = func(ctx context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+		capturedReq = req
+		return &gce.Instance{
+			Name:      req.Name,
+			Status:    "RUNNING",
+			NetworkIP: "10.0.0.1",
+			Labels:    req.Labels,
+		}, nil
+	}
+
+	req := &gce.CreateInstanceRequest{
+		Project:     "my-project",
+		Zone:        "us-central1-a",
+		Name:        "test-vm-tags",
+		MachineType: "n1-standard-1",
+		Tags:        []string{"cc-tunnel-agent"},
+	}
+
+	inst, err := client.CreateInstance(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateInstance: unexpected error: %v", err)
+	}
+	if inst == nil {
+		t.Fatal("CreateInstance: expected non-nil instance")
+	}
+	if capturedReq == nil {
+		t.Fatal("CreateInstanceFn was not called")
+	}
+	if len(capturedReq.Tags) != 1 || capturedReq.Tags[0] != "cc-tunnel-agent" {
+		t.Errorf("Tags = %v, want [cc-tunnel-agent]", capturedReq.Tags)
+	}
+}
+
 func TestMockGCEClient_CustomHook(t *testing.T) {
 	ctx := context.Background()
 	client := gce.NewMockGCEClient()

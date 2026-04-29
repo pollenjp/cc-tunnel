@@ -282,6 +282,7 @@ func (p *DockerGCEProvider) createGCEVM(ctx context.Context) (*db.VMInstance, er
 		MachineType:   p.config.MachineType,
 		StartupScript: p.buildStartupScript(),
 		Labels:        map[string]string{"managed-by": "cc-tunnel"},
+		Tags:          []string{"cc-tunnel-agent"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create GCE instance: %w", err)
@@ -315,8 +316,9 @@ func (p *DockerGCEProvider) waitForVMReady(ctx context.Context, vm *db.VMInstanc
 		}
 	}
 
-	// Update IP in DB (non-fatal)
+	// Update IP and status in DB (non-fatal)
 	_ = p.db.UpdateVMInstanceIP(ctx, vm.ID, networkIP)
+	_ = p.db.UpdateVMInstanceStatus(ctx, vm.ID, "running")
 
 	// Stage 2: Wait for Docker daemon to be reachable via TCP.
 	// WARNING: TCP 2375 は暗号化なし。VPC 内 + ファイアウォールで保護すること。

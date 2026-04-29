@@ -1028,6 +1028,54 @@ func (r *countingCleanupRepo) GetMaxPortOnVM(_ context.Context, _ string) (int, 
 	return 0, nil
 }
 
+// TestCreateGCEVM_NetworkTag verifies that createGCEVM passes the "cc-tunnel-agent" network tag.
+func TestCreateGCEVM_NetworkTag(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-tag", Result: "success"},
+	})
+	defer srv.Close()
+
+	var capturedReq *gce.CreateInstanceRequest
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			capturedReq = req
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "10.0.0.1"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "10.0.0.1"}, nil
+		},
+	}
+
+	repo := newMockDBRepo()
+	repo.availableVMErr = errors.New("no VM")
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	_, err := p.Execute(context.Background(), remoteclient.Request{ConversationID: "conv-tag", Prompt: "hi"}, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if capturedReq == nil {
+		t.Fatal("CreateInstance was not called")
+	}
+	found := false
+	for _, tag := range capturedReq.Tags {
+		if tag == "cc-tunnel-agent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Tags = %v, want to contain \"cc-tunnel-agent\"", capturedReq.Tags)
+	}
+}
+
 // --- custom mocks for specific test behavior ---
 
 type customMockGCEClient struct {
