@@ -65,9 +65,10 @@ export function CredentialsLoginPage() {
   return (
     <div className="min-h-screen bg-[var(--color-bg)] flex flex-col items-center justify-center gap-6 p-4">
       <div className="w-full max-w-2xl bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border)] p-6 flex flex-col gap-4">
-        <h2 className="text-xl font-bold text-[var(--color-text-bright)]">
-          Claude 認証 — {reasonLabel}
-        </h2>
+        <div>
+          <h2 className="text-xl font-bold text-[var(--color-text-bright)]">Claude 認証中...</h2>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1">{reasonLabel}</p>
+        </div>
 
         {phase === 'starting' && (
           <div className="flex items-center gap-2 text-[var(--color-text)]">
@@ -108,6 +109,15 @@ export function CredentialsLoginPage() {
           <p role="alert" className="text-[var(--color-danger)]">
             エラー: {error}
           </p>
+        )}
+
+        {phase !== 'done' && (
+          <button
+            onClick={() => navigate(-1)}
+            className="self-start text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline"
+          >
+            キャンセル
+          </button>
         )}
       </div>
     </div>
