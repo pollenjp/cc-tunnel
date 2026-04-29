@@ -24,35 +24,37 @@ function throwOnError<T>(result: { data?: T; error?: unknown }): T {
   return result.data as T;
 }
 
-export async function getAuthStatus(): Promise<AuthStatus> {
-  const result = await client.GET('/auth/status');
+export async function getAuthStatus(conversationId: string): Promise<AuthStatus> {
+  const result = await client.GET('/auth/status', { params: { query: { conversationId } } });
   return throwOnError(result);
 }
 
-export async function initiateLogin(method?: string): Promise<LoginResponse> {
+export async function initiateLogin(conversationId: string, method?: string): Promise<LoginResponse> {
   const result = await client.POST('/auth/login', {
-    body: method ? { method: method as 'claudeai' | 'console' } : {},
+    body: method
+      ? { conversationId, method: method as 'claudeai' | 'console' }
+      : { conversationId },
   });
   return throwOnError(result);
 }
 
-export async function logout(): Promise<AuthStatus> {
-  const result = await client.POST('/auth/logout', { body: undefined });
+export async function logout(conversationId: string): Promise<AuthStatus> {
+  const result = await client.POST('/auth/logout', { params: { query: { conversationId } }, body: undefined });
   return throwOnError(result);
 }
 
-export async function submitAuthInput(input: string): Promise<AuthInputResponse> {
-  const result = await client.POST('/auth/input', { body: { input } });
+export async function submitAuthInput(conversationId: string, input: string): Promise<AuthInputResponse> {
+  const result = await client.POST('/auth/input', { body: { conversationId, input } });
   return throwOnError(result);
 }
 
-export async function getAuthOutput(since: number): Promise<AuthOutputResponse> {
-  const result = await client.GET('/auth/output', { params: { query: { since } } });
+export async function getAuthOutput(conversationId: string, since: number): Promise<AuthOutputResponse> {
+  const result = await client.GET('/auth/output', { params: { query: { conversationId, since } } });
   return throwOnError(result);
 }
 
-export async function cancelLogin(): Promise<AuthCancelResponse> {
-  const result = await client.POST('/auth/cancel', { body: undefined });
+export async function cancelLogin(conversationId: string): Promise<AuthCancelResponse> {
+  const result = await client.POST('/auth/cancel', { params: { query: { conversationId } }, body: undefined });
   return throwOnError(result);
 }
 

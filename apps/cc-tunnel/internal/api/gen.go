@@ -209,6 +209,9 @@ type AuthCancelResponse struct {
 
 // AuthInputRequest defines model for AuthInputRequest.
 type AuthInputRequest struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `json:"conversationId"`
+
 	// Input Input to send to the login process stdin (can be empty string for Enter)
 	Input string `json:"input"`
 }
@@ -295,7 +298,9 @@ type Error struct {
 
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
-	Method *LoginRequestMethod `json:"method,omitempty"`
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID  `json:"conversationId"`
+	Method         *LoginRequestMethod `json:"method,omitempty"`
 }
 
 // LoginRequestMethod defines model for LoginRequest.Method.
@@ -377,10 +382,31 @@ type ConversationId = openapi_types.UUID
 // bearerAuthContextKey is the context key for BearerAuth security scheme
 type bearerAuthContextKey string
 
+// CancelLoginParams defines parameters for CancelLogin.
+type CancelLoginParams struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
+}
+
+// LogoutParams defines parameters for Logout.
+type LogoutParams struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
+}
+
 // GetAuthOutputParams defines parameters for GetAuthOutput.
 type GetAuthOutputParams struct {
 	// Since Cursor position to start from (0 = all lines)
 	Since *int `form:"since,omitempty" json:"since,omitempty"`
+
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
+}
+
+// GetAuthStatusParams defines parameters for GetAuthStatus.
+type GetAuthStatusParams struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
 }
 
 // AppAuthLoginJSONRequestBody defines body for AppAuthLogin for application/json ContentType.
@@ -423,7 +449,7 @@ type ServerInterface interface {
 	AppAuthUpdateMe(w http.ResponseWriter, r *http.Request)
 	// Cancel the in-progress login PTY process
 	// (POST /auth/cancel)
-	CancelLogin(w http.ResponseWriter, r *http.Request)
+	CancelLogin(w http.ResponseWriter, r *http.Request, params CancelLoginParams)
 	// Submit input to the login process stdin
 	// (POST /auth/input)
 	SubmitAuthInput(w http.ResponseWriter, r *http.Request)
@@ -432,13 +458,13 @@ type ServerInterface interface {
 	InitiateLogin(w http.ResponseWriter, r *http.Request)
 	// Logout
 	// (POST /auth/logout)
-	Logout(w http.ResponseWriter, r *http.Request)
+	Logout(w http.ResponseWriter, r *http.Request, params LogoutParams)
 	// Get buffered stdout from the login process
 	// (GET /auth/output)
 	GetAuthOutput(w http.ResponseWriter, r *http.Request, params GetAuthOutputParams)
 	// Get authentication status
 	// (GET /auth/status)
-	GetAuthStatus(w http.ResponseWriter, r *http.Request)
+	GetAuthStatus(w http.ResponseWriter, r *http.Request, params GetAuthStatusParams)
 	// List all conversations
 	// (GET /conversations)
 	ListConversations(w http.ResponseWriter, r *http.Request)
@@ -548,8 +574,28 @@ func (siw *ServerInterfaceWrapper) AppAuthUpdateMe(w http.ResponseWriter, r *htt
 // CancelLogin operation middleware
 func (siw *ServerInterfaceWrapper) CancelLogin(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CancelLoginParams
+
+	// ------------- Required query parameter "conversationId" -------------
+
+	if paramValue := r.URL.Query().Get("conversationId"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversationId"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversationId", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CancelLogin(w, r)
+		siw.Handler.CancelLogin(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -590,8 +636,28 @@ func (siw *ServerInterfaceWrapper) InitiateLogin(w http.ResponseWriter, r *http.
 // Logout operation middleware
 func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LogoutParams
+
+	// ------------- Required query parameter "conversationId" -------------
+
+	if paramValue := r.URL.Query().Get("conversationId"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversationId"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversationId", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.Logout(w, r)
+		siw.Handler.Logout(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -617,6 +683,21 @@ func (siw *ServerInterfaceWrapper) GetAuthOutput(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Required query parameter "conversationId" -------------
+
+	if paramValue := r.URL.Query().Get("conversationId"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversationId"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversationId", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAuthOutput(w, r, params)
 	}))
@@ -631,8 +712,28 @@ func (siw *ServerInterfaceWrapper) GetAuthOutput(w http.ResponseWriter, r *http.
 // GetAuthStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAuthStatusParams
+
+	// ------------- Required query parameter "conversationId" -------------
+
+	if paramValue := r.URL.Query().Get("conversationId"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversationId"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversationId", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetAuthStatus(w, r)
+		siw.Handler.GetAuthStatus(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -929,46 +1030,47 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"8f8BAAD//zV4pDoXMQAA",
+	"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",
+	"ilE1AAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

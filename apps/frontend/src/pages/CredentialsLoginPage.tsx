@@ -58,7 +58,7 @@ export function CredentialsLoginPage() {
   // Poll PTY output
   const pollOutput = async () => {
     try {
-      const res = await getAuthOutput(cursorRef.current);
+      const res = await getAuthOutput(conversationId, cursorRef.current);
       if (res.data && res.data.length > 0) {
         const binary = atob(res.data);
         fullOutputRef.current += binary;
@@ -91,7 +91,7 @@ export function CredentialsLoginPage() {
     (async () => {
       try {
         await startRelogin(token, conversationId);
-        await initiateLogin();
+        await initiateLogin(conversationId);
         setPhase('pty');
         pollRef.current = setInterval(() => { void pollOutput(); }, 250);
       } catch (e) {
@@ -107,7 +107,7 @@ export function CredentialsLoginPage() {
   const handleSendInput = async () => {
     if (!inputValue) return;
     try {
-      await submitAuthInput(inputValue);
+      await submitAuthInput(conversationId, inputValue);
       setInputValue('');
     } catch { /* ignore */ }
   };
@@ -161,7 +161,7 @@ export function CredentialsLoginPage() {
                 送信
               </button>
               <button
-                onClick={() => submitAuthInput('\r').catch(() => {})}
+                onClick={() => submitAuthInput(conversationId, '\r').catch(() => {})}
                 className="px-3 py-1.5 bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] text-sm border border-[var(--color-border)] rounded hover:border-[var(--color-accent)] transition-colors"
               >
                 ↵ Enter
@@ -170,7 +170,7 @@ export function CredentialsLoginPage() {
             <button
               onClick={() => {
                 navigator.clipboard.readText()
-                  .then(text => { if (text) void submitAuthInput(text); })
+                  .then(text => { if (text) void submitAuthInput(conversationId, text); })
                   .catch(() => {});
               }}
               className="self-start px-3 py-1.5 bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] text-xs border border-[var(--color-border)] rounded hover:border-[var(--color-accent)] transition-colors"

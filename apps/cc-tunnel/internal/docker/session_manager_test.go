@@ -274,14 +274,14 @@ func TestSessionManager_compose_mode_unchanged(t *testing.T) {
 	}
 }
 
-// TestSessionManager_GetOrCreate_usesTmpfs verifies that the container is created
-// with a tmpfs mount instead of a named volume for /home/user/.claude.
-func TestSessionManager_GetOrCreate_usesTmpfs(t *testing.T) {
+// TestSessionManager_GetOrCreate_noTmpfsMounts verifies that the container is created
+// without any tmpfs or volume mounts (using normal container filesystem for isolation).
+func TestSessionManager_GetOrCreate_noTmpfsMounts(t *testing.T) {
 	var capturedOpts ContainerCreateOpts
 	runner := &mockRunner{
 		createFn: func(_ context.Context, opts ContainerCreateOpts) (string, error) {
 			capturedOpts = opts
-			return "cid-tmpfs", nil
+			return "cid-notmpfs", nil
 		},
 		inspectFn: func(_ context.Context, containerID string) (*ContainerInfo, error) {
 			return &ContainerInfo{ID: containerID, State: "running"}, nil
@@ -290,19 +290,15 @@ func TestSessionManager_GetOrCreate_usesTmpfs(t *testing.T) {
 	ts := newMockAuthServer(t)
 	sm := newTestSessionManager(t, runner, ts)
 
-	if _, err := sm.GetOrCreate(context.Background(), "conv-tmpfs", nil); err != nil {
+	if _, err := sm.GetOrCreate(context.Background(), "conv-notmpfs", nil); err != nil {
 		t.Fatalf("GetOrCreate: %v", err)
 	}
 
 	if len(capturedOpts.VolumeMounts) != 0 {
 		t.Errorf("expected no volume mounts, got %v", capturedOpts.VolumeMounts)
 	}
-	mountOpts, ok := capturedOpts.TmpfsMounts["/home/user/.claude"]
-	if !ok {
-		t.Error("expected tmpfs mount at /home/user/.claude")
-	}
-	if mountOpts == "" {
-		t.Error("expected non-empty tmpfs mount options")
+	if len(capturedOpts.TmpfsMounts) != 0 {
+		t.Errorf("expected no tmpfs mounts, got %v", capturedOpts.TmpfsMounts)
 	}
 }
 

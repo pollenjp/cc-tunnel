@@ -49,6 +49,10 @@ func (m *mockProviderRelogin) PullCredentialsFromSession(_ context.Context, _ st
 	return m.pullCredJSON, m.pullErr
 }
 
+func (m *mockProviderRelogin) GetSessionClient(_ context.Context, _ string) (*remoteclient.Client, error) {
+	return nil, nil
+}
+
 // TestPostReloginStart_Unauthorized verifies 401 when no Bearer token is present.
 func TestPostReloginStart_Unauthorized(t *testing.T) {
 	server := &Server{

@@ -431,6 +431,22 @@ func (r *Repository) DeleteSessionEndpoint(ctx context.Context, id string) error
 	return err
 }
 
+// GetMaxPortOnVM returns the maximum host port in use on the given VM among running session
+// endpoints, or 0 if no running endpoints exist. The caller computes the next port as
+// max(result, portRangeStart-1) + 1.
+func (r *Repository) GetMaxPortOnVM(ctx context.Context, vmID string) (int, error) {
+	const q = `
+		SELECT COALESCE(MAX(port), 0)
+		FROM session_endpoints
+		WHERE vm_instance_id = $1 AND status = 'running'
+	`
+	var maxPort int
+	if err := r.pool.QueryRow(ctx, q, vmID).Scan(&maxPort); err != nil {
+		return 0, err
+	}
+	return maxPort, nil
+}
+
 type epScanner interface {
 	Scan(dest ...any) error
 }

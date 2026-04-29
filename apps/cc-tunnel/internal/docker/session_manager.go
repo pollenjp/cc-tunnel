@@ -14,7 +14,6 @@ import (
 type SessionManagerConfig struct {
 	Image         string        // cc-remote-agent イメージ名（例: "cc-remote-agent:latest"）
 	Network       string        // compose ネットワーク名（例: "apps_default"）
-	VolumeName    string        // claude-sessions ボリューム名
 	ContainerPort string        // cc-remote-agent が Listen するポート（例: "9091"）
 	IdleTimeout   time.Duration // アイドルタイムアウト（デフォルト: 15分）
 	StartTimeout  time.Duration // コンテナ起動タイムアウト（デフォルト: 30秒）
@@ -86,9 +85,6 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string, creden
 		Image:   sm.config.Image,
 		Env:     []string{"PORT=" + sm.config.ContainerPort},
 		Network: sm.config.Network,
-		TmpfsMounts: map[string]string{
-			"/home/user/.claude": "rw,size=64m",
-		},
 	}
 	containerID, err := sm.runner.ContainerCreate(ctx, opts)
 	if err != nil {

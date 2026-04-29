@@ -10,7 +10,7 @@ export interface UseAuthReturn {
   cancelLogin: () => Promise<void>;
 }
 
-export function useAuth(): UseAuthReturn {
+export function useAuth(conversationId = ''): UseAuthReturn {
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -24,7 +24,7 @@ export function useAuth(): UseAuthReturn {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const s = await getAuthStatus();
+      const s = await getAuthStatus(conversationId);
       setStatus(s);
       if (!s.loginPending) {
         stopPolling();
@@ -33,7 +33,7 @@ export function useAuth(): UseAuthReturn {
     } catch {
       return null;
     }
-  }, [stopPolling]);
+  }, [conversationId, stopPolling]);
 
   useEffect(() => {
     fetchStatus().finally(() => setIsLoading(false));
@@ -45,7 +45,7 @@ export function useAuth(): UseAuthReturn {
   const login = async () => {
     setIsLoading(true);
     try {
-      await initiateLogin();
+      await initiateLogin(conversationId);
       const s = await fetchStatus();
       if (s?.loginPending) {
         pollRef.current = setInterval(fetchStatus, 3000);
@@ -58,7 +58,7 @@ export function useAuth(): UseAuthReturn {
   const logoutFn = async () => {
     setIsLoading(true);
     try {
-      const s = await apiLogout();
+      const s = await apiLogout(conversationId);
       setStatus(s);
       stopPolling();
     } finally {
@@ -69,7 +69,7 @@ export function useAuth(): UseAuthReturn {
   const cancelLoginFn = async () => {
     setIsLoading(true);
     try {
-      await cancelLogin();
+      await cancelLogin(conversationId);
       const s = await fetchStatus();
       if (!s?.loginPending) {
         stopPolling();

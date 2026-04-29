@@ -79,7 +79,7 @@ cc-tunnel は既に会話毎にセッションコンテナ（cc-remote-agent 派
 **消えるもの**:
 - `apps/cc-login/` ディレクトリ全体
 - `apps/compose.yaml` の `cc-login` サービス
-- `cc-remote-agent-auth` 共有常駐コンテナ（Phase 2 で廃止予定 — 旧 v1 と同じ Phase 2 課題だが、本改訂で必要性の根拠が強化された）
+- `cc-remote-agent-auth` 共有常駐コンテナ（Phase 2 で廃止予定 — cmd_cctunnel_cc_remote_agent_auth_retire で廃止済み）
 
 **残るもの**:
 - `apps/cc-tunnel/internal/credential/` (encryptor / repository / service)
@@ -207,7 +207,7 @@ cc-tunnel は既に会話毎にセッションコンテナ（cc-remote-agent 派
 1. Cloud Run concurrency 問題が原理的に発生しない（コンテナ毎に独立 OS namespace）
 2. SessionManager の既存ライフサイクル（idle 15 分で停止、会話終了で破棄）がそのまま流用できる
 3. tmpfs:/home/user/.claude 上の credentials は会話終了で自動消滅
-4. cc-remote-agent-auth 共有常駐コンテナの存在意義が消滅 → Phase 2 廃止候補
+4. cc-remote-agent-auth 共有常駐コンテナの存在意義が消滅 → Phase 2 で廃止済み（cmd_cctunnel_cc_remote_agent_auth_retire）
 
 ### 統合に伴う設計上の留意点
 
@@ -424,7 +424,7 @@ CredentialsLoginPage）でよい。本改訂は backend 側の構造変更が主
 ### Phase 2
 
 - users テーブル新設・FK 移行
-- cc-remote-agent-auth 共有常駐コンテナ廃止（本改訂で必要性が消滅したため早期削除可）
+- ✅ cc-remote-agent-auth 共有常駐コンテナ廃止（cmd_cctunnel_cc_remote_agent_auth_retire で完了）
 - KMS 連携
 - 鍵ローテーション運用
 - audit log

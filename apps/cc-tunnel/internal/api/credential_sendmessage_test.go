@@ -39,7 +39,6 @@ func TestSendMessage_CredentialsRequired_Returns401(t *testing.T) {
 	// Create server with credService set.
 	server := &Server{
 		repo:              repo,
-		remote:            remote,
 		executionProvider: remote,
 		session:           newAppSession(),
 		credService:       credSvc,
@@ -77,7 +76,6 @@ func TestSendMessage_CredentialsInvalid_Returns401(t *testing.T) {
 
 	server := &Server{
 		repo:              repo,
-		remote:            remote,
 		executionProvider: remote,
 		session:           newAppSession(),
 		credService:       credSvc,
@@ -114,7 +112,6 @@ func TestSendMessage_CredentialServiceError_Returns500(t *testing.T) {
 
 	server := &Server{
 		repo:              repo,
-		remote:            remote,
 		executionProvider: remote,
 		session:           newAppSession(),
 		credService:       credSvc,
@@ -152,7 +149,6 @@ func TestSendMessage_NoCredService_SkipsCheck(t *testing.T) {
 	done := make(chan struct{})
 	server := &Server{
 		repo:              repo,
-		remote:            remote,
 		executionProvider: remote,
 		// credService is nil
 		doneCh: done,

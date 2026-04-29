@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
@@ -63,4 +64,14 @@ func (p *LocalDockerProvider) Close() error {
 // Implements the orphanCleaner interface used by main().
 func (p *LocalDockerProvider) CleanupOrphans(ctx context.Context) error {
 	return p.sessions.CleanupOrphans(ctx)
+}
+
+// GetSessionClient returns the remoteclient.Client for an existing per-session container.
+// Returns provider.ErrSessionNotFound if no session exists for the given conversationID.
+func (p *LocalDockerProvider) GetSessionClient(_ context.Context, conversationID string) (*remoteclient.Client, error) {
+	client, ok := p.sessions.GetClient(conversationID)
+	if !ok {
+		return nil, fmt.Errorf("%w: conversation %s", provider.ErrSessionNotFound, conversationID)
+	}
+	return client, nil
 }

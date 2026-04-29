@@ -104,3 +104,20 @@ variable "lb_fqdn" {
   type        = string
   description = "FQDN for HTTPS LB (Google-managed SSL cert はこのドメインで発行)"
 }
+
+variable "gce_max_containers" {
+  description = "Maximum number of cc-remote-agent containers per GCE instance"
+  type        = number
+  default     = 10
+}
+
+variable "network_name" {
+  description = "VPC network name for GCE instances"
+  type        = string
+  default     = "default"
+}
+
+variable "vpc_connector_subnet_cidr" {
+  description = "CIDR range of the VPC Connector subnet (source for Docker daemon firewall rule)"
+  type        = string
+}

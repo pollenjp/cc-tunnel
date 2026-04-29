@@ -19,24 +19,9 @@ services:
     expose:
       - "5432"
 
-  cc-remote-agent-auth:
-    image: cc-remote-agent:latest
-    environment:
-      PORT: "${CC_REMOTE_AGENT_AUTH_PORT:-9091}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
-    volumes:
-      - claude-sessions:/home/user/.claude
-    ports:
-      - "127.0.0.1:${CC_REMOTE_AGENT_AUTH_PORT:-9091}:${CC_REMOTE_AGENT_AUTH_PORT:-9091}"
-    expose:
-      - "${CC_REMOTE_AGENT_AUTH_PORT:-9091}"
-
   cc-tunnel:
     build:
       context: ./cc-tunnel
-    command:
-      - -agent-url
-      - http://cc-remote-agent-auth:${CC_REMOTE_AGENT_AUTH_PORT:-9091}
     environment:
       PORT: ${CC_TUNNEL_ENV_PORT:-8080}
       DATABASE_URL: "postgres://cctunnel:${POSTGRES_PASSWORD:-cctunnel_dev}@postgres:5432/cctunnel?sslmode=disable"
@@ -49,8 +34,6 @@ services:
     ports: # To allow access from Vite running manually (not in Compose)
       - "8080:${CC_TUNNEL_ENV_PORT:-8080}"
     depends_on:
-      cc-remote-agent-auth:
-        condition: service_started
       postgres:
         condition: service_healthy
 
@@ -72,5 +55,3 @@ services:
 
 volumes:
   pgdata:
-  claude-sessions:
-    name: claude-sessions

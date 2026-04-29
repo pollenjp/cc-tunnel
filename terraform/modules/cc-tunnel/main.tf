@@ -204,6 +204,10 @@ resource "google_cloud_run_v2_service" "cloud_run" {
         name  = "CC_REMOTE_AGENT_IMAGE"
         value = local.cra_fqim
       }
+      env {
+        name  = "GCE_MAX_CONTAINERS"
+        value = var.gce_max_containers
+      }
     }
     volumes {
       name = "cloudsql"

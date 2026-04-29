@@ -67,7 +67,7 @@ describe('CredentialsLoginPage', () => {
 
     await waitFor(() => {
       expect(startRelogin).toHaveBeenCalledWith('test-token', 'conv-001');
-      expect(initiateLogin).toHaveBeenCalled();
+      expect(initiateLogin).toHaveBeenCalledWith('conv-001');
     });
   });
 
@@ -123,7 +123,7 @@ describe('CredentialsLoginPage', () => {
     });
 
     await waitFor(() => {
-      expect(submitAuthInput).toHaveBeenCalledWith('my-code');
+      expect(submitAuthInput).toHaveBeenCalledWith('conv-001', 'my-code');
     });
   });
 });

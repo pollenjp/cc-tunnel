@@ -9,6 +9,14 @@ paths:
     get:
       operationId: GetAuthStatus
       summary: Get authentication status
+      parameters:
+        - name: conversationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation (session) ID to route to the per-session container
       responses:
         "200":
           description: Authentication status
@@ -22,7 +30,7 @@ paths:
       operationId: InitiateLogin
       summary: Initiate login flow
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
@@ -39,6 +47,14 @@ paths:
     post:
       operationId: Logout
       summary: Logout
+      parameters:
+        - name: conversationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation (session) ID to route to the per-session container
       responses:
         "200":
           description: Logout successful
@@ -51,6 +67,14 @@ paths:
     post:
       operationId: CancelLogin
       summary: Cancel the in-progress login PTY process
+      parameters:
+        - name: conversationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation (session) ID to route to the per-session container
       responses:
         "200":
           description: Login cancelled
@@ -91,6 +115,13 @@ paths:
             type: integer
             default: 0
           description: Cursor position to start from (0 = all lines)
+        - name: conversationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation (session) ID to route to the per-session container
       responses:
         "200":
           description: Stdout lines and new cursor
@@ -452,7 +483,13 @@ components:
 
     LoginRequest:
       type: object
+      required:
+        - conversationId
       properties:
+        conversationId:
+          type: string
+          format: uuid
+          description: Conversation (session) ID to route to the per-session container
         method:
           type: string
           enum: [claudeai, console]
@@ -471,8 +508,12 @@ components:
 
     AuthInputRequest:
       type: object
-      required: [input]
+      required: [conversationId, input]
       properties:
+        conversationId:
+          type: string
+          format: uuid
+          description: Conversation (session) ID to route to the per-session container
         input:
           type: string
           description: Input to send to the login process stdin (can be empty string for Enter)

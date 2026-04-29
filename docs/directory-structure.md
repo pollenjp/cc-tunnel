@@ -23,7 +23,7 @@ cc-tunnel/
 │   │   └── useConversationPoller-activity.puml  # useConversationPoller 内部フロー
 │   └── sequence.md                   # シーケンス図
 └── apps/
-    ├── compose.yaml                  # Docker Compose 定義 (デフォルト: postgres + cc-remote-agent-auth, profiles: full で cc-tunnel + frontend 追加)
+    ├── compose.yaml                  # Docker Compose 定義 (デフォルト: postgres, profiles: full で cc-tunnel + frontend 追加)
     ├── prepare.compose.yaml          # cc-remote-agent イメージビルド専用 (compose.yaml 使用前に実行)
     ├── mise.toml                     # monorepo タスクランナー設定
     ├── openapi/

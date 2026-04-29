@@ -23,6 +23,22 @@ import (
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
+// getSessionClientOrRespond is a helper that calls executionProvider.GetSessionClient
+// and writes the appropriate HTTP error if the session is not found or another error occurs.
+// Returns the client and true on success, or nil and false (with the error already written) on failure.
+func getSessionClientOrRespond(w http.ResponseWriter, r *http.Request, ep provider.ExecutionProvider, convID string) (*remoteclient.Client, bool) {
+	client, err := ep.GetSessionClient(r.Context(), convID)
+	if err != nil {
+		if errors.Is(err, provider.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("session not found for conversation %s", convID))
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return nil, false
+	}
+	return client, true
+}
+
 // AppSession is an in-memory session store for mock authentication.
 // It maps Bearer tokens to AppUser values. Safe for concurrent use.
 type AppSession struct {
@@ -55,7 +71,6 @@ func (s *AppSession) delete(token string) {
 
 type Server struct {
 	repo              repository
-	remote            remoteClient
 	executionProvider provider.ExecutionProvider
 	session           *AppSession
 	credService       credentialService // nil = skip credential check (testing / no-auth mode)
@@ -66,22 +81,27 @@ type Server struct {
 
 var _ ServerInterface = (*Server)(nil)
 
-func NewHandler(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider) *Server {
-	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession()}
+func NewHandler(repo *db.Repository, execProvider provider.ExecutionProvider) *Server {
+	return &Server{repo: repo, executionProvider: execProvider, session: newAppSession()}
 }
 
 // NewHandlerWithCredentials creates a Server with credential validation enabled.
-func NewHandlerWithCredentials(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider, credSvc credentialService) *Server {
-	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession(), credService: credSvc}
+func NewHandlerWithCredentials(repo *db.Repository, execProvider provider.ExecutionProvider, credSvc credentialService) *Server {
+	return &Server{repo: repo, executionProvider: execProvider, session: newAppSession(), credService: credSvc}
 }
 
 // NewHandlerFull creates a Server with both credential validation and credential storage enabled.
-func NewHandlerFull(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider, credSvc credentialService, credStore credentialStorer) *Server {
-	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession(), credService: credSvc, credStorer: credStore}
+func NewHandlerFull(repo *db.Repository, execProvider provider.ExecutionProvider, credSvc credentialService, credStore credentialStorer) *Server {
+	return &Server{repo: repo, executionProvider: execProvider, session: newAppSession(), credService: credSvc, credStorer: credStore}
 }
 
-func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := h.remote.GetAuthStatus(r.Context())
+func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request, params GetAuthStatusParams) {
+	convID := params.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
+	status, err := sessionClient.GetAuthStatus(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -91,17 +111,20 @@ func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Server) InitiateLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	convID := req.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
 	}
 	method := ""
 	if req.Method != nil {
 		method = string(*req.Method)
 	}
-	resp, err := h.remote.InitiateLogin(r.Context(), method)
+	resp, err := sessionClient.InitiateLogin(r.Context(), method)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -109,8 +132,13 @@ func (h *Server) InitiateLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Server) Logout(w http.ResponseWriter, r *http.Request) {
-	status, err := h.remote.Logout(r.Context())
+func (h *Server) Logout(w http.ResponseWriter, r *http.Request, params LogoutParams) {
+	convID := params.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
+	status, err := sessionClient.Logout(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -118,8 +146,13 @@ func (h *Server) Logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
-func (h *Server) CancelLogin(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.remote.CancelLogin(r.Context())
+func (h *Server) CancelLogin(w http.ResponseWriter, r *http.Request, params CancelLoginParams) {
+	convID := params.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
+	resp, err := sessionClient.CancelLogin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -133,7 +166,12 @@ func (h *Server) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	resp, err := h.remote.SubmitAuthInput(r.Context(), req.Input)
+	convID := req.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
+	resp, err := sessionClient.SubmitAuthInput(r.Context(), req.Input)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -142,11 +180,16 @@ func (h *Server) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Server) GetAuthOutput(w http.ResponseWriter, r *http.Request, params GetAuthOutputParams) {
+	convID := params.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
 	since := 0
 	if params.Since != nil {
 		since = *params.Since
 	}
-	resp, err := h.remote.GetAuthOutput(r.Context(), since)
+	resp, err := sessionClient.GetAuthOutput(r.Context(), since)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

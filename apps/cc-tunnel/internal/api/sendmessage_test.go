@@ -171,6 +171,10 @@ func (m *mockRemoteWithCancel) PullCredentialsFromSession(_ context.Context, _ s
 	return "", nil
 }
 
+func (m *mockRemoteWithCancel) GetSessionClient(_ context.Context, _ string) (*remoteclient.Client, error) {
+	return nil, nil
+}
+
 // mockRemoteWithCancelAndCtxCheck cancels r.Context() then reports whether the
 // context Execute received was already cancelled at that point.
 type mockRemoteWithCancelAndCtxCheck struct {
@@ -223,6 +227,10 @@ func (m *mockRemoteWithCancelAndCtxCheck) PrepareForRelogin(_ context.Context, _
 
 func (m *mockRemoteWithCancelAndCtxCheck) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
 	return "", nil
+}
+
+func (m *mockRemoteWithCancelAndCtxCheck) GetSessionClient(_ context.Context, _ string) (*remoteclient.Client, error) {
+	return nil, nil
 }
 
 // --- Failing ResponseWriter (simulates broken SSE connection) ---
@@ -297,7 +305,7 @@ func TestSendMessage_Returns202WithMessageID(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -350,7 +358,7 @@ func TestSendMessage_ContextCancelledDuringExecution_AssistantMessageSaved(t *te
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -397,7 +405,7 @@ func TestSendMessage_ExecuteContextIsIndependentOfRequestContext(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -438,7 +446,7 @@ func TestSendMessage_AssistantResponse_TitleUpdated(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -480,7 +488,7 @@ func TestSendMessage_StatusUpdatedToRunningThenCompleted(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -527,7 +535,7 @@ func TestSendMessage_StreamingMessageCreatedAtStart(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -569,7 +577,7 @@ func TestSendMessage_UpdateContentBlocksCalledOnCompletion(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -607,7 +615,7 @@ func TestSendMessage_MessageStatusCompletedOnSuccess(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -670,6 +678,10 @@ func (m *mockRemoteSlowExec) PullCredentialsFromSession(_ context.Context, _ str
 	return "", nil
 }
 
+func (m *mockRemoteSlowExec) GetSessionClient(_ context.Context, _ string) (*remoteclient.Client, error) {
+	return nil, nil
+}
+
 // makeToolUseStartStreamEvent builds a stream_event/content_block_start event
 // that triggers tool_use processing in SendMessage.
 func makeToolUseStartStreamEvent(id, name string) remoteclient.StreamEvent {
@@ -723,7 +735,6 @@ func TestSendMessage_BatchTickerSavesToolCalls(t *testing.T) {
 	done := make(chan struct{})
 	server := &Server{
 		repo:              repo,
-		remote:            remote,
 		executionProvider: remote,
 		batchInterval:     1 * time.Millisecond,
 		doneCh:            done,

@@ -3,7 +3,7 @@ dir = "cc-remote-agent"
 run = 'mise run cc-remote-agent:test'
 
 [tasks."dev:up"]
-description = "Start infra (postgres + cc-remote-agent-auth) for local host development"
+description = "Start infra (postgres) for local host development"
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
@@ -12,7 +12,7 @@ shopt -s inherit_errexit
 echo "Building cc-remote-agent image..."
 docker compose -f prepare.compose.yaml build
 
-echo "Starting infrastructure (postgres + cc-remote-agent-auth)..."
+echo "Starting infrastructure (postgres)..."
 docker compose up -d --remove-orphans
 
 echo ""

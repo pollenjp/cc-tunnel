@@ -2,9 +2,14 @@ package provider
 
 import (
 	"context"
+	"errors"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
+
+// ErrSessionNotFound is returned by GetSessionClient when no session container
+// exists for the given conversationID. Callers should map this to HTTP 404.
+var ErrSessionNotFound = errors.New("session not found")
 
 // ExecutionProvider abstracts the execution backend for claude CLI.
 // Implementations: local (via cc-remote-agent), cloud_run_sandbox (mock), docker_gce (mock).
@@ -17,4 +22,8 @@ type ExecutionProvider interface {
 	// PullCredentialsFromSession reads the credentials.json written by the PTY
 	// login flow from the session container and returns the raw JSON string.
 	PullCredentialsFromSession(ctx context.Context, conversationID string) (string, error)
+	// GetSessionClient returns the remoteclient.Client for an existing per-session
+	// container identified by conversationID. Returns ErrSessionNotFound if no
+	// session container exists for the given ID.
+	GetSessionClient(ctx context.Context, conversationID string) (*remoteclient.Client, error)
 }

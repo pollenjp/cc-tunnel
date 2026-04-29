@@ -3,7 +3,11 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { getAuthOutput, submitAuthInput } from '../api/client';
 
-export function AuthTerminal() {
+interface Props {
+  conversationId?: string;
+}
+
+export function AuthTerminal({ conversationId = '' }: Props) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const cursorRef = useRef(0);
@@ -13,7 +17,7 @@ export function AuthTerminal() {
 
   const pollOutput = useCallback(async () => {
     try {
-      const res = await getAuthOutput(cursorRef.current);
+      const res = await getAuthOutput(conversationId, cursorRef.current);
       if (res.data && res.data.length > 0) {
         const binary = atob(res.data);
         const bytes = new Uint8Array(binary.length);
@@ -31,7 +35,7 @@ export function AuthTerminal() {
       }
       cursorRef.current = res.cursor;
     } catch { /* ignore */ }
-  }, []);
+  }, [conversationId]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -53,7 +57,7 @@ export function AuthTerminal() {
     xtermRef.current = term;
 
     term.onData((data) => {
-      submitAuthInput(data).catch(() => {});
+      submitAuthInput(conversationId, data).catch(() => {});
     });
 
     pollRef.current = setInterval(pollOutput, 250);
@@ -62,7 +66,7 @@ export function AuthTerminal() {
       if (pollRef.current) clearInterval(pollRef.current);
       term.dispose();
     };
-  }, [pollOutput]);
+  }, [pollOutput, conversationId]);
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -86,7 +90,7 @@ export function AuthTerminal() {
           onClick={async () => {
             try {
               const text = await navigator.clipboard.readText();
-              if (text) await submitAuthInput(text);
+              if (text) await submitAuthInput(conversationId, text);
             } catch { /* ignore */ }
           }}
           className="px-3 py-1.5 rounded text-xs bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors flex items-center gap-1.5"
@@ -94,7 +98,7 @@ export function AuthTerminal() {
           📋 貼り付け
         </button>
         <button
-          onClick={() => submitAuthInput('\r').catch(() => {})}
+          onClick={() => submitAuthInput(conversationId, '\r').catch(() => {})}
           className="px-3 py-1.5 rounded text-xs bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors"
         >
           ↵ Enter

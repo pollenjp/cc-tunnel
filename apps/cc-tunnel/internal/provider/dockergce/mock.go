@@ -2,6 +2,7 @@ package dockergce
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
@@ -19,6 +20,10 @@ func (p *MockProvider) PrepareForRelogin(_ context.Context, _ string) error { re
 
 func (p *MockProvider) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
 	return `{"mock":true}`, nil
+}
+
+func (p *MockProvider) GetSessionClient(_ context.Context, _ string) (*remoteclient.Client, error) {
+	return nil, errors.New("GetSessionClient not supported by docker_gce mock provider")
 }
 
 func (p *MockProvider) Execute(_ context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {

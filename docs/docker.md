@@ -9,8 +9,7 @@
 | サービス名              | ビルド/イメージ                            | 公開ポート                           | 依存関係 |
 | ----------------------- | ------------------------------------------ | ------------------------------------ | -------- |
 | `postgres`              | `mirror.gcr.io/library/postgres:18-alpine` | `127.0.0.1:5432:5432`（ホスト開発用）| -        |
-| `cc-remote-agent-auth`  | `cc-remote-agent:latest`（事前ビルド）     | `127.0.0.1:9091:9091`                | -        |
-| `cc-tunnel`             | `./cc-tunnel` (ビルド)                     | `8080:8080`                          | `cc-remote-agent-auth`, `postgres` |
+| `cc-tunnel`             | `./cc-tunnel` (ビルド)                     | `8080:8080`                          | `postgres` |
 
 ### `profiles: ["full"]` サービス（フル起動時のみ）
 
@@ -26,19 +25,12 @@
 
 会話・メッセージデータを永続化する PostgreSQL データベース。`cc-tunnel` からのみアクセスされる。ヘルスチェックが成功してから `cc-tunnel` が起動する。ホスト開発用に `127.0.0.1:5432` を公開。
 
-### `cc-remote-agent-auth`
-
-Claude CLI (`claude`) の認証情報を保持する**認証専用常駐コンテナ**。`compose.yaml` のデフォルトサービスとして常時起動する。セッションごとに動的生成される実行用コンテナとは異なり、認証専用として永続稼働する。
-
-- クロード認証情報を `claude-sessions` ボリューム（`/home/user/.claude`）に永続化
-- `cc-tunnel` からの `/auth/*` API を処理する
-
 ### `cc-tunnel`
 
 バックエンド API サーバー (Go)。以下の役割を担う。
 
 - 会話・メッセージの CRUD API (`/conversations`)
-- 認証 API (`/auth/*`) → `cc-remote-agent-auth` へプロキシ
+- 認証 API (`/auth/*`) → per-session container にルーティング（`conversationId` で特定）
 - `EXECUTION_PROVIDER=local` 時: `SessionManager` が per-session `cc-remote-agent` コンテナを Docker SDK 経由で動的生成
 - SSE ストリーミングによるレスポンス配信
 - Docker-out-of-Docker (DooD): `/var/run/docker.sock` をマウントし、コンテナ内から Docker API を操作
@@ -55,7 +47,7 @@ React SPA を配信する nginx サーバー。
 
 ## cc-remote-agent イメージのビルド
 
-`cc-remote-agent-auth` サービスは `cc-remote-agent:latest` イメージを使用する。このイメージは `apps/prepare.compose.yaml` でビルドする（`compose.yaml` には含まれていない）。
+`cc-tunnel` のセッションコンテナは `cc-remote-agent:latest` イメージを使用する。このイメージは `apps/prepare.compose.yaml` でビルドする（`compose.yaml` には含まれていない）。
 
 ```bash
 cd apps/
@@ -79,7 +71,7 @@ volumes:
 
 ## 起動方法
 
-### デフォルト起動（postgres + cc-remote-agent-auth のみ）
+### デフォルト起動（postgres のみ）
 
 ```bash
 cd apps/
@@ -117,8 +109,6 @@ mise run docker:logs  # ログをフォロー
 | 変数名                      | デフォルト値            | 対象サービス                        | 説明                                      |
 | --------------------------- | ----------------------- | ----------------------------------- | ----------------------------------------- |
 | `POSTGRES_PASSWORD`         | `cctunnel_dev`          | `postgres`, `cc-tunnel`             | PostgreSQL パスワード                     |
-| `ANTHROPIC_API_KEY`         | (必須)                  | `cc-remote-agent-auth`              | Anthropic API キー                        |
-| `CC_REMOTE_AGENT_AUTH_PORT` | `9091`                  | `cc-remote-agent-auth`, `cc-tunnel` | 認証エージェントのリッスンポート          |
 | `CC_TUNNEL_ENV_PORT`        | `8080`                  | `cc-tunnel`, `frontend`             | バックエンド API のリッスンポート         |
 | `FRONTEND_ENV_PORT`         | `8080`                  | `frontend`                          | フロントエンド nginx のリッスンポート     |
 | `BACKEND_URL`               | `/api`                  | `frontend`                          | フロントエンドが参照する API のベースパス |
@@ -131,7 +121,6 @@ mise run docker:logs  # ログをフォロー
 | ボリューム名      | マウント先                                  | 用途                              |
 | ----------------- | ------------------------------------------- | --------------------------------- |
 | `pgdata`          | `/var/lib/postgresql` (postgres)            | PostgreSQL データ永続化           |
-| `claude-sessions` | `/home/user/.claude` (cc-remote-agent-auth) | Claude CLI セッション・設定永続化 |
 
 ---
 
