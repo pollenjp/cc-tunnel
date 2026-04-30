@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -148,8 +149,8 @@ func (m *mockRemoteWithCancel) CancelLogin(_ context.Context) (*remoteclient.Aut
 func (m *mockRemoteWithCancel) SubmitAuthInput(_ context.Context, _ string) (*remoteclient.AuthInputResponse, error) {
 	return &remoteclient.AuthInputResponse{}, nil
 }
-func (m *mockRemoteWithCancel) GetAuthOutput(_ context.Context, _ int) (*remoteclient.AuthOutputResponse, error) {
-	return &remoteclient.AuthOutputResponse{}, nil
+func (m *mockRemoteWithCancel) GetAuthPtyStream(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func (m *mockRemoteWithCancel) Execute(_ context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
@@ -199,8 +200,8 @@ func (m *mockRemoteWithCancelAndCtxCheck) CancelLogin(_ context.Context) (*remot
 func (m *mockRemoteWithCancelAndCtxCheck) SubmitAuthInput(_ context.Context, _ string) (*remoteclient.AuthInputResponse, error) {
 	return &remoteclient.AuthInputResponse{}, nil
 }
-func (m *mockRemoteWithCancelAndCtxCheck) GetAuthOutput(_ context.Context, _ int) (*remoteclient.AuthOutputResponse, error) {
-	return &remoteclient.AuthOutputResponse{}, nil
+func (m *mockRemoteWithCancelAndCtxCheck) GetAuthPtyStream(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func (m *mockRemoteWithCancelAndCtxCheck) Execute(ctx context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
@@ -659,8 +660,8 @@ func (m *mockRemoteSlowExec) CancelLogin(_ context.Context) (*remoteclient.AuthC
 func (m *mockRemoteSlowExec) SubmitAuthInput(_ context.Context, _ string) (*remoteclient.AuthInputResponse, error) {
 	return &remoteclient.AuthInputResponse{}, nil
 }
-func (m *mockRemoteSlowExec) GetAuthOutput(_ context.Context, _ int) (*remoteclient.AuthOutputResponse, error) {
-	return &remoteclient.AuthOutputResponse{}, nil
+func (m *mockRemoteSlowExec) GetAuthPtyStream(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 func (m *mockRemoteSlowExec) Execute(_ context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
 	for _, e := range m.events {

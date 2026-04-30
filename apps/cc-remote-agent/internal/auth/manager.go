@@ -3,7 +3,6 @@ package auth
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,14 +35,19 @@ type LoginResponse struct {
 type AuthManager struct {
 	mu           sync.Mutex
 	loginCmd     *exec.Cmd
-	ptyFd        *os.File       // PTY ファイルディスクリプタ（読み書き両用）
-	outputBuf    []byte         // PTY の生出力バッファ（追記のみ、クリアしない）
+	ptyFd        *os.File // PTY ファイルディスクリプタ（読み書き両用）
 	loginPending bool
 	cancelFunc   context.CancelFunc
+
+	// SSE fan-out
+	subscribersMu sync.Mutex
+	subscribers   map[chan<- []byte]struct{}
 }
 
 func NewAuthManager() *AuthManager {
-	return &AuthManager{}
+	return &AuthManager{
+		subscribers: make(map[chan<- []byte]struct{}),
+	}
 }
 
 // GetStatus runs `claude auth status --json` and returns the parsed AuthStatus.
@@ -117,10 +121,9 @@ func (m *AuthManager) StartLogin(ctx context.Context, method string) (LoginRespo
 	m.loginPending = true
 	m.cancelFunc = cancel
 	m.ptyFd = ptmx
-	m.outputBuf = nil
 	m.mu.Unlock()
 
-	// PTY 出力を非同期で読み取る goroutine
+	// PTY 出力を非同期で読み取り、全 subscriber へ fan-out する goroutine
 	go func() {
 		defer func() {
 			if err := ptmx.Close(); err != nil {
@@ -142,10 +145,17 @@ func (m *AuthManager) StartLogin(ctx context.Context, method string) (LoginRespo
 		for {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
-				stripped := []byte(stripANSI(string(buf[:n])))
-				m.mu.Lock()
-				m.outputBuf = append(m.outputBuf, stripped...)
-				m.mu.Unlock()
+				data := make([]byte, n)
+				copy(data, buf[:n])
+				m.subscribersMu.Lock()
+				for ch := range m.subscribers {
+					select {
+					case ch <- data:
+					default:
+						slog.Warn("subscriber buffer full, dropping chunk")
+					}
+				}
+				m.subscribersMu.Unlock()
 			}
 			if err != nil {
 				break
@@ -156,21 +166,33 @@ func (m *AuthManager) StartLogin(ctx context.Context, method string) (LoginRespo
 	return LoginResponse{Message: "Login started"}, nil
 }
 
-// GetOutput returns PTY output bytes since the given cursor position.
-// The data is base64-encoded to safely transport binary/ANSI content.
-func (m *AuthManager) GetOutput(since int) (data string, cursor int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	total := len(m.outputBuf)
-	if since < 0 {
-		since = 0
+// Subscribe returns a channel that receives raw PTY bytes until ctx is cancelled.
+// The channel is buffered (64) and dropped chunks are logged.
+func (m *AuthManager) Subscribe(ctx context.Context) <-chan []byte {
+	ch := make(chan []byte, 64)
+	m.subscribersMu.Lock()
+	m.subscribers[ch] = struct{}{}
+	m.subscribersMu.Unlock()
+	go func() {
+		<-ctx.Done()
+		m.subscribersMu.Lock()
+		delete(m.subscribers, ch)
+		m.subscribersMu.Unlock()
+		close(ch)
+	}()
+	return ch
+}
+
+// BroadcastForTest sends data to all subscribers. Used only in tests.
+func (m *AuthManager) BroadcastForTest(data []byte) {
+	m.subscribersMu.Lock()
+	for ch := range m.subscribers {
+		select {
+		case ch <- data:
+		default:
+		}
 	}
-	if since >= total {
-		return "", total
-	}
-	chunk := make([]byte, total-since)
-	copy(chunk, m.outputBuf[since:])
-	return base64.StdEncoding.EncodeToString(chunk), total
+	m.subscribersMu.Unlock()
 }
 
 // SubmitInput writes input bytes to the PTY stdin.

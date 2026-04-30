@@ -62,8 +62,8 @@ func main() {
 	mux.HandleFunc("/auth/status", handler.AuthStatus)
 	mux.HandleFunc("/auth/login", handler.AuthLogin)
 	mux.HandleFunc("/auth/logout", handler.AuthLogout)
-	mux.HandleFunc("/auth/input", handler.AuthInput)
-	mux.HandleFunc("/auth/output", handler.AuthOutput)
+	mux.HandleFunc("/auth/pty/input", handler.AuthPtyInput)
+	mux.HandleFunc("/auth/pty/stream", handler.AuthPtyStream)
 	mux.HandleFunc("/auth/cancel", handler.AuthCancel)
 	mux.HandleFunc("/auth/finalize-credentials", handler.FinalizeCredentials)
 

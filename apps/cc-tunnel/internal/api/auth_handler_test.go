@@ -102,8 +102,8 @@ func TestInitiateLogin_SessionNotFound(t *testing.T) {
 	}
 }
 
-// TestSubmitAuthInput_SessionNotFound verifies that SubmitAuthInput returns 404 when session is missing.
-func TestSubmitAuthInput_SessionNotFound(t *testing.T) {
+// TestSubmitAuthPtyInput_SessionNotFound verifies that SubmitAuthPtyInput returns 404 when session is missing.
+func TestSubmitAuthPtyInput_SessionNotFound(t *testing.T) {
 	convID := uuid.New()
 	ep := &mockProviderWithSessionClient{
 		sessionClientErr: fmt.Errorf("%w: %s", provider.ErrSessionNotFound, convID.String()),
@@ -116,17 +116,17 @@ func TestSubmitAuthInput_SessionNotFound(t *testing.T) {
 
 	body := strings.NewReader(`{"conversationId":"` + convID.String() + `","input":"enter"}`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/auth/input", body)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/auth/pty/input", body)
 
-	server.SubmitAuthInput(w, req)
+	server.SubmitAuthPtyInput(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
-// TestGetAuthOutput_SessionNotFound verifies that GetAuthOutput returns 404 when session is missing.
-func TestGetAuthOutput_SessionNotFound(t *testing.T) {
+// TestGetAuthPtyStream_SessionNotFound verifies that GetAuthPtyStream returns 404 when session is missing.
+func TestGetAuthPtyStream_SessionNotFound(t *testing.T) {
 	convID := uuid.New()
 	ep := &mockProviderWithSessionClient{
 		sessionClientErr: fmt.Errorf("%w: %s", provider.ErrSessionNotFound, convID.String()),
@@ -138,9 +138,9 @@ func TestGetAuthOutput_SessionNotFound(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/auth/output?conversationId="+convID.String(), nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/auth/pty/stream?conversationId="+convID.String(), nil)
 
-	server.GetAuthOutput(w, req, GetAuthOutputParams{ConversationId: convID})
+	server.GetAuthPtyStream(w, req, GetAuthPtyStreamParams{ConversationId: convID})
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())

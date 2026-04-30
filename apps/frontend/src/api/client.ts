@@ -9,7 +9,6 @@ export type LoginRequest = components['schemas']['LoginRequest'];
 export type LoginResponse = components['schemas']['LoginResponse'];
 export type AuthInputRequest = components['schemas']['AuthInputRequest'];
 export type AuthInputResponse = components['schemas']['AuthInputResponse'];
-export type AuthOutputResponse = components['schemas']['AuthOutputResponse'];
 export type AuthCancelResponse = components['schemas']['AuthCancelResponse'];
 export type Conversation = components['schemas']['Conversation'];
 export type ConversationDetail = components['schemas']['ConversationDetail'];
@@ -43,13 +42,8 @@ export async function logout(conversationId: string): Promise<AuthStatus> {
   return throwOnError(result);
 }
 
-export async function submitAuthInput(conversationId: string, input: string): Promise<AuthInputResponse> {
-  const result = await client.POST('/auth/input', { body: { conversationId, input } });
-  return throwOnError(result);
-}
-
-export async function getAuthOutput(conversationId: string, since: number): Promise<AuthOutputResponse> {
-  const result = await client.GET('/auth/output', { params: { query: { conversationId, since } } });
+export async function submitAuthPtyInput(conversationId: string, input: string): Promise<AuthInputResponse> {
+  const result = await client.POST('/auth/pty/input', { body: { conversationId, input } });
   return throwOnError(result);
 }
 

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { getAuthOutput, submitAuthInput } from '../api/client';
+import { submitAuthPtyInput } from '../api/client';
 
 interface Props {
   conversationId?: string;
@@ -11,33 +11,8 @@ interface Props {
 export function AuthTerminal({ conversationId = '', onTextOutput }: Props) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
-  const cursorRef = useRef(0);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const fullOutputRef = useRef<string>('');
-
-  const pollOutput = useCallback(async () => {
-    try {
-      const res = await getAuthOutput(conversationId, cursorRef.current);
-      if (res.data && res.data.length > 0) {
-        const binary = atob(res.data);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        xtermRef.current?.write(bytes);
-        onTextOutput?.(binary);
-
-        fullOutputRef.current += binary;
-        const flat = fullOutputRef.current.replace(/[\r\n]/g, '');
-        const urlMatch = flat.match(/https?:\/\/[^\s'"<>]+/);
-        if (urlMatch) {
-          setAuthUrl((prev) => prev ?? urlMatch[0]);
-        }
-      }
-      cursorRef.current = res.cursor;
-    } catch { /* ignore */ }
-  }, [conversationId, onTextOutput]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -59,16 +34,39 @@ export function AuthTerminal({ conversationId = '', onTextOutput }: Props) {
     xtermRef.current = term;
 
     term.onData((data) => {
-      submitAuthInput(conversationId, data).catch(() => {});
+      submitAuthPtyInput(conversationId, data).catch(() => {});
     });
 
-    pollRef.current = setInterval(pollOutput, 250);
+    if (!conversationId) {
+      return () => { term.dispose(); };
+    }
+
+    const es = new EventSource(`/api/auth/pty/stream?conversationId=${encodeURIComponent(conversationId)}`);
+    es.onmessage = (event) => {
+      const binary = atob(event.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      term.write(bytes);
+      onTextOutput?.(binary);
+
+      fullOutputRef.current += binary;
+      const flat = fullOutputRef.current.replace(/[\r\n]/g, '');
+      const urlMatch = flat.match(/https?:\/\/[^\s'"<>]+/);
+      if (urlMatch) {
+        setAuthUrl((prev) => prev ?? urlMatch[0]);
+      }
+    };
+    es.onerror = () => {
+      // 接続エラー時のログ出力（EventSource は自動再接続）
+    };
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      es.close();
       term.dispose();
     };
-  }, [pollOutput, conversationId]);
+  }, [conversationId, onTextOutput]);
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -92,7 +90,7 @@ export function AuthTerminal({ conversationId = '', onTextOutput }: Props) {
           onClick={async () => {
             try {
               const text = await navigator.clipboard.readText();
-              if (text) await submitAuthInput(conversationId, text);
+              if (text) await submitAuthPtyInput(conversationId, text);
             } catch { /* ignore */ }
           }}
           className="px-3 py-1.5 rounded text-xs bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors flex items-center gap-1.5"
@@ -100,7 +98,7 @@ export function AuthTerminal({ conversationId = '', onTextOutput }: Props) {
           📋 貼り付け
         </button>
         <button
-          onClick={() => submitAuthInput(conversationId, '\r').catch(() => {})}
+          onClick={() => submitAuthPtyInput(conversationId, '\r').catch(() => {})}
           className="px-3 py-1.5 rounded text-xs bg-[var(--color-bg-tertiary)] text-[var(--color-text-bright)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors"
         >
           ↵ Enter

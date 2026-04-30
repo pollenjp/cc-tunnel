@@ -221,15 +221,6 @@ type AuthInputResponse struct {
 	Message string `json:"message"`
 }
 
-// AuthOutputResponse defines model for AuthOutputResponse.
-type AuthOutputResponse struct {
-	// Cursor New cursor position for the next request
-	Cursor int `json:"cursor"`
-
-	// Data Base64-encoded PTY output bytes since the given cursor
-	Data string `json:"data"`
-}
-
 // AuthStatus defines model for AuthStatus.
 type AuthStatus struct {
 	ApiKeySource     *string              `json:"apiKeySource,omitempty"`
@@ -400,11 +391,8 @@ type LogoutParams struct {
 	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
 }
 
-// GetAuthOutputParams defines parameters for GetAuthOutput.
-type GetAuthOutputParams struct {
-	// Since Cursor position to start from (0 = all lines)
-	Since *int `form:"since,omitempty" json:"since,omitempty"`
-
+// GetAuthPtyStreamParams defines parameters for GetAuthPtyStream.
+type GetAuthPtyStreamParams struct {
 	// ConversationId Conversation (session) ID to route to the per-session container
 	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
 }
@@ -421,11 +409,11 @@ type AppAuthLoginJSONRequestBody = AppAuthLoginRequest
 // AppAuthUpdateMeJSONRequestBody defines body for AppAuthUpdateMe for application/json ContentType.
 type AppAuthUpdateMeJSONRequestBody = AppAuthUpdateMeRequest
 
-// SubmitAuthInputJSONRequestBody defines body for SubmitAuthInput for application/json ContentType.
-type SubmitAuthInputJSONRequestBody = AuthInputRequest
-
 // InitiateLoginJSONRequestBody defines body for InitiateLogin for application/json ContentType.
 type InitiateLoginJSONRequestBody = LoginRequest
+
+// SubmitAuthPtyInputJSONRequestBody defines body for SubmitAuthPtyInput for application/json ContentType.
+type SubmitAuthPtyInputJSONRequestBody = AuthInputRequest
 
 // CreateConversationJSONRequestBody defines body for CreateConversation for application/json ContentType.
 type CreateConversationJSONRequestBody = CreateConversationRequest
@@ -456,18 +444,18 @@ type ServerInterface interface {
 	// Cancel the in-progress login PTY process
 	// (POST /auth/cancel)
 	CancelLogin(w http.ResponseWriter, r *http.Request, params CancelLoginParams)
-	// Submit input to the login process stdin
-	// (POST /auth/input)
-	SubmitAuthInput(w http.ResponseWriter, r *http.Request)
 	// Initiate login flow
 	// (POST /auth/login)
 	InitiateLogin(w http.ResponseWriter, r *http.Request)
 	// Logout
 	// (POST /auth/logout)
 	Logout(w http.ResponseWriter, r *http.Request, params LogoutParams)
-	// Get buffered stdout from the login process
-	// (GET /auth/output)
-	GetAuthOutput(w http.ResponseWriter, r *http.Request, params GetAuthOutputParams)
+	// Submit input to the login process stdin
+	// (POST /auth/pty/input)
+	SubmitAuthPtyInput(w http.ResponseWriter, r *http.Request)
+	// Stream PTY stdout via Server-Sent Events
+	// (GET /auth/pty/stream)
+	GetAuthPtyStream(w http.ResponseWriter, r *http.Request, params GetAuthPtyStreamParams)
 	// Get authentication status
 	// (GET /auth/status)
 	GetAuthStatus(w http.ResponseWriter, r *http.Request, params GetAuthStatusParams)
@@ -614,20 +602,6 @@ func (siw *ServerInterfaceWrapper) CancelLogin(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// SubmitAuthInput operation middleware
-func (siw *ServerInterfaceWrapper) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SubmitAuthInput(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // InitiateLogin operation middleware
 func (siw *ServerInterfaceWrapper) InitiateLogin(w http.ResponseWriter, r *http.Request) {
 
@@ -676,21 +650,27 @@ func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request
 	handler.ServeHTTP(w, r)
 }
 
-// GetAuthOutput operation middleware
-func (siw *ServerInterfaceWrapper) GetAuthOutput(w http.ResponseWriter, r *http.Request) {
+// SubmitAuthPtyInput operation middleware
+func (siw *ServerInterfaceWrapper) SubmitAuthPtyInput(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitAuthPtyInput(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAuthPtyStream operation middleware
+func (siw *ServerInterfaceWrapper) GetAuthPtyStream(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetAuthOutputParams
-
-	// ------------- Optional query parameter "since" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
-		return
-	}
+	var params GetAuthPtyStreamParams
 
 	// ------------- Required query parameter "conversationId" -------------
 
@@ -708,7 +688,7 @@ func (siw *ServerInterfaceWrapper) GetAuthOutput(w http.ResponseWriter, r *http.
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetAuthOutput(w, r, params)
+		siw.Handler.GetAuthPtyStream(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1040,10 +1020,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/app-auth/me", wrapper.AppAuthGetMe)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/app-auth/me", wrapper.AppAuthUpdateMe)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cancel", wrapper.CancelLogin)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/input", wrapper.SubmitAuthInput)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.InitiateLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/output", wrapper.GetAuthOutput)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/pty/input", wrapper.SubmitAuthPtyInput)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/pty/stream", wrapper.GetAuthPtyStream)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/status", wrapper.GetAuthStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/conversations", wrapper.ListConversations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/conversations", wrapper.CreateConversation)
@@ -1060,48 +1040,46 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/+xazW4cuRF+FaKTgwX0aLReZYEMkIMsO4YQ2yusrAALQxhQ3TUzXHWTbbJa8qwxh40O",
-	"2QQ5Bcg1QXILAixyzGHfRtj8nPYVApLdPf1DTo/WM5IX8E0aslnF+uorVrH4NohEmgkOHFUwehtkVNIU",
-	"EKT571DwS5CKIhP8KNa/MB6MgoziLAgDTlMIRkHUnBQGEl7nTEIcjFDmEAYqmkFK9dcTIVOKwSjIc6Zn",
-	"4jzTKyiUjE+DxWJRTjbSD7LsIMfZEymFNLpJkYFEBmY0BaXoFPSf7WXqKryqJp5V8sT5FxBhsAhLEc/E",
-	"lPHP4HUOCruScgXS7rVPVDWzX5bKBFfQFYbiArhDUmgW1wM/lTAJRsFPhkvkhoXVhgdZdqqntRWzqxZr",
-	"rFDuOfg1exf5fXJPs5giaOkeDDiLLtbDoJrpEXdabKO5PoudNl9PpPFlv8wcZ4eUR5D4bbsZZ85xdsSz",
-	"HL1WjDp8jkFFkmX6h2DU4Dt5oEApJvgOOXpMUBApcgT9B86AZCAHxTiJBEfKOMgg7GN4GDCtYFey0Vsv",
-	"roDHpZBEU4VkUkSgFFEYM04eRJSTcyCQZjgndl0yEZI84QhyxxFUmgbsRCurUI89t47bpzmuFBTlUtko",
-	"2LTbC7gidoxkQjEDnLaGNh+HN0hk4QuVXMYRppqiYRBTpN0lH1EFn+wPgEcihpgcv/ycCKMdOZ8jKKIY",
-	"j8AImLJL4IX4XsMbYWG5EZ8dTpBirrr7pxn7FcxPRC4jcDKVZuxYiksWW3Z3x010w5kwbg88T02wEBwC",
-	"8/H4AuZavYTmMexSVtNwuQiklCXO5RMxnUJ8VI/c50IkQHkxyvgx8FjP9s84le7FhZy+cAeiMFD5eQXe",
-	"SzPY54qVqg2jtJR04VOPDg4PlUAR4jHFxkmv4/oAWQrOYBCvkRWEQSpicFtGVe7S9OEnbyDKDRnsDCIm",
-	"xmPr7A/Cyg1YnGj9ZM65Xjg0SVECCLHTDdRcIaTjTIo0Q6deyDBx45Wbk+42ZnIdNnb90jKVHcI6Cg1Z",
-	"fXg+BixcmybJp5Ng9Gr1Qd/whUXoiYv2aEVIVV/i8LyIj4tKTyolnfviqHJs6ExvyWy/rpz3LITSRcba",
-	"iNaFJjRPNBqJiKg2a9OpvvvmL//96x/+88d/fve365uvvvnfV//69+///P23X99c//bm+k83v/n7zfU/",
-	"bq6/HhHz+fff/q7mYeWKUSLyeCxzPlaUx+fijZYioguQ42kETm+rvH+pn41SAyU4BxzsDz4J3s1Llys7",
-	"3a/rORJi4MhoomzA9h9cTP2aJo3sqhb1JEyZQjDYdsdb0Ncmh9WyLr/2FAxQ/ryaX3aaa93VVcJ7kFul",
-	"nfPNOgplJqRxJRKXi63OkFZYwof5Goeh76jbSEL1fLmIH6PxmofPNs81q+e4zMNoHJsMjibHNbVtEd3Z",
-	"pBSWuyXUpsQKA6oUU0i5jv82AriPsOrgLL9XKIGm7eMv7PBh00dZG5NiZw3Du0D+DIwj/ZJxmrAv4Ra8",
-	"7LuFuDUdOqq8R8Gw0O0EqcT3wEaFHj4DSaDxfK3t63kuOSfA44L/q7aLwB1V6KkCSQpWknLWGps383q1",
-	"6Ski1wtI7jA49qDfdzrXwsAbqjmvv77olVp85pL4UojkkCbJ4yKmtQigy+nxF0q4r7iYGpc5uIciyqQp",
-	"bwOeJwk91/o2wmMttxEiGXNf1WRGc1XafPVu65PrC4f17XRtoaMsRLlkOD/RWa61wCOgEqQudY39zYDe",
-	"pPl5afgZYmYvRBmfiK6nHhyRaEaRlHlCSjmdQgocySWjxJ775PDZUVUsjIIoGmDOOSTk4Fj/rilrV/to",
-	"d293z1SaGXCasWAUfLy7t/txEJq7XqP4kGbZQBeMQ0Nkg62w7NIIV7Gjcc9Z3AaDwkfCErvGPZplCYvM",
-	"h8PSJZZ3xT3XjJ1r20UTNu0W1mOM65stPNzb25IKBb+MDk2gzASi8igCpSZ5Yv0iT1Mq59XwFcMZqS6P",
-	"9YyGtYW9Meszt57W2fF+13fs1I5Oha+a0q/upa/OFmctlbWkppaWZ1PwK/gU8DkE20ekdoXtgOMwl1KT",
-	"xGRLizDY3/to0wrY8sMh+5RrUwnJvoT4diZ/CkiimubEBIWFYWc085q8vFXfLgvbd/f3Q8TVsFsd4x8Z",
-	"7FZrF/KGe5p3kWks+KODbTyUsbje3Xu1+QLVNAdf5yDnW+kOnm3Ti7pNGm8wtzZPSjQruOz3xkKMDzIp",
-	"phKUKroYxy8/LzsZNfiqbogbvZP8PGVY9SG2xeN23+iuGdzpszhMbxtEyhhEF6aGxD93NEREYXDbOTIQ",
-	"tHCyViWsbDl5Wk01mHoyniPOkFGEbaY895nrrJnksMIMbV6U5imMPEnEVdO2K/ObKrH5ELxWEahonLnB",
-	"caV77nxOI2K7fd587ingsmPZi0urN4mCKKQSyUSKlDzYI78gNElIwjioHQ8KpuEY1I1d3Vfvdduai/CD",
-	"b7R8o9VcdvjICcbaRwwMhPKY8Kqv3PIWnYqe55MJSIh1nNSfGSw7UbTmUctrhlUedVI2sT4w/YcxXY8C",
-	"x2LpovXpwI965w3rdvAD9owpPGzMfMc9r9UjbPUc243CbuBjComYkOaeWsFPz9ERqDUp9OXTnQbjls57",
-	"fydzUZz+DXNvrpxpWtlRQdf5V9zRa3v9bINu7q2ljjiC5DQhCuQlSALFxEYabnQi1Maw5m7aHj582yT+",
-	"wp4uCSB0sX9sfm9h34pVrl0tpwxbDyq3Gitad78Oa9oNFbn0/vbReyGQTETO2wmi1YPQFlqh97T40WDg",
-	"eGLRRylzF1g9c7hvaMzNk089MmMKhZyvQ6xh/UmIp9pdNks2A+rmo7Kju7RWLfZwOxr4qV1MITSKIEOI",
-	"zaPAIjEreiD7dxGwH9G4eoJ4V77coBP3OLa2I6GVJ+uct6z+de5YtdFJiSShas6jmRRc5CopfX75EGYo",
-	"bYdzOCnawH5HPxYKWz3jLWURnib5Hd8f+PrjLuyWBiU6tugioypctdXvyG/remgXMg1n8sAWOPqH6onE",
-	"zqbvk9e8SNYZ18O7IfCUIlzROXlg0i299TTnRg6f2gOhU2bt3O6mu3QNImFgbawJaRygeMp8RWpc85PP",
-	"XC6sxTzzEmG7tGs8urgfzjXfW7gq/zZyhavr86IE4/5Oi3th1f3WMetSxiBL6JIxk0RcGdiaeXTJzS5n",
-	"+m9lOu88t9m/9T8q7T0n7P3FvTjMbSA7nEF0QdikHsoIlTrqla+5TNy7NK+5dJ3//wAAAP//HQhUlZ83",
-	"AAA=",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

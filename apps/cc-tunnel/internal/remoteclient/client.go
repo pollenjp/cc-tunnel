@@ -191,24 +191,18 @@ type AuthInputResponse struct {
 	Message string `json:"message"`
 }
 
-// AuthOutputResponse mirrors cc-remote-agent's auth output response
-type AuthOutputResponse struct {
-	Data   string `json:"data"`
-	Cursor int    `json:"cursor"`
-}
-
 // AuthCancelResponse mirrors cc-remote-agent's auth cancel response
 type AuthCancelResponse struct {
 	Message string `json:"message"`
 }
 
-// SubmitAuthInput calls cc-remote-agent POST /auth/input with arbitrary stdin input.
+// SubmitAuthInput calls cc-remote-agent POST /auth/pty/input with arbitrary stdin input.
 func (c *Client) SubmitAuthInput(ctx context.Context, input string) (*AuthInputResponse, error) {
 	bodyData, err := json.Marshal(AuthInputRequest{Input: input})
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/auth/input", bytes.NewReader(bodyData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/auth/pty/input", bytes.NewReader(bodyData))
 	if err != nil {
 		return nil, err
 	}
@@ -233,9 +227,10 @@ func (c *Client) SubmitAuthInput(ctx context.Context, input string) (*AuthInputR
 	return &result, nil
 }
 
-// GetAuthOutput calls cc-remote-agent GET /auth/output?since=N and returns new stdout lines.
-func (c *Client) GetAuthOutput(ctx context.Context, since int) (*AuthOutputResponse, error) {
-	url := fmt.Sprintf("%s/auth/output?since=%d", c.baseURL, since)
+// GetAuthPtyStream calls cc-remote-agent GET /auth/pty/stream?conversationId=:id
+// and returns a ReadCloser streaming the SSE response body.
+func (c *Client) GetAuthPtyStream(ctx context.Context, conversationID string) (io.ReadCloser, error) {
+	url := fmt.Sprintf("%s/auth/pty/stream?conversationId=%s", c.baseURL, conversationID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -244,19 +239,13 @@ func (c *Client) GetAuthOutput(ctx context.Context, since int) (*AuthOutputRespo
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
+	if resp.StatusCode != http.StatusOK {
 		if err := resp.Body.Close(); err != nil {
 			slog.Warn("resp.Body.Close failed", "error", err)
 		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get auth output: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("get auth pty stream: status %d", resp.StatusCode)
 	}
-	var result AuthOutputResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return resp.Body, nil
 }
 
 // CancelLogin calls cc-remote-agent POST /auth/cancel to kill the login PTY process.

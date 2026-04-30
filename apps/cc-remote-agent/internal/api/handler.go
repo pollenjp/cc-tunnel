@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/auth"
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/claude"
@@ -130,8 +132,8 @@ func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /auth/input — login プロセスの stdin に任意の入力を送信する
-func (h *Handler) AuthInput(w http.ResponseWriter, r *http.Request) {
+// POST /auth/pty/input — login プロセスの stdin に任意の入力を送信する
+func (h *Handler) AuthPtyInput(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -145,7 +147,7 @@ func (h *Handler) AuthInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 空文字列も許容（Enter キーのみ送信のユースケース）
-	slog.Info("auth input request", "input_len", len(body.Input))
+	slog.Info("auth pty input request", "input_len", len(body.Input))
 
 	if err := h.authManager.SubmitInput(body.Input); err != nil {
 		http.Error(w, `{"error":"no login in progress"}`, http.StatusConflict)
@@ -158,26 +160,42 @@ func (h *Handler) AuthInput(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET /auth/output?since=N — PTY 出力を base64 エンコードで返す
-func (h *Handler) AuthOutput(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+// GET /auth/pty/stream — PTY 出力を SSE (Server-Sent Events) でストリーミングする
+func (h *Handler) AuthPtyStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("auth output request")
-	since := 0
-	if s := r.URL.Query().Get("since"); s != "" {
-		if _, err := fmt.Sscanf(s, "%d", &since); err != nil {
-			slog.Warn("Sscanf failed", "error", err)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ch := h.authManager.Subscribe(r.Context())
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			encoded := base64.StdEncoding.EncodeToString(data)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", encoded); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ticker.C:
+			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		}
-	}
-	data, cursor := h.authManager.GetOutput(since)
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]interface{}{
-		"data":   data,
-		"cursor": cursor,
-	}); err != nil {
-		slog.Error("failed to encode output response", "error", err)
 	}
 }
 
