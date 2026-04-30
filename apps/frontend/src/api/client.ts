@@ -4,6 +4,19 @@ import type { paths, components } from './schema';
 const baseUrl = window.__ENV__?.BACKEND_URL ?? '/api';
 const client = createClient<paths>({ baseUrl });
 
+const SESSION_STORAGE_KEY = 'app_auth_token';
+function getAuthToken(): string | null {
+  return sessionStorage.getItem(SESSION_STORAGE_KEY);
+}
+
+client.use({
+  onRequest({ request }) {
+    const token = getAuthToken();
+    if (token) request.headers.set('Authorization', `Bearer ${token}`);
+    return request;
+  },
+});
+
 export type AuthStatus = components['schemas']['AuthStatus'];
 export type LoginRequest = components['schemas']['LoginRequest'];
 export type LoginResponse = components['schemas']['LoginResponse'];
@@ -81,9 +94,12 @@ export async function sendMessage(
   conversationId: string,
   content: string,
 ): Promise<{ message_id: string }> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`/api/conversations/${conversationId}/messages`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ content }),
   });
   if (!res.ok) {

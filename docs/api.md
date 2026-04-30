@@ -277,6 +277,8 @@ Claude CLI の認証状態を返す。
 
 新しい会話を作成する。
 
+**Request Header**: `Authorization: Bearer <token>`
+
 **Request Body** (省略可)
 
 ```json
@@ -315,6 +317,8 @@ Claude CLI の認証状態を返す。
 
 全会話の一覧を返す。
 
+**Request Header**: `Authorization: Bearer <token>`
+
 **Response 200**: `Conversation[]` 配列
 
 ---
@@ -323,6 +327,8 @@ Claude CLI の認証状態を返す。
 
 会話とメッセージ履歴を返す。`status` フィールドで CLI 実行状態を確認できる。
 フロントエンドはセッション選択時に `status === 'running'` を検知して、DBポーリングを開始する。
+
+**Request Header**: `Authorization: Bearer <token>`
 
 **Path Parameters**: `conversationId` (UUID)
 
@@ -364,6 +370,8 @@ Claude CLI の認証状態を返す。
 
 会話を削除する。
 
+**Request Header**: `Authorization: Bearer <token>`
+
 **Path Parameters**: `conversationId` (UUID)
 
 **Response 200**
@@ -381,6 +389,8 @@ Claude CLI の認証状態を返す。
 #### POST /conversations/{conversationId}/messages
 
 ユーザーメッセージを送信し、アシスタントの応答をバックグラウンドで非同期処理する。レスポンスは即時 202 Accepted で返される。処理結果は `GET /conversations/{conversationId}` のポーリングで取得する。
+
+**Request Header**: `Authorization: Bearer <token>`
 
 **Path Parameters**: `conversationId` (UUID)
 

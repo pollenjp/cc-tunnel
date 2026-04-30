@@ -223,6 +223,19 @@ func (h *Server) GetAuthPtyStream(w http.ResponseWriter, r *http.Request, params
 }
 
 func (h *Server) CreateConversation(w http.ResponseWriter, r *http.Request) {
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		_, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+	}
+
 	var req CreateConversationRequest
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -254,6 +267,19 @@ func (h *Server) CreateConversation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Server) ListConversations(w http.ResponseWriter, r *http.Request) {
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		_, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+	}
+
 	convs, err := h.repo.ListConversations(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -267,6 +293,19 @@ func (h *Server) ListConversations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Server) GetConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		_, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+	}
+
 	conv, err := h.repo.GetConversation(r.Context(), conversationId.String())
 	if err != nil {
 		writeError(w, http.StatusNotFound, "conversation not found")
@@ -281,6 +320,19 @@ func (h *Server) GetConversation(w http.ResponseWriter, r *http.Request, convers
 }
 
 func (h *Server) DeleteConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		_, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+	}
+
 	if err := h.repo.DeleteConversation(r.Context(), conversationId.String()); err != nil {
 		writeError(w, http.StatusNotFound, "conversation not found")
 		return

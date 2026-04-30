@@ -295,6 +295,8 @@ paths:
     post:
       operationId: createConversation
       summary: Create a new conversation
+      security:
+        - BearerAuth: []
       requestBody:
         required: false
         content:
@@ -317,6 +319,8 @@ paths:
     get:
       operationId: listConversations
       summary: List all conversations
+      security:
+        - BearerAuth: []
       responses:
         "200":
           description: List of conversations
@@ -331,6 +335,8 @@ paths:
     get:
       operationId: getConversation
       summary: Get conversation with message history
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ConversationId"
       responses:
@@ -349,6 +355,8 @@ paths:
     delete:
       operationId: deleteConversation
       summary: Delete a conversation
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ConversationId"
       responses:
