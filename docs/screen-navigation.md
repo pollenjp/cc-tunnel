@@ -135,13 +135,43 @@ cc-tunnel フロントエンドは「アプリ認証」と「Agent 認証」の 
 |--------|----------|------------------|
 | / | 不要 | そのままアクセス可 |
 | /login | 不要 | そのままアクセス可 |
+| /login/credentials | 不要（AppAuth トークンは URL パラメーター経由） | — |
 | /chat | 必須 | /login へリダイレクト（redirect クエリパラメーター付き） |
+| /chat/:id | 必須 + CredentialGuard | /login へリダイレクト（未認証）、または /login/credentials へリダイレクト（credentials 未登録/無効） |
 | /settings/account | 必須 | /login へリダイレクト |
 | /settings/agents | 必須 | /login へリダイレクト |
 
 **ガード実装方針**:
 - 保護ルート（`/chat`, `/settings/*`）にアクセスした際、アプリ未認証なら `/login?redirect=<original>` にリダイレクト
 - ログイン成功後、`redirect` パラメーターの URL に戻る
+
+### CredentialGuard（`/chat/:id` 追加ガード）
+
+`/chat/:id` は `AppAuthGuard` に加えて `CredentialGuard` でもガードされる。
+
+```
+/chat/:id アクセス
+  AppAuthGuard
+    └─ 認証済み
+         CredentialGuard
+           ├─ GET /credentials/status → { registered: false }
+           │    └─ /login/credentials?reason=missing&conversationId=<id>
+           ├─ GET /credentials/status → { registered: true, isValid: false }
+           │    └─ /login/credentials?reason=expired&conversationId=<id>
+           └─ GET /credentials/status → { registered: true, isValid: true }
+                └─ ChatPage を描画
+```
+
+**`/login/credentials` フロー（CredentialsLoginPage）**:
+
+1. `POST /credentials/relogin/start` — セッションコンテナをコンテナとして起動（credentials なし）
+2. `POST /auth/login` — PTY フロー開始（`AuthTerminal` でターミナル表示）
+3. ユーザーが Claude OAuth を完了
+4. 認証完了検知（dual-trigger）:
+   - **自動**: PTY 出力に "Login successful" パターンを検出
+   - **手動**: 「完了」ボタン押下
+5. `POST /credentials/relogin/finalize` — コンテナから credentials を取得・暗号化・DB 保存
+6. `/chat/<conversationId>` にリダイレクト
 
 ---
 

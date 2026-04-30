@@ -101,7 +101,25 @@
    - status === 'completed' → ポーリング停止、最終メッセージ表示
 ```
 
-## データフロー: 認証時 (PTY + xterm.js フロー)
+## Bearer 認証フロー
+
+cc-tunnel の保護済みエンドポイント（会話管理・credentials 系）は Bearer Token 認証を使用する。
+
+```
+1. ユーザーがアプリにログイン: POST /api/app-auth/login { "username": "alice" }
+2. cc-tunnel: 32 バイトのランダム値を crypto/rand で生成 → hex エンコード（64 文字）
+3. レスポンス: { "token": "a3f2c1...64文字hex", "user": { "id": "...", "name": "alice" } }
+4. フロントエンド: トークンを sessionStorage に保管
+5. 以降のリクエスト: Authorization: Bearer a3f2c1... ヘッダを自動付与
+6. cc-tunnel: bearerToken(r) でヘッダ検証 → session.get(token) でユーザー特定
+```
+
+**対象エンドポイント（Bearer 必須）**:
+- `GET /conversations`, `POST /conversations`, `GET /conversations/{id}`, `DELETE /conversations/{id}`
+- `POST /conversations/{id}/messages`
+- `GET /credentials/status`, `POST /credentials/relogin/start`, `POST /credentials/relogin/finalize`
+
+## データフロー: 認証時 (PTY + SSE フロー)
 
 ブラウザから Claude アカウントにログインするまでの流れ。
 
@@ -112,12 +130,16 @@
 4. POST /api/auth/login → cc-tunnel → session container POST /auth/login（conversationId で特定）
 5. session container: AuthManager.StartLogin()
    - `claude /auth` を creack/pty で PTY 起動 (80×24 ウィンドウ)
-   - 非同期 goroutine で PTY 出力を outputBuf に追記し続ける
-6. AuthTerminal: ポーリングで GET /api/auth/output?since=N&conversationId=... を呼び出す
-7. session container: outputBuf の since バイト以降を base64 エンコードして返す
-8. AuthTerminal: base64 デコード → @xterm/xterm Terminal.write() で PTY 出力を描画
+   - 非同期 goroutine で PTY バイト列を fan-out チャネルへ broadcast し続ける
+   （旧: outputBuf に追記 → GetOutput(since) でポーリング取得 は除去済み）
+6. AuthTerminal: GET /api/auth/pty/stream?conversationId=... で SSE 接続を確立
+7. session container: AuthManager.Subscribe(ctx) で fan-out チャネルを取得
+   → PTY バイト列を受信するたびに base64 エンコードして SSE data として送信
+   （ANSI エスケープはストリップせずそのまま通過）
+8. AuthTerminal: SSE data を base64 デコード → Uint8Array → @xterm/xterm Terminal.write()
+   で PTY 出力を描画（ANSI エスケープシーケンスは xterm.js が処理）
 9. ユーザーが xterm.js 画面上でキー入力 (矢印キー含む)
-10. AuthTerminal: POST /api/auth/input { input: "\r" } などを送信
+10. AuthTerminal: POST /api/auth/pty/input { conversationId, input: "\r" } などを送信
 11. session container: AuthManager.SubmitInput() → PTY stdin に書き込み
 12. claude /auth TUI が選択肢に応じてログインフロー実行 (OAuth URL など表示)
 13. ログイン完了 → loginPending=false → GET /auth/status で loggedIn=true

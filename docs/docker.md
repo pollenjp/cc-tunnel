@@ -31,9 +31,34 @@
 
 - 会話・メッセージの CRUD API (`/conversations`)
 - 認証 API (`/auth/*`) → per-session container にルーティング（`conversationId` で特定）
-- `EXECUTION_PROVIDER=local` 時: `SessionManager` が per-session `cc-remote-agent` コンテナを Docker SDK 経由で動的生成
+- `EXECUTION_PROVIDER` に応じた実行プロバイダーでセッションコンテナを管理（詳細は下記「§ プロバイダー選択」参照）
 - SSE ストリーミングによるレスポンス配信
 - Docker-out-of-Docker (DooD): `/var/run/docker.sock` をマウントし、コンテナ内から Docker API を操作
+
+---
+
+## プロバイダー選択（EXECUTION_PROVIDER）
+
+`cc-tunnel` は環境変数 `EXECUTION_PROVIDER` で実行プロバイダーを切り替える。
+
+| 値 | プロバイダー | 用途・特徴 |
+|----|-------------|-----------|
+| `local` | `LocalDockerProvider` | **ローカル開発用**。compose ネットワーク (`apps_default`) 内で `/var/run/docker.sock` (DooD) を使い、同一ホスト上に `cctunnel-session-{convID}` コンテナを動的生成。セッション情報はメモリ管理（再起動でリセット） |
+| `docker_gce` | `DockerGCEProvider` | **GCP 本番用**。GCE VM プールを動的生成し、各 VM 上に `session-{conversationID}` コンテナを起動。VM・セッション情報は DB 永続化。アイドル VM は自動削除 |
+| `cloud_run_sandbox` | `CloudRunSandboxProvider` | **モック実装**（将来の Cloud Run サンドボックス対応用） |
+
+**compose.yaml でのデフォルト**: `EXECUTION_PROVIDER=local`（cc-tunnel サービスの env に設定済み）
+
+**docker_gce 使用時の追加設定**（`apps/compose.yaml` または Cloud Run env に追記）:
+
+```yaml
+environment:
+  - EXECUTION_PROVIDER=docker_gce
+  - GCE_PROJECT_ID=<your-project-id>
+  - GCE_ZONE=us-central1-a
+  - GCE_MACHINE_TYPE=e2-medium
+  - CC_REMOTE_AGENT_IMAGE=<artifact-registry-image-url>
+```
 
 ### `frontend`
 

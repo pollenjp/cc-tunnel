@@ -259,6 +259,39 @@ Artifact Registry push を管理する。
 
 `cc_remote_agent_image` output に cc-remote-agent の Artifact Registry イメージ URL が出力される。
 
+### GCE ネットワークタグと Firewall ルール
+
+DockerGCEProvider が動的作成する GCE VM には `cc-tunnel-agent` ネットワークタグが付与される。
+このタグに対して以下の Firewall ルールが必要:
+
+| ルール名 (例) | 方向 | ソース | ターゲットタグ | プロトコル/ポート | 用途 |
+|---|---|---|---|---|---|
+| `allow-docker-daemon` | ingress | cc-tunnel Cloud Run の IP レンジ（VPC 内部 IP）| `cc-tunnel-agent` | TCP/2375 | cc-tunnel → GCE VM Docker デーモンへの接続（暗号化なし、VPC 内部限定） |
+
+**重要**: TCP/2375 は暗号化なし（TLS なし）の Docker デーモン API。**VPC 内部ネットワークかつ `cc-tunnel-agent` タグ付き VM のみに限定**すること。外部 IP からのアクセスを Firewall ルールで明示的に拒否すること。
+
+Terraform での実装例（`modules/cc-tunnel/network.tf`）:
+
+```hcl
+resource "google_compute_firewall" "allow_docker_daemon" {
+  name    = "${var.deploy_env}-allow-docker-daemon"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["2375"]
+  }
+
+  # cc-tunnel Cloud Run は Serverless VPC Access Connector 経由で VPC に接続
+  source_ranges = [var.vpc_connector_ip_range]
+  target_tags   = ["cc-tunnel-agent"]
+
+  description = "Allow cc-tunnel to reach GCE VM Docker daemon (internal only)"
+}
+```
+
+GCE VM 作成時のネットワークタグ指定は `dockergce/provider.go` の `createGCEVM` 関数内で設定される。
+
 ## Phase 2: External Global HTTPS LB + serverless NEG 構成
 
 Phase 2 では External Global HTTPS LB を採用し、cc-tunnel と frontend を

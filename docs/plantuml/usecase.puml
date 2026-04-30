@@ -15,7 +15,7 @@ rectangle "cc-tunnel" {
     usecase "ログアウト\nPOST /auth/logout" as UC_Logout
     usecase "ログインキャンセル\nPOST /auth/cancel" as UC_CancelLogin
     usecase "認証入力送信\nPOST /auth/input\n(PTY stdin)" as UC_AuthInput
-    usecase "認証出力取得\nGET /auth/output\n(PTY stdout, base64)" as UC_AuthOutput
+    usecase "PTY ストリーム購読\nGET /auth/pty/stream\n(SSE, text/event-stream)" as UC_AuthOutput
   }
 
   ' ---- 会話管理 ----

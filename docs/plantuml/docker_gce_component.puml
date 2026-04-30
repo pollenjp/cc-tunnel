@@ -1,4 +1,8 @@
 @startuml docker_gce_component
+' 【役割】論理コンポーネント図
+'   cc-tunnel 内部コンポーネント（API Handler, ExecutionProvider, DockerGCEProvider,
+'   IdleChecker, VMScaler）の責務と相互依存関係を示す。
+'   物理デプロイ配置（VM × N コンテナ）は docker_gce_multi_container.puml を参照。
 ' Level 3: Component (Docker on GCE — cc-tunnel 内部コンポーネント)
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
 

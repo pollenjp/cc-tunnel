@@ -1,4 +1,8 @@
 @startuml docker_gce_multi_container
+' 【役割】デプロイメント図（シーケンス形式）
+'   GCE VM × N コンテナのプール管理における物理デプロイフローを示す。
+'   VM 新規作成・コンテナ起動・スケールアウト・IdleChecker による削除の時系列を描写。
+'   論理コンポーネント構造（責務・依存関係）は docker_gce_component.puml を参照。
 title docker_gce マルチコンテナ・プール管理シーケンス
 
 actor User

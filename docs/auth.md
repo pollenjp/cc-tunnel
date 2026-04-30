@@ -79,20 +79,22 @@ type AuthStatus struct {
      |<--------------------------|                           |
      |   { message: "Login started" }                        |
      |                           |                           |
-     | GET /auth/output?since=0  |                           |
+     | GET /auth/pty/stream      |                           |
      | (conversationId 必須)     |                           |
-     |-------------------------->|  GET /auth/output?since=0 |
+     |-------------------------->|  GET /auth/pty/stream     |
      |                           |-------------------------->|
-     |                           |  GetOutput(0)             |
-     |                           |  base64(PTY出力)          |
+     |                           |  Subscribe (fan-out)      |
+     |                           |  SSE: base64(PTY bytes)   |
      |                           |<--------------------------|
      |<--------------------------|                           |
-     |  { data: "<base64>", cursor: N }                      |
-     |  (xterm.js にデコード表示)                            |
+     |  data: <base64>\n\n       |                           |
+     |  (xterm.js が Uint8Array  |                           |
+     |   → term.write() で描画   |                           |
+     |   ANSI エスケープはそのまま通過)                       |
      |                           |                           |
-     | POST /auth/input          |                           |
+     | POST /auth/pty/input      |                           |
      | { input: "\r",            |                           |
-     |   conversationId: ... }   |  POST /auth/input         |
+     |   conversationId: ... }   |  POST /auth/pty/input     |
      |-------------------------->|-------------------------->|
      |                           |  SubmitInput("\r")        |
      |                           |  PTY stdin に書き込み     |
@@ -110,14 +112,14 @@ type AuthStatus struct {
 
 ### API エンドポイント一覧（all endpoints require conversationId）
 
-| エンドポイント | メソッド | 説明                                                     |
-| -------------- | -------- | -------------------------------------------------------- |
-| `/auth/status` | GET      | 現在の認証状態を取得（`?conversationId={uuid}` 必須）    |
-| `/auth/login`  | POST     | ログインフロー開始。body に `conversationId` と `method` |
-| `/auth/output` | GET      | PTY 出力をポーリング取得。`?since=N&conversationId=...`  |
-| `/auth/input`  | POST     | PTY stdin への入力送信。body に `conversationId` 必須    |
-| `/auth/cancel` | POST     | 進行中のログインを強制キャンセル。`conversationId` 必須  |
-| `/auth/logout` | POST     | Claude CLI からログアウト。`conversationId` 必須         |
+| エンドポイント | メソッド | 説明                                                           |
+| -------------- | -------- | -------------------------------------------------------------- |
+| `/auth/status` | GET      | 現在の認証状態を取得（`?conversationId={uuid}` 必須）          |
+| `/auth/login`  | POST     | ログインフロー開始。body に `conversationId` と `method`       |
+| `/auth/pty/stream` | GET  | PTY 出力を SSE でストリーミング。`?conversationId=...` 必須    |
+| `/auth/pty/input`  | POST | PTY stdin への入力送信。body に `conversationId` 必須          |
+| `/auth/cancel` | POST     | 進行中のログインを強制キャンセル。`conversationId` 必須        |
+| `/auth/logout` | POST     | Claude CLI からログアウト。`conversationId` 必須               |
 
 ## フロントエンドの認証状態
 
@@ -147,6 +149,42 @@ login() → initiateLogin() → fetchStatus()
 
 **ポーリング停止条件**: `status.loginPending === false` になった時点で `clearInterval` する。
 
+## POST /auth/finalize-credentials（Internal API）
+
+cc-tunnel が cc-remote-agent に対して呼び出す内部エンドポイント。PTY ログイン完了後、セッションコンテナ内の tmpfs（`/home/user/.claude/`）に書き込まれた `credentials.json` を読み取り、その内容を返す。
+
+cc-tunnel は受け取った credentials JSON を AES-256-GCM で暗号化し、`credentials` テーブルにユーザー単位で UPSERT する。
+
+```
+フロントエンド                   cc-tunnel                  session container
+     |                              |                       (cc-remote-agent)
+     |                              |                               |
+     | POST /credentials/relogin/finalize                           |
+     | (conversationId)             |                               |
+     |----------------------------->|  POST /auth/finalize-credentials
+     |                              |------------------------------>|
+     |                              |  tmpfs の credentials.json を読む
+     |                              |<------------------------------|
+     |                              |  { "credentialsJson": "..." } |
+     |                              |                               |
+     |                              |  AES-256-GCM 暗号化           |
+     |                              |  credentials テーブルに UPSERT|
+     |<-----------------------------|                               |
+     |  { registered: true, isValid: true }                        |
+```
+
+**Response 200**
+
+```json
+{
+  "credentialsJson": "{\"claudeAiOauth\":{...}}"
+}
+```
+
+**Response 202**: credentials.json がまだ書き込まれていない（PTY ログイン未完了）
+
+---
+
 ## AuthGuard と AuthTerminal（xterm.js TUI）
 
 `AuthGuard.tsx` は `useAuth` の状態を受け取り、`loginPending` 時に `AuthTerminal` を表示する。
@@ -161,9 +199,9 @@ login() → initiateLogin() → fetchStatus()
 
 **動作**:
 
-1. マウント時に `setInterval(pollOutput, 250)` を開始（250ms ポーリング）
-2. `GET /auth/output?since=<cursor>&conversationId=<id>` でバイナリ差分を取得
-3. base64 デコード → `Uint8Array` → `term.write(bytes)` でそのまま書き込み（ANSI エスケープも描画）
+1. マウント時に `GET /auth/pty/stream?conversationId=<id>` で SSE 接続を確立する
+2. cc-remote-agent 内の `Subscribe()` で fan-out チャネルを取得し、PTY バイト列を受信するたびに `data: <base64>\n\n` を送信する（以前の DB ポーリングと `GetOutput(since)` は除去済み）
+3. base64 デコード → `Uint8Array` → `term.write(bytes)` でそのまま書き込み（ANSI エスケープはストリップせずそのまま通過。xterm.js が描画を担う）
 4. 出力テキストから URL を正規表現で抽出し、「認証URLを開く」ボタンとして表示
 5. キーボード入力は `term.onData` → `submitAuthInput(data)` で PTY に転送
 6. クリップボード貼り付けボタン・Enter ボタンも提供

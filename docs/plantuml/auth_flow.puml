@@ -87,8 +87,8 @@ partition "Agent 認証フロー（Claude Code への認証）" {
   :loginPending = true\n→ AuthTerminal (xterm.js TUI) 表示;
 
   fork
-    :GET /auth/output?since=N\n&conversationId=...（250ms ポーリング）;
-    :base64 デコード → xterm.js に表示;
+    :SSE /auth/pty/stream?conversationId=... Subscribe;
+    :text/event-stream → xterm.js renderer に表示;
     :PTY 出力から認証 URL を抽出\n→「認証URLを開く」ボタン表示;
   fork again
     :ユーザーがキー入力 or URL を開く;
@@ -97,7 +97,7 @@ partition "Agent 認証フロー（Claude Code への認証）" {
 
   if (認証成功?) then (yes)
     :loggedIn = true\nloginPending = false;
-    :ポーリング停止;
+    :SSE ストリーム終了;
     :/settings/agents に戻る;
     note right
       以降のチャットで
