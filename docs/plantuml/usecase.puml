@@ -3,6 +3,10 @@ title cc-tunnel ユースケース図
 
 left to right direction
 
+skinparam usecase<<changed>> {
+  BackgroundColor #FFD700
+}
+
 actor "User" as user
 actor "Claude CLI\n(cc-remote-agent)" as claude
 
@@ -15,7 +19,7 @@ rectangle "cc-tunnel" {
     usecase "ログアウト\nPOST /auth/logout" as UC_Logout
     usecase "ログインキャンセル\nPOST /auth/cancel" as UC_CancelLogin
     usecase "認証入力送信\nPOST /auth/input\n(PTY stdin)" as UC_AuthInput
-    usecase "PTY ストリーム購読\nGET /auth/pty/stream\n(SSE, text/event-stream)" as UC_AuthOutput
+    usecase "PTY ストリーム購読\nGET /auth/pty/stream\n(SSE, text/event-stream)" as UC_AuthOutput <<changed>>
   }
 
   ' ---- 会話管理 ----
@@ -75,5 +79,11 @@ UC_DirectURL ..> UC_GetConv : <<include>>
 
 ' --- Claude CLI associations ---
 UC_ExecClaude --> claude
+
+legend right
+  **凡例 (基準コミット: 95a54d5)**
+  |<#FFD700>  | 変更された要素 |
+  |<#90EE90>  | 新規追加の要素 |
+endlegend
 
 @enduml
