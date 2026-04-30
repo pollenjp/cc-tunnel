@@ -20,7 +20,7 @@ vi.mock('../components/AuthTerminal', () => ({
 }));
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { CredentialsLoginPage } from './CredentialsLoginPage';
@@ -101,6 +101,49 @@ describe('CredentialsLoginPage', () => {
 
     await waitFor(() => {
       expect(capturedPath).toBe('/chat/conv-001');
+    });
+  });
+
+  it('phase=pty 時に「完了」ボタンが表示される', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '完了' })).toBeTruthy();
+    });
+  });
+
+  it('「完了」ボタン押下で finalizeRelogin が呼ばれ /chat/:id へ navigate する', async () => {
+    renderPage('?reason=missing&conversationId=conv-001');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '完了' })).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '完了' }));
+    });
+
+    await waitFor(() => {
+      expect(finalizeRelogin).toHaveBeenCalledWith('test-token', 'conv-001');
+      expect(capturedPath).toBe('/chat/conv-001');
+    });
+  });
+
+  it('finalizeRelogin が credentials_not_ready で失敗時に友好的エラーメッセージを表示する', async () => {
+    vi.mocked(finalizeRelogin).mockRejectedValue(new Error('credentials_not_ready'));
+
+    renderPage('?reason=missing&conversationId=conv-001');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '完了' })).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '完了' }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('認証が完了していません');
     });
   });
 

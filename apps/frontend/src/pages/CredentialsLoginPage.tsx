@@ -39,7 +39,13 @@ export function CredentialsLoginPage() {
       setPhase('done');
       navigate(conversationId ? `/chat/${conversationId}` : '/chat', { replace: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'finalize failed');
+      finalizedRef.current = false;
+      const msg = e instanceof Error ? e.message : 'finalize failed';
+      setError(
+        msg.includes('credentials_not_ready')
+          ? '認証が完了していません。画面の指示に従って認証を完了してください'
+          : msg,
+      );
       setPhase('error');
     }
   };
@@ -112,12 +118,22 @@ export function CredentialsLoginPage() {
         )}
 
         {phase !== 'done' && (
-          <button
-            onClick={() => navigate(-1)}
-            className="self-start text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline"
-          >
-            キャンセル
-          </button>
+          <div className="flex gap-2 items-center self-start">
+            {phase === 'pty' && (
+              <button
+                onClick={() => void doFinalize()}
+                className="px-4 py-1.5 rounded bg-[var(--color-accent)] text-white text-sm font-medium hover:bg-[var(--color-accent-hover)]"
+              >
+                完了
+              </button>
+            )}
+            <button
+              onClick={() => navigate(-1)}
+              className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline"
+            >
+              キャンセル
+            </button>
+          </div>
         )}
       </div>
     </div>
