@@ -5,6 +5,11 @@
 '   論理コンポーネント構造（責務・依存関係）は docker_gce_component.puml を参照。
 title docker_gce マルチコンテナ・プール管理シーケンス
 
+note over User #FFD700
+  変更 (95a54d5): ファイル先頭に役割説明コメントを追加
+  （PlantUML 描画には影響なし）
+end note
+
 actor User
 participant "frontend\n(Cloud Run)" as FE
 participant "cc-tunnel\nDockerGCEProvider" as DGP
@@ -84,5 +89,11 @@ DGP -> DB: ListIdleVMInstances(idleThreshold=15min)
 DB --> DGP: vmA (active=0, idle_since > threshold)
 DGP -> GCE: instances.delete(vmA)
 DGP -> DB: DeleteVMInstance(vmA)
+
+legend right
+  **凡例 (基準コミット: 95a54d5)**
+  |<#FFD700>  | 変更された要素 |
+  |<#90EE90>  | 新規追加の要素 |
+endlegend
 
 @enduml

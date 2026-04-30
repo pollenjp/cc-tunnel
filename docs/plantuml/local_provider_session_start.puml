@@ -9,6 +9,11 @@ participant "SessionManager\n(docker/session_manager.go)" as sm
 participant "Docker daemon\n(/var/run/docker.sock, DooD)" as docker
 participant "cctunnel-session-{convID-prefix8}\ncc-remote-agent\n(compose network: apps_default)" as container
 
+note over user, container #90EE90
+  新規追加ダイアグラム (95a54d5)
+  EXECUTION_PROVIDER=local セッション起動フロー
+end note
+
 note over ldp, docker
   EXECUTION_PROVIDER=local:
   cc-tunnel と同一ホスト上の Docker daemon を
@@ -81,5 +86,11 @@ end note
 sm -> docker : ListContainers(filter: name=cctunnel-session-*)
 docker --> sm : [stopped containers]
 sm -> docker : RemoveContainer (各 orphan)
+
+legend right
+  **凡例 (基準コミット: 95a54d5)**
+  |<#FFD700>  | 変更された要素 |
+  |<#90EE90>  | 新規追加の要素 |
+endlegend
 
 @enduml
