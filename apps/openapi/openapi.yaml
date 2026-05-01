@@ -1,7 +1,21 @@
 openapi: "3.0.3"
 info:
   title: cc-tunnel API
-  description: AI chat session management via claude CLI
+  description: |
+    AI chat session management via claude CLI.
+
+    ## Deprecation policy
+    廃止予定のエンドポイントは以下の規約に従う:
+    1. OpenAPI 上で `deprecated: true` を付与する。
+    2. `description` 冒頭に `**Deprecated:** <理由 / 後継エンドポイント / 削除予定 ADR>`
+       の 1 行を入れる。
+    3. クライアント (`apps/frontend/src/api/`) と Go ハンドラ
+       (`apps/cc-tunnel/internal/api/`) のシグネチャ直前に
+       `// Deprecated: ...` コメントを付ける。
+    4. 削除のタイミング (時期 or イベント) を ADR に記録する。
+
+    現時点で本仕様上 `deprecated: true` のエンドポイントは存在しない
+    (`/auth/output` (polling) は SSE 化の際に完全に削除済)。
   version: 1.0.0
 
 paths:

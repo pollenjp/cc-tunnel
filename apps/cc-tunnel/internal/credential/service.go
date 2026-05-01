@@ -46,6 +46,9 @@ func (s *CredentialService) FetchAndDecrypt(ctx context.Context, username string
 }
 
 // MarkInvalid marks the credentials for username as invalid in the DB.
+//
+// Deprecated: not currently invoked by any handler. See
+// internal/api/interfaces.go for context.
 func (s *CredentialService) MarkInvalid(ctx context.Context, username string) error {
 	return s.repo.MarkInvalid(ctx, username)
 }
