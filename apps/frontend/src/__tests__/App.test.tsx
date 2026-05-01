@@ -1,23 +1,29 @@
-vi.mock('../components/ChatView', () => ({
-  ChatView: ({
-    conversationId,
-    onSendStart,
-  }: {
-    conversationId: string | null;
-    onConversationUpdate?: () => void;
-    onSendStart?: () => void;
-    onHamburger: () => void;
-  }) => (
-    <div
-      data-testid="chat-view"
-      data-conversation-id={conversationId ?? ''}
-    >
-      <button data-testid="send-start-btn" onClick={onSendStart}>
-        SendStart
-      </button>
-    </div>
-  ),
-}));
+vi.mock('../components/ChatView', async () => {
+  const { useConversationsStore } = await import('../store/conversations');
+  return {
+    ChatView: ({
+      conversationId,
+    }: {
+      conversationId: string | null;
+      onHamburger: () => void;
+    }) => {
+      const markRunning = useConversationsStore(s => s.markRunning);
+      return (
+        <div
+          data-testid="chat-view"
+          data-conversation-id={conversationId ?? ''}
+        >
+          <button
+            data-testid="send-start-btn"
+            onClick={() => conversationId && markRunning(conversationId)}
+          >
+            SendStart
+          </button>
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock('../api/client', () => ({
   listConversations: vi.fn(),
@@ -87,9 +93,11 @@ function mockAppAuth(overrides: { user?: { id: string; name: string } | null } =
 }
 
 describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockAppAuth();
+    const { useConversationsStore } = await import('../store/conversations');
+    useConversationsStore.setState({ conversations: [] });
   });
 
   it('選択した会話のIDがChatViewのconversationIdとして渡されること', async () => {
@@ -133,7 +141,7 @@ describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
     expect(chatView.getAttribute('data-is-polling')).toBeNull();
   });
 
-  it('onSendStart が呼ばれると useConversationListPoller に hasRunning=true が渡されること', async () => {
+  it('markRunning が呼ばれると useConversationListPoller に hasRunning=true が渡されること', async () => {
     const conv = makeConv({ id: 'conv-spinning', status: 'idle', title: '会話C' });
 
     vi.mocked(clientModule.listConversations).mockResolvedValue([conv]);
@@ -172,9 +180,11 @@ describe('App (TDD Cycle 3 — ChatView receives conversationId)', () => {
 });
 
 describe('App ルーティング (Phase 2)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.mocked(clientModule.listConversations).mockResolvedValue([]);
+    const { useConversationsStore } = await import('../store/conversations');
+    useConversationsStore.setState({ conversations: [] });
   });
 
   it('/ → HomePage が表示されること', async () => {
