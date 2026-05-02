@@ -1,6 +1,11 @@
 variable "cloudflare_zone_id" {
   type        = string
   description = "Cloudflare Zone ID for the DNS record (Cloudflare Dashboard > 該当 zone の Overview ページ右下から取得)"
+
+  validation {
+    condition     = length(var.cloudflare_zone_id) > 0
+    error_message = "cloudflare_zone_id is required. Set the CLOUDFLARE_ZONE_ID environment variable."
+  }
 }
 
 variable "record_name" {
