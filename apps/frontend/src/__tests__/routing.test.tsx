@@ -45,13 +45,22 @@ vi.mock('../hooks/useAppAuth', () => ({
   useAppAuth: vi.fn(),
 }));
 
+vi.mock('../api/credentials', () => ({
+  getCredentialsStatus: vi.fn(),
+}));
+
+vi.mock('../pages/CredentialsLoginPage', () => ({
+  CredentialsLoginPage: () => <div data-testid="credentials-login-page" />,
+}));
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useEffect } from 'react';
-import { render, act, screen } from '@testing-library/react';
+import { render, act, screen, waitFor } from '@testing-library/react';
 import { fireEvent } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import App from '../App';
 import * as clientModule from '../api/client';
+import * as credentialsModule from '../api/credentials';
 import type { Conversation } from '../api/client';
 import { useAppAuth } from '../hooks/useAppAuth';
 
@@ -73,11 +82,13 @@ const flush = async () => {
 
 // URL変化を追跡するコンポーネント
 let capturedPath = '/';
+let capturedSearch = '';
 function LocationCapture() {
   const location = useLocation();
   useEffect(() => {
     capturedPath = location.pathname;
-  }, [location.pathname]);
+    capturedSearch = location.search;
+  }, [location.pathname, location.search]);
   return null;
 }
 
@@ -96,7 +107,10 @@ describe('URLルーティング (TDD Cycle 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedPath = '/';
+    capturedSearch = '';
     mockAppAuth();
+    // credential 有効状態をデフォルトとする（CredentialGuard を通過させる）
+    vi.mocked(credentialsModule.getCredentialsStatus).mockResolvedValue({ registered: true, isValid: true });
   });
 
   it('/ にアクセスすると会話が選択されず ChatView が非表示', async () => {
@@ -166,5 +180,32 @@ describe('URLルーティング (TDD Cycle 1)', () => {
 
     expect(screen.queryByTestId('chat-view')).toBeNull();
     expect(capturedPath).toBe('/');
+  });
+});
+
+describe('CredentialGuard routing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedPath = '/';
+    capturedSearch = '';
+    mockAppAuth();
+  });
+
+  it('/chat/:id で未登録ユーザーは /login/credentials へリダイレクトされる', async () => {
+    vi.mocked(credentialsModule.getCredentialsStatus).mockResolvedValue({ registered: false, isValid: false });
+    vi.mocked(clientModule.listConversations).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter initialEntries={['/chat/conv-test']}>
+        <LocationCapture />
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(capturedPath).toBe('/login/credentials');
+    });
+    expect(capturedSearch).toContain('reason=missing');
+    expect(capturedSearch).toContain('conv-test');
   });
 });

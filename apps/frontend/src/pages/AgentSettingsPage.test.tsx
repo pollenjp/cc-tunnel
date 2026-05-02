@@ -1,70 +1,81 @@
-vi.mock('../hooks/useAuth', () => ({
-  useAuth: vi.fn(),
+vi.mock('../hooks/useAppAuth', () => ({
+  useAppAuth: vi.fn(),
 }));
 
-vi.mock('../components/AuthTerminal', () => ({
-  AuthTerminal: () => <div data-testid="auth-terminal" />,
+vi.mock('../api/credentials', () => ({
+  getCredentialsStatus: vi.fn(),
+}));
+
+vi.mock('../api/client', () => ({
+  createConversation: vi.fn(),
 }));
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
 import { AgentSettingsPage } from './AgentSettingsPage';
-import { useAuth } from '../hooks/useAuth';
-import type { UseAuthReturn } from '../hooks/useAuth';
-import type { AuthStatus } from '../api/client';
+import { useAppAuth } from '../hooks/useAppAuth';
+import { getCredentialsStatus } from '../api/credentials';
+import { createConversation } from '../api/client';
 
-function mockUseAuth(overrides: Partial<UseAuthReturn>) {
-  vi.mocked(useAuth).mockReturnValue({
-    status: null,
-    isLoading: false,
-    login: vi.fn(),
-    logout: vi.fn(),
-    cancelLogin: vi.fn(),
-    ...overrides,
-  });
-}
+let capturedPath = '/settings/agents';
 
-function makeStatus(overrides: Partial<AuthStatus>): AuthStatus {
-  return {
-    loggedIn: false,
-    loginPending: false,
-    authMethod: null,
-    ...overrides,
-  } as AuthStatus;
+function LocationCapture() {
+  const location = useLocation();
+  useEffect(() => {
+    capturedPath = location.pathname + location.search;
+  }, [location.pathname, location.search]);
+  return null;
 }
 
 function renderPage() {
+  capturedPath = '/settings/agents';
   return render(
     <MemoryRouter initialEntries={['/settings/agents']}>
-      <AgentSettingsPage />
+      <Routes>
+        <Route path="/settings/agents" element={<AgentSettingsPage />} />
+        <Route path="/login/credentials" element={<LocationCapture />} />
+      </Routes>
     </MemoryRouter>,
   );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(useAppAuth).mockReturnValue({
+    user: { id: 'u1', name: 'alice' },
+    token: 'test-token',
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    updateNickname: vi.fn(),
+  });
 });
 
 describe('AgentSettingsPage', () => {
   describe('Agent カード表示', () => {
-    it('3つの Agent カードが表示される', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: false }) });
+    it('3つの Agent カードが表示される', async () => {
+      vi.mocked(getCredentialsStatus).mockResolvedValue({ registered: true, isValid: true });
       renderPage();
+      await waitFor(() => expect(screen.getByText(/認証済み/)).toBeTruthy());
       expect(screen.getAllByText(/Claude Code/).length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText('GitHub Copilot')).toBeTruthy();
       expect(screen.getByText('Cursor CLI')).toBeTruthy();
     });
 
-    it('Claude Code カードに「対応済み」バッジが表示される', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: false }) });
+    it('Claude Code カードに「対応済み」バッジが表示される', async () => {
+      vi.mocked(getCredentialsStatus).mockResolvedValue({ registered: true, isValid: true });
       renderPage();
-      expect(screen.getByText(/対応済み/)).toBeTruthy();
+      await waitFor(() => expect(screen.getByText(/対応済み/)).toBeTruthy());
     });
 
-    it('GitHub Copilot と Cursor CLI のボタンは disabled', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: false }) });
+    it('GitHub Copilot と Cursor CLI のボタンは disabled', async () => {
+      vi.mocked(getCredentialsStatus).mockResolvedValue({ registered: false, isValid: false });
       renderPage();
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /Claude Code でログイン/ })).toBeTruthy(),
+      );
       const disabledButtons = screen.getAllByRole('button').filter(
         btn => (btn as HTMLButtonElement).disabled,
       );
@@ -72,69 +83,65 @@ describe('AgentSettingsPage', () => {
     });
   });
 
-  describe('未認証状態', () => {
-    it('「Claude Code でログイン」ボタンが表示される', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: false, loginPending: false }) });
-      renderPage();
-      expect(screen.getByRole('button', { name: /Claude Code でログイン/ })).toBeTruthy();
+  describe('credential 未登録状態', () => {
+    beforeEach(() => {
+      vi.mocked(getCredentialsStatus).mockResolvedValue({ registered: false, isValid: false });
     });
 
-    it('「Claude Code でログイン」ボタンは enabled', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: false, loginPending: false }) });
+    it('「Claude Code でログイン」ボタンが表示される', async () => {
       renderPage();
-      const btn = screen.getByRole('button', { name: /Claude Code でログイン/ });
-      expect((btn as HTMLButtonElement).disabled).toBe(false);
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /Claude Code でログイン/ })).toBeTruthy(),
+      );
     });
 
-    it('「Claude Code でログイン」ボタン押下で login() が呼ばれる', async () => {
-      const login = vi.fn().mockResolvedValue(undefined);
-      mockUseAuth({ status: makeStatus({ loggedIn: false, loginPending: false }), login });
+    it('「Claude Code でログイン」ボタン押下で /login/credentials に遷移する', async () => {
+      vi.mocked(createConversation).mockResolvedValue({ id: 'conv-abc', status: 'idle', createdAt: '' } as never);
       renderPage();
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /Claude Code でログイン/ })).toBeTruthy(),
+      );
 
       await act(async () => {
         fireEvent.click(screen.getByRole('button', { name: /Claude Code でログイン/ }));
       });
-      expect(login).toHaveBeenCalled();
-    });
-  });
 
-  describe('認証中（loginPending）状態', () => {
-    it('AuthTerminal が表示される', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: false, loginPending: true }) });
-      renderPage();
-      expect(screen.getByTestId('auth-terminal')).toBeTruthy();
-    });
-  });
-
-  describe('認証済み状態', () => {
-    it('「認証済み」表示が出る', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: true, loginPending: false }) });
-      renderPage();
-      expect(screen.getByText(/認証済み/)).toBeTruthy();
-    });
-
-    it('「ログアウト」ボタンが表示される', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: true, loginPending: false }) });
-      renderPage();
-      expect(screen.getByRole('button', { name: /ログアウト/ })).toBeTruthy();
-    });
-
-    it('「ログアウト」ボタン押下で logout() が呼ばれる', async () => {
-      const logout = vi.fn().mockResolvedValue(undefined);
-      mockUseAuth({ status: makeStatus({ loggedIn: true, loginPending: false }), logout });
-      renderPage();
-
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /ログアウト/ }));
+      await waitFor(() => {
+        expect(capturedPath).toContain('/login/credentials');
+        expect(capturedPath).toContain('conversationId=conv-abc');
       });
-      expect(logout).toHaveBeenCalled();
+    });
+  });
+
+  describe('credential 有効状態', () => {
+    it('「認証済み ✓」表示が出る', async () => {
+      vi.mocked(getCredentialsStatus).mockResolvedValue({ registered: true, isValid: true });
+      renderPage();
+      await waitFor(() => expect(screen.getByText(/認証済み/)).toBeTruthy());
+    });
+
+    it('ログアウトボタンは表示されない', async () => {
+      vi.mocked(getCredentialsStatus).mockResolvedValue({ registered: true, isValid: true });
+      renderPage();
+      await waitFor(() => expect(screen.getByText(/認証済み/)).toBeTruthy());
+      expect(screen.queryByRole('button', { name: /ログアウト/ })).toBeNull();
+    });
+  });
+
+  describe('ローディング状態', () => {
+    it('取得中はスピナーが表示される', () => {
+      vi.mocked(getCredentialsStatus).mockReturnValue(new Promise(() => {}));
+      renderPage();
+      expect(screen.getByRole('status')).toBeTruthy();
     });
   });
 
   describe('戻るリンク', () => {
-    it('戻るリンクが表示される', () => {
-      mockUseAuth({ status: makeStatus({ loggedIn: false }) });
+    it('ホームへの戻るリンクが表示される', async () => {
+      vi.mocked(getCredentialsStatus).mockResolvedValue({ registered: true, isValid: true });
       renderPage();
+      await waitFor(() => expect(screen.getByText(/認証済み/)).toBeTruthy());
       expect(screen.getByRole('link')).toBeTruthy();
     });
   });

@@ -9,6 +9,14 @@ paths:
     get:
       operationId: GetAuthStatus
       summary: Get authentication status
+      parameters:
+        - name: conversationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation (session) ID to route to the per-session container
       responses:
         "200":
           description: Authentication status
@@ -22,7 +30,7 @@ paths:
       operationId: InitiateLogin
       summary: Initiate login flow
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
@@ -39,6 +47,14 @@ paths:
     post:
       operationId: Logout
       summary: Logout
+      parameters:
+        - name: conversationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation (session) ID to route to the per-session container
       responses:
         "200":
           description: Logout successful
@@ -51,6 +67,14 @@ paths:
     post:
       operationId: CancelLogin
       summary: Cancel the in-progress login PTY process
+      parameters:
+        - name: conversationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation (session) ID to route to the per-session container
       responses:
         "200":
           description: Login cancelled
@@ -59,9 +83,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/AuthCancelResponse"
 
-  /auth/input:
+  /auth/pty/input:
     post:
-      operationId: SubmitAuthInput
+      operationId: SubmitAuthPtyInput
       summary: Submit input to the login process stdin
       requestBody:
         required: true
@@ -79,25 +103,25 @@ paths:
         "409":
           description: No login in progress
 
-  /auth/output:
+  /auth/pty/stream:
     get:
-      operationId: GetAuthOutput
-      summary: Get buffered stdout from the login process
+      operationId: GetAuthPtyStream
+      summary: Stream PTY stdout via Server-Sent Events
       parameters:
-        - name: since
+        - name: conversationId
           in: query
-          required: false
+          required: true
           schema:
-            type: integer
-            default: 0
-          description: Cursor position to start from (0 = all lines)
+            type: string
+            format: uuid
+          description: Conversation (session) ID to route to the per-session container
       responses:
         "200":
-          description: Stdout lines and new cursor
+          description: SSE stream of base64-encoded PTY bytes (ANSI included)
           content:
-            application/json:
+            text/event-stream:
               schema:
-                $ref: "#/components/schemas/AuthOutputResponse"
+                type: string
 
   /app-auth/login:
     post:
@@ -171,10 +195,108 @@ paths:
         "204":
           description: Logout successful
 
+  /credentials/status:
+    get:
+      operationId: GetCredentialsStatus
+      summary: Check if credentials are registered and valid
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Credentials status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialsStatusResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /credentials/relogin/start:
+    post:
+      operationId: PostReloginStart
+      summary: Start a re-login flow for a conversation session
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReloginStartRequest"
+      responses:
+        "200":
+          description: Session container ready for re-login
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReloginStartResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /credentials/relogin/finalize:
+    post:
+      operationId: PostReloginFinalize
+      summary: Finalize re-login and store the new credentials
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReloginFinalizeRequest"
+      responses:
+        "200":
+          description: Credentials stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReloginFinalizeResponse"
+        "400":
+          description: Credentials not ready (login not completed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: Bad gateway (error communicating with session container)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /conversations:
     post:
       operationId: createConversation
       summary: Create a new conversation
+      security:
+        - BearerAuth: []
       requestBody:
         required: false
         content:
@@ -197,6 +319,8 @@ paths:
     get:
       operationId: listConversations
       summary: List all conversations
+      security:
+        - BearerAuth: []
       responses:
         "200":
           description: List of conversations
@@ -211,6 +335,8 @@ paths:
     get:
       operationId: getConversation
       summary: Get conversation with message history
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ConversationId"
       responses:
@@ -229,6 +355,8 @@ paths:
     delete:
       operationId: deleteConversation
       summary: Delete a conversation
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ConversationId"
       responses:
@@ -376,7 +504,13 @@ components:
 
     LoginRequest:
       type: object
+      required:
+        - conversationId
       properties:
+        conversationId:
+          type: string
+          format: uuid
+          description: Conversation (session) ID to route to the per-session container
         method:
           type: string
           enum: [claudeai, console]
@@ -395,8 +529,12 @@ components:
 
     AuthInputRequest:
       type: object
-      required: [input]
+      required: [conversationId, input]
       properties:
+        conversationId:
+          type: string
+          format: uuid
+          description: Conversation (session) ID to route to the per-session container
         input:
           type: string
           description: Input to send to the login process stdin (can be empty string for Enter)
@@ -407,17 +545,6 @@ components:
       properties:
         message:
           type: string
-
-    AuthOutputResponse:
-      type: object
-      required: [data, cursor]
-      properties:
-        data:
-          type: string
-          description: Base64-encoded PTY output bytes since the given cursor
-        cursor:
-          type: integer
-          description: New cursor position for the next request
 
     AuthCancelResponse:
       type: object
@@ -540,6 +667,54 @@ components:
         status:
           type: string
           example: "ok"
+
+    ReloginStartRequest:
+      type: object
+      required:
+        - conversationId
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+
+    ReloginStartResponse:
+      type: object
+      required:
+        - ready
+      properties:
+        ready:
+          type: boolean
+
+    ReloginFinalizeRequest:
+      type: object
+      required:
+        - conversationId
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+
+    CredentialsStatusResponse:
+      type: object
+      required:
+        - registered
+        - isValid
+      properties:
+        registered:
+          type: boolean
+        isValid:
+          type: boolean
+
+    ReloginFinalizeResponse:
+      type: object
+      required:
+        - registered
+        - isValid
+      properties:
+        registered:
+          type: boolean
+        isValid:
+          type: boolean
 
     Error:
       type: object

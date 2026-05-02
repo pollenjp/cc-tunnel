@@ -1,0 +1,99 @@
+@startuml docker_gce_multi_container
+' 【役割】デプロイメント図（シーケンス形式）
+'   GCE VM × N コンテナのプール管理における物理デプロイフローを示す。
+'   VM 新規作成・コンテナ起動・スケールアウト・IdleChecker による削除の時系列を描写。
+'   論理コンポーネント構造（責務・依存関係）は docker_gce_component.puml を参照。
+title docker_gce マルチコンテナ・プール管理シーケンス
+
+note over User #FFD700
+  変更 (95a54d5): ファイル先頭に役割説明コメントを追加
+  （PlantUML 描画には影響なし）
+end note
+
+actor User
+participant "frontend\n(Cloud Run)" as FE
+participant "cc-tunnel\nDockerGCEProvider" as DGP
+database  "PostgreSQL\n(vm_instances\n session_endpoints)" as DB
+participant "GCE Compute API" as GCE
+participant "GCE VM A\n(Docker daemon\ntcp://:2375)" as VMA
+participant "session-{conv1}\ncc-remote-agent\n:9091" as CA1
+participant "session-{conv2}\ncc-remote-agent\n:9092" as CA2
+
+== 1 セッション目: VM 新規作成 + コンテナ起動 ==
+
+User -> FE: 会話開始 conv1
+FE -> DGP: Execute(conv1)
+DGP -> DB: GetSessionEndpoint(conv1)
+DB --> DGP: not found
+DGP -> DB: GetAvailableVMInstance(MaxContainers=10)
+DB --> DGP: empty (no running VM)
+DGP -> GCE: instances.insert\n  startup-script: Docker daemon TCP 有効化のみ
+GCE --> DGP: instance RUNNING + internal_ip
+DGP -> DB: UpdateVMInstanceStatus(vmA, "running")
+DGP -> VMA: IsReady() — Docker daemon TCP 2375 疎通確認
+VMA --> DGP: OK
+DGP -> DB: GetMaxPortOnVM(vmA)
+DB --> DGP: 0 (no containers)
+note right of DGP: hostPort = max(0, portRangeStart-1) + 1 = 9091
+DGP -> VMA: RunAgentContainer(\n  name="session-conv1"\n  hostPort=9091, containerPort=9091\n  --memory=512m --cpus=0.5)
+VMA -> CA1: docker run -d -p 9091:9091 ...
+DGP -> CA1: GET /auth/status (waitForAgentReady)
+CA1 --> DGP: 200 OK
+DGP -> DB: CreateSessionEndpoint(conv1, vmA, "session-conv1", port=9091, status='running')
+DGP -> DB: IncrementVMActiveContainers(vmA) [→ 1]
+DGP -> CA1: POST /execute (req.conv1)
+CA1 --> DGP: stream events
+DGP --> FE: stream events
+FE --> User: response
+
+== 2 セッション目: 同一 VM 上に追加コンテナ（ポート+1）==
+
+User -> FE: 会話開始 conv2
+FE -> DGP: Execute(conv2)
+DGP -> DB: GetSessionEndpoint(conv2)
+DB --> DGP: not found
+DGP -> DB: GetAvailableVMInstance(10)
+DB --> DGP: vmA (active_containers=1 < 10)
+DGP -> DB: GetMaxPortOnVM(vmA)
+DB --> DGP: 9091
+note right of DGP: hostPort = 9091 + 1 = 9092
+DGP -> VMA: RunAgentContainer(\n  name="session-conv2"\n  hostPort=9092, containerPort=9091)
+VMA -> CA2: docker run -d -p 9092:9091 ...
+DGP -> CA2: GET /auth/status (waitForAgentReady)
+CA2 --> DGP: 200 OK
+DGP -> DB: CreateSessionEndpoint(conv2, vmA, "session-conv2", port=9092, status='running')
+DGP -> DB: IncrementVMActiveContainers(vmA) [→ 2]
+DGP -> CA2: POST /execute (req.conv2)
+CA2 --> DGP: stream events
+DGP --> FE: stream events
+
+== 11 セッション目: VM スケールアウト（VM A が MaxContainers 到達）==
+
+note over DGP: GetAvailableVMInstance(10) → empty\n(vmA active_containers = 10 = MaxContainers)
+DGP -> GCE: instances.insert (VM B)
+GCE --> DGP: VM B RUNNING
+DGP -> DB: UpdateVMInstanceStatus(vmB, "running")
+note over DGP: VM B 上で新コンテナを起動\nhostPort=9091 (VM B の最初のコンテナ)
+
+== セッション終了: IdleChecker + VMScaler ==
+
+note over DGP: IdleChecker 定期実行\n(IdleCheckInterval 間隔)
+DGP -> DB: ListIdleSessionEndpoints(idleThreshold=15min)
+DB --> DGP: [conv1 (last_activity > 15min)]
+DGP -> VMA: StopContainer("session-conv1")
+DGP -> VMA: RemoveContainer("session-conv1")
+DGP -> DB: DeleteSessionEndpoint(conv1)
+DGP -> DB: DecrementVMActiveContainers(vmA)\n[active_containers → 0, idle_since = NOW()]
+note over DGP: VMScaler 定期実行\n(IdleCheckInterval 間隔)
+DGP -> DB: ListIdleVMInstances(idleThreshold=15min)
+DB --> DGP: vmA (active=0, idle_since > threshold)
+DGP -> GCE: instances.delete(vmA)
+DGP -> DB: DeleteVMInstance(vmA)
+
+legend right
+  **凡例 (基準コミット: 95a54d5)**
+  |<#FFD700>  | 変更された要素 |
+  |<#90EE90>  | 新規追加の要素 |
+endlegend
+
+@enduml

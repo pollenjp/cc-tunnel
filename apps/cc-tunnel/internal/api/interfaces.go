@@ -4,8 +4,18 @@ import (
 	"context"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
-	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
+
+// credentialService abstracts credential fetching for testability.
+type credentialService interface {
+	FetchAndDecrypt(ctx context.Context, username string) ([]byte, error)
+	MarkInvalid(ctx context.Context, username string) error
+}
+
+// credentialStorer abstracts credential encryption and storage for testability.
+type credentialStorer interface {
+	StoreCredential(ctx context.Context, username, credJSON string) error
+}
 
 type repository interface {
 	CreateConversation(ctx context.Context, title, model string, systemPrompt *string) (*db.Conversation, error)
@@ -21,13 +31,5 @@ type repository interface {
 	UpdateMessageContentBlocks(ctx context.Context, messageID string, contentBlocks []map[string]interface{}) error
 	UpdateMessageStatus(ctx context.Context, messageID, status string) error
 	MergeMessageData(ctx context.Context, messageID string, extra map[string]interface{}) error
-}
-
-type remoteClient interface {
-	GetAuthStatus(ctx context.Context) (*remoteclient.AuthStatus, error)
-	InitiateLogin(ctx context.Context, method string) (*remoteclient.LoginResponse, error)
-	Logout(ctx context.Context) (*remoteclient.AuthStatus, error)
-	CancelLogin(ctx context.Context) (*remoteclient.AuthCancelResponse, error)
-	SubmitAuthInput(ctx context.Context, input string) (*remoteclient.AuthInputResponse, error)
-	GetAuthOutput(ctx context.Context, since int) (*remoteclient.AuthOutputResponse, error)
+	UpdateSessionEndpointLastActivity(ctx context.Context, conversationID string) error
 }

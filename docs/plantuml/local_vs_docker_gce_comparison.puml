@@ -1,0 +1,119 @@
+@startuml local_vs_docker_gce_comparison
+title cc-tunnel — local vs docker_gce モード差異比較図
+
+skinparam {
+  BackgroundColor White
+  NodeBackgroundColor LightYellow
+  NodeBorderColor DarkGoldenRod
+  ComponentBackgroundColor LightCyan
+  ComponentBorderColor SteelBlue
+  NoteBackgroundColor LightGreen
+  NoteBorderColor DarkGreen
+  ArrowColor DarkSlateGray
+}
+
+note as new_diagram_note #90EE90
+  新規追加ダイアグラム (95a54d5)
+  local vs docker_gce モード差異比較図
+end note
+
+' ============================================================
+' 上段: local モード
+' ============================================================
+
+frame "local モード (EXECUTION_PROVIDER=local)" as local_frame {
+
+  node "cc-tunnel ホスト\n(単一マシン)" as local_host {
+    component "cc-tunnel\n(API + LocalDockerProvider)" as local_api
+    component "SessionManager\n(in-memory map)\nsync.Mutex" as local_sm
+    component "Docker daemon\n/var/run/docker.sock\n(DooD)" as local_docker
+
+    component "cctunnel-session-{convID-prefix8}\ncc-remote-agent\nport: 9091 (固定)\nnetwork: apps_default" as local_container
+  }
+
+  local_api --> local_sm : GetOrCreate(convID, credentials)
+  local_sm --> local_docker : ContainerCreate/Start\n(DooD socket)
+  local_docker --> local_container : docker run
+  local_api --> local_container : POST /execute\n(compose network 内通信)
+}
+
+note right of local_frame
+  **local モードの特徴**
+  - コンテナ配置先: cc-tunnel と同一ホスト
+  - Docker 接続: /var/run/docker.sock (DooD)
+  - コンテナ命名: cctunnel-session-{convID 先頭8文字}
+  - ポート: 9091 固定（compose ネットワーク内）
+  - セッション管理: in-memory map（再起動で喪失）
+  - 並行制御: sync.Mutex
+  - idle cleanup: idleTimer 15min（コンテナ単位）
+  - スケール: 単一ホスト固定
+end note
+
+' ============================================================
+' 下段: docker_gce モード
+' ============================================================
+
+frame "docker_gce モード (EXECUTION_PROVIDER=docker_gce)" as gce_frame {
+
+  node "cc-tunnel ホスト\n(Cloud Run 等)" as gce_api_host {
+    component "cc-tunnel\n(API + DockerGCEProvider)\nsingleflight.Group" as gce_api
+    component "IdleChecker\ngoroutine" as idle_checker
+    component "VMScaler\ngoroutine" as vmscaler
+  }
+
+  database "PostgreSQL\n(vm_instances\n session_endpoints)" as gce_db
+
+  node "GCE VM A\n(Docker daemon\ntcp://<vm-ip>:2375)" as gce_vma {
+    component "session-{convID}\ncc-remote-agent\nhostPort: 9091+" as gce_ca1
+    component "session-{convID2}\ncc-remote-agent\nhostPort: 9092+" as gce_ca2
+  }
+
+  node "GCE VM B\n(スケールアウト時)" as gce_vmb {
+    component "session-{convID3}\ncc-remote-agent\nhostPort: 9091" as gce_ca3
+  }
+
+  node "Compute Engine API\n(GCE)" as compute_api
+
+  gce_api --> gce_db : session_endpoints / vm_instances CRUD\n(singleflight で convID 単位重複排除)
+  gce_api --> gce_vma : RunAgentContainer\ntcp://<vm-ip>:2375
+  gce_api --> gce_vmb : RunAgentContainer\n(MaxContainers 超過時にスケールアウト)
+  gce_api --> compute_api : instances.insert / delete
+  idle_checker --> gce_api : CleanupOrphans() 定期実行
+  vmscaler --> gce_api : CleanupOrphans() 定期実行
+}
+
+note right of gce_frame
+  **docker_gce モードの特徴**
+  - コンテナ配置先: GCE VM プール（複数 VM）
+  - Docker 接続: tcp://<vm-ip>:2375（VPC + FW 限定）
+  - コンテナ命名: session-{conversationID}（フルID）
+  - ポート: GetMaxPortOnVM+1（9091 起点、collision retry 3回）
+  - セッション管理: DB 永続化（vm_instances + session_endpoints）
+  - 並行制御: singleflight.Group（convID 単位重複排除）
+  - idle cleanup: IdleChecker + VMScaler goroutine（2段階）
+  - スケール: 自動 VM スケールアウト（MaxContainers 超過時）
+end note
+
+' ============================================================
+' 差分強調吹き出し
+' ============================================================
+
+note as diff_note
+  **主要差分まとめ**
+  ┌─────────────────────┬──────────────────────────┬──────────────────────────────────┐
+  │ 観点                │ local                    │ docker_gce                       │
+  ├─────────────────────┼──────────────────────────┼──────────────────────────────────┤
+  │ コンテナ配置先      │ 同一ホスト               │ GCE VM プール                    │
+  │ 接続方式            │ DooD (/var/run/docker.sock) │ TCP 2375 (VPC + FW 限定)      │
+  │ 状態管理            │ in-memory（再起動で喪失） │ DB 永続化（再起動後も復元可能）  │
+  │ スケール            │ 固定1ホスト              │ 自動 VM スケールアウト           │
+  └─────────────────────┴──────────────────────────┴──────────────────────────────────┘
+end note
+
+legend right
+  **凡例 (基準コミット: 95a54d5)**
+  |<#FFD700>  | 変更された要素 |
+  |<#90EE90>  | 新規追加の要素 |
+endlegend
+
+@enduml

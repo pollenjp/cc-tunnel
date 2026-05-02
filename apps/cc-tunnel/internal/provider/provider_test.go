@@ -9,5 +9,6 @@ import (
 
 // Compile-time interface satisfaction checks.
 var _ provider.ExecutionProvider = (*local.Provider)(nil)
+var _ provider.ExecutionProvider = (*local.LocalDockerProvider)(nil)
 var _ provider.ExecutionProvider = (*cloudrunsandbox.MockProvider)(nil)
 var _ provider.ExecutionProvider = (*dockergce.MockProvider)(nil)

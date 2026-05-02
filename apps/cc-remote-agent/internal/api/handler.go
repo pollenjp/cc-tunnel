@@ -1,12 +1,17 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/auth"
 	"github.com/pollenjp/cc-tunnel/apps/cc-remote-agent/internal/claude"
@@ -127,8 +132,8 @@ func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /auth/input — login プロセスの stdin に任意の入力を送信する
-func (h *Handler) AuthInput(w http.ResponseWriter, r *http.Request) {
+// POST /auth/pty/input — login プロセスの stdin に任意の入力を送信する
+func (h *Handler) AuthPtyInput(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -142,7 +147,7 @@ func (h *Handler) AuthInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 空文字列も許容（Enter キーのみ送信のユースケース）
-	slog.Info("auth input request", "input_len", len(body.Input))
+	slog.Info("auth pty input request", "input_len", len(body.Input))
 
 	if err := h.authManager.SubmitInput(body.Input); err != nil {
 		http.Error(w, `{"error":"no login in progress"}`, http.StatusConflict)
@@ -155,26 +160,42 @@ func (h *Handler) AuthInput(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET /auth/output?since=N — PTY 出力を base64 エンコードで返す
-func (h *Handler) AuthOutput(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+// GET /auth/pty/stream — PTY 出力を SSE (Server-Sent Events) でストリーミングする
+func (h *Handler) AuthPtyStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("auth output request")
-	since := 0
-	if s := r.URL.Query().Get("since"); s != "" {
-		if _, err := fmt.Sscanf(s, "%d", &since); err != nil {
-			slog.Warn("Sscanf failed", "error", err)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ch := h.authManager.Subscribe(r.Context())
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			encoded := base64.StdEncoding.EncodeToString(data)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", encoded); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ticker.C:
+			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		}
-	}
-	data, cursor := h.authManager.GetOutput(since)
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]interface{}{
-		"data":   data,
-		"cursor": cursor,
-	}); err != nil {
-		slog.Error("failed to encode output response", "error", err)
 	}
 }
 
@@ -189,6 +210,86 @@ func (h *Handler) AuthCancel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Login cancelled"}); err != nil {
 		slog.Error("failed to encode cancel response", "error", err)
+	}
+}
+
+// POST /init — credentials JSON をコンテナ内 ~/.claude/.credentials.json に書き込む
+// body: {"credentialsJson": "<JSON string>"}
+func (h *Handler) Init(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		CredentialsJSON string `json:"credentialsJson"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if body.CredentialsJSON == "" {
+		http.Error(w, `{"error":"credentialsJson is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Error("failed to get home dir", "error", err)
+		http.Error(w, `{"error":"failed to resolve home directory"}`, http.StatusInternalServerError)
+		return
+	}
+	claudeDir := filepath.Join(homeDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		slog.Error("failed to create .claude dir", "error", err)
+		http.Error(w, `{"error":"failed to create .claude directory"}`, http.StatusInternalServerError)
+		return
+	}
+	credPath := filepath.Join(claudeDir, ".credentials.json")
+	if err := os.WriteFile(credPath, []byte(body.CredentialsJSON), 0o600); err != nil {
+		slog.Error("failed to write credentials file", "error", err)
+		http.Error(w, `{"error":"failed to write credentials file"}`, http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("credentials initialized", "path", credPath)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"message": "credentials initialized"}); err != nil {
+		slog.Error("failed to encode init response", "error", err)
+	}
+}
+
+// POST /auth/finalize-credentials — PTY ログイン完了後、tmpfs 上の credentials.json を読み返す
+// response: {"credentialsJson": "<file content>"}
+func (h *Handler) FinalizeCredentials(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Error("failed to get home dir", "error", err)
+		http.Error(w, `{"error":"failed to resolve home directory"}`, http.StatusInternalServerError)
+		return
+	}
+	credPath := filepath.Join(homeDir, ".claude", ".credentials.json")
+	data, err := os.ReadFile(credPath)
+	if errors.Is(err, os.ErrNotExist) {
+		http.Error(w, `{"error":"credentials file not found","hint":"complete /auth/login flow first"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("failed to read credentials", "error", err)
+		http.Error(w, `{"error":"failed to read credentials"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"credentialsJson": string(data),
+	}); err != nil {
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 

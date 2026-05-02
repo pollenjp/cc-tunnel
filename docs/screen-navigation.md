@@ -7,7 +7,7 @@ cc-tunnel フロントエンドは「アプリ認証」と「Agent 認証」の 
 | 認証種別 | 説明 | 現在の実装 | 将来の実装 |
 |----------|------|------------|------------|
 | **アプリ認証** | cc-tunnel アプリへのログイン | モック認証（ユーザー名: `test user`）— **実装済み** | Google IAP 等 |
-| **Agent 認証** | Claude Code 等の外部 Agent への認証 | cc-remote-agent-auth 経由（PTY フロー）— **実装済み** | 他 Agent 対応拡張 |
+| **Agent 認証** | Claude Code 等の外部 Agent への認証 | per-session container 経由（PTY フロー）— **実装済み** | 他 Agent 対応拡張 |
 
 ---
 
@@ -61,7 +61,7 @@ cc-tunnel フロントエンドは「アプリ認証」と「Agent 認証」の 
   - 各会話の選択・削除
 - 右メイン: 選択中の会話内容（メッセージ + ツールコール表示）
 - 会話開始時: Agent 選択 UI
-  - **Claude Code** — 対応済み（cc-remote-agent-auth 経由の PTY フロー）
+  - **Claude Code** — 対応済み（per-session container 経由の PTY フロー）
   - **GitHub Copilot** — 将来対応（グレーアウト表示）
   - **Cursor CLI** — 将来対応（グレーアウト表示）
 
@@ -92,7 +92,7 @@ cc-tunnel フロントエンドは「アプリ認証」と「Agent 認証」の 
 - Agent 一覧カード:
   | Agent | 状態 | ボタン押下時の遷移 |
   |-------|------|-------------------|
-  | Claude Code | 対応済み | 現在の認証フロー（cc-remote-agent-auth 経由） |
+  | Claude Code | 対応済み | 現在の認証フロー（per-session container 経由） |
   | GitHub Copilot | 将来対応 | 「未対応」表示（非活性） |
   | Cursor CLI | 将来対応 | 「未対応」表示（非活性） |
 
@@ -135,13 +135,43 @@ cc-tunnel フロントエンドは「アプリ認証」と「Agent 認証」の 
 |--------|----------|------------------|
 | / | 不要 | そのままアクセス可 |
 | /login | 不要 | そのままアクセス可 |
+| /login/credentials | 不要（AppAuth トークンは URL パラメーター経由） | — |
 | /chat | 必須 | /login へリダイレクト（redirect クエリパラメーター付き） |
+| /chat/:id | 必須 + CredentialGuard | /login へリダイレクト（未認証）、または /login/credentials へリダイレクト（credentials 未登録/無効） |
 | /settings/account | 必須 | /login へリダイレクト |
 | /settings/agents | 必須 | /login へリダイレクト |
 
 **ガード実装方針**:
 - 保護ルート（`/chat`, `/settings/*`）にアクセスした際、アプリ未認証なら `/login?redirect=<original>` にリダイレクト
 - ログイン成功後、`redirect` パラメーターの URL に戻る
+
+### CredentialGuard（`/chat/:id` 追加ガード）
+
+`/chat/:id` は `AppAuthGuard` に加えて `CredentialGuard` でもガードされる。
+
+```
+/chat/:id アクセス
+  AppAuthGuard
+    └─ 認証済み
+         CredentialGuard
+           ├─ GET /credentials/status → { registered: false }
+           │    └─ /login/credentials?reason=missing&conversationId=<id>
+           ├─ GET /credentials/status → { registered: true, isValid: false }
+           │    └─ /login/credentials?reason=expired&conversationId=<id>
+           └─ GET /credentials/status → { registered: true, isValid: true }
+                └─ ChatPage を描画
+```
+
+**`/login/credentials` フロー（CredentialsLoginPage）**:
+
+1. `POST /credentials/relogin/start` — セッションコンテナをコンテナとして起動（credentials なし）
+2. `POST /auth/login` — PTY フロー開始（`AuthTerminal` でターミナル表示）
+3. ユーザーが Claude OAuth を完了
+4. 認証完了検知（dual-trigger）:
+   - **自動**: PTY 出力に "Login successful" パターンを検出
+   - **手動**: 「完了」ボタン押下
+5. `POST /credentials/relogin/finalize` — コンテナから credentials を取得・暗号化・DB 保存
+6. `/chat/<conversationId>` にリダイレクト
 
 ---
 
@@ -178,15 +208,15 @@ cc-tunnel フロントエンドは「アプリ認証」と「Agent 認証」の 
 
 Agent 認証は外部 AI Agent（Claude Code 等）への認証。`/settings/agents` から行う。
 
-### Claude Code（cc-remote-agent-auth 経由）— 対応済み
+### Claude Code（per-session container 経由）— 対応済み
 
 詳細は [`auth.md`](./auth.md) を参照。概要:
 
 ```
 /settings/agents
 → 「Claude Code」ボタン押下
-→ POST /auth/login
-→ cc-remote-agent-auth で claude /auth を PTY 起動
+→ POST /auth/login（conversationId 必須）
+→ per-session container で claude /auth を PTY 起動
 → AuthTerminal（xterm.js）に PTY 出力をポーリング表示
 → ユーザーが認証操作（OAuth URL を開く or Enter）
 → 認証成功 → loginPending=false

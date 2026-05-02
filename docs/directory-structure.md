@@ -23,7 +23,7 @@ cc-tunnel/
 │   │   └── useConversationPoller-activity.puml  # useConversationPoller 内部フロー
 │   └── sequence.md                   # シーケンス図
 └── apps/
-    ├── compose.yaml                  # Docker Compose 定義 (デフォルト: postgres + cc-remote-agent-auth, profiles: full で cc-tunnel + frontend 追加)
+    ├── compose.yaml                  # Docker Compose 定義 (デフォルト: postgres, profiles: full で cc-tunnel + frontend 追加)
     ├── prepare.compose.yaml          # cc-remote-agent イメージビルド専用 (compose.yaml 使用前に実行)
     ├── mise.toml                     # monorepo タスクランナー設定
     ├── openapi/
@@ -75,7 +75,11 @@ cc-tunnel/
     │       │       ├── 001_create_conversations.sql       # conversations テーブル
     │       │       ├── 002_create_messages.sql            # messages テーブル
     │       │       ├── 003_add_conversation_status.sql    # conversations.status カラム追加
-    │       │       └── 004_add_message_status.sql         # messages.status / updated_at カラム追加
+    │       │       ├── 004_add_message_status.sql         # messages.status / updated_at カラム追加
+    │       │       ├── 005_create_vm_instances.sql        # vm_instances テーブル (DockerGCEProvider 用)
+    │       │       ├── 006_create_session_endpoints.sql   # session_endpoints テーブル (DockerGCEProvider 用)
+    │       │       ├── 007_create_credentials.sql         # credentials テーブル (AES-256-GCM 暗号化 credentials)
+    │       │       └── 008_session_endpoints_unique_vm_port.sql  # session_endpoints の (vm_instance_id, port) UNIQUE 制約
     │       ├── docker/               # Docker デーモン操作の抽象化レイヤー
     │       │   ├── runner.go         # DockerRunner interface + ContainerCreateOpts / ContainerInfo 型定義
     │       │   ├── sdk_runner.go     # SDKRunner: Docker SDK を使った DockerRunner 実装
@@ -94,8 +98,13 @@ cc-tunnel/
     │       │   ├── cloudrunsandbox/  # CloudRunSandboxProvider (モック実装)
     │       │   │   ├── mock.go
     │       │   │   └── mock_test.go
-    │       │   └── dockergce/        # DockerGCEProvider (モック実装)
-    │       │       ├── mock.go
+    │       │   └── dockergce/        # DockerGCEProvider (本格実装済み)
+    │       │       ├── provider.go       # DockerGCEProvider 本体 (Execute / getOrCreateEndpoint / waitForVMReady / Close)
+    │       │       ├── provider_test.go  # DockerGCEProvider テスト
+    │       │       ├── idle_checker.go   # IdleChecker goroutine (コンテナ idle 検出)
+    │       │       ├── idle_checker_test.go
+    │       │       ├── vmscaler.go       # VMScaler goroutine (アイドル VM 削除)
+    │       │       ├── mock.go           # MockProvider (フォールバック用スタブ)
     │       │       └── mock_test.go
     │       └── remoteclient/
     │           └── client.go         # cc-remote-agent HTTP クライアント (Execute / Auth*)
@@ -117,17 +126,28 @@ cc-tunnel/
             ├── api/
             │   ├── client.ts         # openapi-fetch ベース API クライアント
             │   ├── client.test.ts    # API クライアントユニットテスト
+            │   ├── credentials.ts    # credentials API クライアント (status / relogin/start / relogin/finalize)
             │   └── schema.d.ts       # openapi-typescript 生成型 (コミット済み)
             ├── components/
+            │   ├── AppAuthGuard.tsx  # アプリ認証ガード (/login へリダイレクト)
             │   ├── AuthGuard.tsx     # 認証状態に応じた Chat UI / AuthTerminal 切り替え
             │   ├── AuthTerminal.tsx  # @xterm/xterm ベース PTY 認証ターミナル
             │   ├── ChatView.tsx      # 会話ビュー (メッセージ一覧・送信・ポーリングを自己完結)
+            │   ├── CredentialGuard.tsx  # credentials ガード (GET /credentials/status → /login/credentials へリダイレクト)
             │   ├── MessageBubble.tsx # メッセージ表示 (react-markdown / シンタックスハイライト)
             │   ├── MessageInput.tsx  # テキスト入力フォーム (Shift+Enter で改行)
             │   ├── Sidebar.tsx       # 会話リスト・新規作成・ログアウトボタン
             │   ├── ToolCallCard.tsx  # ツール使用状況表示カード
             │   └── TypingIndicator.tsx  # 進行中インジケータ (typing-shimmer アニメーション)
+            ├── pages/
+            │   ├── AccountSettingsPage.tsx  # ニックネーム設定
+            │   ├── AgentSettingsPage.tsx    # Claude Code 認証 + Agent 一覧
+            │   ├── ChatPage.tsx             # 会話画面 (既存チャット機能統合)
+            │   ├── CredentialsLoginPage.tsx # credentials 再ログインフロー (PTY 認証 + dual-trigger)
+            │   ├── HomePage.tsx             # ホーム。チャットボタン + UserMenu
+            │   └── LoginPage.tsx            # アプリ認証フォーム
             └── hooks/
+                ├── useAppAuth.ts                 # アプリ認証フック (token / user 管理)
                 ├── useAuth.ts                    # 認証状態管理フック (ポーリング・login / logout)
                 ├── useConversationPoller.ts      # 会話ポーリングフック (1秒間隔・completed で停止)
                 └── useConversationListPoller.ts  # 会話一覧ポーリングフック (running 中 3秒間隔)

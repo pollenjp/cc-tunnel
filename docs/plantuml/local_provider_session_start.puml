@@ -1,0 +1,96 @@
+@startuml local_provider_session_start
+title cc-tunnel — EXECUTION_PROVIDER=local セッション起動フロー
+
+actor "User" as user
+participant "Frontend" as fe
+participant "cc-tunnel\nAPI Handler" as handler
+participant "LocalDockerProvider\n(provider/local)" as ldp
+participant "SessionManager\n(docker/session_manager.go)" as sm
+participant "Docker daemon\n(/var/run/docker.sock, DooD)" as docker
+participant "cctunnel-session-{convID-prefix8}\ncc-remote-agent\n(compose network: apps_default)" as container
+
+note over user, container #90EE90
+  新規追加ダイアグラム (95a54d5)
+  EXECUTION_PROVIDER=local セッション起動フロー
+end note
+
+note over ldp, docker
+  EXECUTION_PROVIDER=local:
+  cc-tunnel と同一ホスト上の Docker daemon を
+  /var/run/docker.sock 経由 (DooD) で操作。
+  コンテナは compose ネットワーク apps_default 内、
+  内部ポート 9091 固定で通信。
+end note
+
+== セッション起動 (Execute) ==
+
+user -> fe : メッセージ送信
+fe -> handler : POST /conversations/{id}/messages\n(Bearer token)
+handler -> ldp : Execute(ctx, req, onEvent)
+ldp -> sm : GetOrCreate(conversationID, credentials_json)
+
+alt キャッシュヒット（コンテナ稼働中）
+  sm -> docker : ContainerInspect(cctunnel-session-{convID-prefix8})
+  docker --> sm : container info (running)
+  sm --> ldp : 既存 session 返却
+else 新規セッション（コンテナ不在 or 停止中）
+  sm -> docker : ContainerCreate\n  name: cctunnel-session-{convID-prefix8}\n  image: cc-remote-agent\n  network: apps_default\n  port: 9091 (内部固定)\n  mount: /var/run/docker.sock (DooD)
+  docker --> sm : container created
+
+  sm -> docker : ContainerStart
+  docker --> sm : started
+
+  note right of sm
+    StartTimeout: 30s
+    idleTimer: 15min（起動時にセット）
+  end note
+
+  sm -> container : GET /auth/status (waitForAgentReady)
+  container --> sm : 200 OK
+
+  alt credentials != nil
+    sm -> container : POST /init {credentialsJson}
+    container -> container : credentials.json を\ntmpfs:/home/user/.claude/ に書き込み
+    container --> sm : 200 OK
+  end
+
+  sm --> ldp : 新規 session 返却
+end
+
+ldp -> container : POST /execute (会話実行リクエスト)
+container -> container : claude CLI 起動
+container --> ldp : NDJSON events (streaming)
+ldp --> handler : onEvent callbacks
+handler --> fe : 202 Accepted + stream
+
+== アイドル自動クリーンアップ ==
+
+note over sm
+  idleTimer (15min) 発火:
+  sessions map から削除 → ContainerStop + ContainerRemove
+  sync.Mutex で排他制御 (session_manager.go:35)
+end note
+
+sm -> docker : StopContainer(cctunnel-session-{convID-prefix8})
+sm -> docker : RemoveContainer(...)
+sm -> sm : sessions map から削除
+
+== Orphan クリーンアップ ==
+
+note over sm
+  CleanupOrphans():
+  停止状態の cctunnel-session-* コンテナを一括削除。
+  cc-tunnel 再起動時やシャットダウン時に実行。
+end note
+
+sm -> docker : ListContainers(filter: name=cctunnel-session-*)
+docker --> sm : [stopped containers]
+sm -> docker : RemoveContainer (各 orphan)
+
+legend right
+  **凡例 (基準コミット: 95a54d5)**
+  |<#FFD700>  | 変更された要素 |
+  |<#90EE90>  | 新規追加の要素 |
+endlegend
+
+@enduml

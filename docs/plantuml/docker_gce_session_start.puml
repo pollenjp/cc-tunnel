@@ -1,14 +1,13 @@
 @startuml docker_gce_session_start
-' DockerGCEProvider 経由のセッション開始シーケンス（現在: MockProvider / 将来: GCE + Docker）
-title Docker on GCE — セッション開始シーケンス\n現在: MockProvider（即時固定レスポンス）/ 将来: GCE VM + Docker コンテナ起動
+' DockerGCEProvider 経由のセッション開始シーケンス
+title Docker on GCE — セッション開始シーケンス\n(getOrCreateEndpoint → VM Ready 2段階確認 → cc-remote-agent HTTP実行)
 
 participant Browser
 participant "cc-tunnel API\n(handler.go)" as CloudRun
 participant "DockerGCEProvider\n[ExecutionProvider]" as Provider
 participant PostgreSQL as DB
 participant "GCE API" as GCEAPI
-participant "GCE VM" as VM
-participant "Docker Daemon\n(SSH トンネル)" as Docker
+participant "GCE VM\n(COS + Docker)" as VM
 participant "cc-remote-agent\nContainer" as Container
 
 Browser -> CloudRun: POST /api/conversations\n(新規会話作成)
@@ -19,54 +18,72 @@ Browser -> CloudRun: POST /api/conversations/{id}/messages\n{content: "Hello"}
 
 CloudRun -> Provider: Execute(ctx, req, onEvent)\n[ExecutionProvider.Execute()]
 
-alt 現在の実装 (MockProvider — provider/dockergce/mock.go)
-  note over Provider
-    GCE/Docker 操作なし。スタブ実装。
-    local provider との違い:
-    ・local: LocalDockerProvider が sessionProvider.GetOrCreate() 経由で
-             DooD (docker.sock) によりローカル Docker コンテナを起動
-    ・docker_gce (現在): 何もせず固定レスポンスを返す
-  end note
-  Provider --> CloudRun: onEvent(assistant: "mock response")\n+ onEvent(result: "success")\nsessionID: "mock-session-{uuid}"
+Provider -> Provider: getOrCreateEndpoint(conversationID)\n[singleflight でコンカレント重複排除]
 
-else 将来の実装 (SessionManager + GCE + Docker)
-  note over Provider
-    local との違い:
-    ・local: DooD (docker.sock) でローカル Docker Daemon を操作
-    ・docker_gce: SSH トンネル経由でリモート GCE VM の Docker Daemon を操作
-    SessionManager は local 固有パターン;
-    docker_gce では Provider 内部で同等ロジックを実装予定
-  end note
-  Provider -> DB: SELECT session_endpoints\nWHERE conversation_id = ?
+Provider -> DB: GetSessionEndpointByConversationID(conversationID)
 
-  alt VM 稼働中 (warm)
-    note over Provider: エンドポイント未登録 → 新規コンテナ作成
-    Provider -> Docker: docker run -d -p 909N:9091 cc-remote-agent\n(SSH トンネル経由)
-    Docker -> Container: コンテナ起動 (1-3秒)
-    Container --> Docker: Ready
-    Provider -> DB: INSERT session_endpoint\n{conversation_id, vm_ip, port, status: "running"}
-    Provider -> Container: POST /execute {prompt, session_id}
-    Container -> Container: claude CLI 実行 (ndjson streaming)
-    Container --> Provider: ndjson stream
-    Provider --> CloudRun: onEvent(...) + sessionID
+alt エンドポイントあり (warm path)
+  DB --> Provider: {vmInstanceID, port, status: "running"}
+  Provider -> DB: GetVMInstance(vmInstanceID)
+  DB --> Provider: {internalIP, ...}
+  note over Provider: agentURL = http://{internalIP}:{port}
 
-  else VM 未稼働 (cold)
-    Provider -> GCEAPI: instances.insert\n(e2-standard-2, startup-script)
-    note over GCEAPI,VM: VM 起動 30-60秒
-    GCEAPI --> Provider: {status: "RUNNING", internalIP: "10.128.0.5"}
-    Provider -> DB: INSERT vm_instance\n{ip, status: "running"}
-    Provider -> Docker: docker run -d -p 9091:9091 cc-remote-agent\n(SSH トンネル経由)
-    Docker -> Container: コンテナ起動 (1-3秒)
-    Container --> Docker: Ready
-    Provider -> DB: INSERT session_endpoint\n{conversation_id, vm_ip, port}
-    Provider -> Container: POST /execute {prompt, session_id}
-    Container -> Container: claude CLI 実行 (ndjson streaming)
-    Container --> Provider: ndjson stream
-    Provider --> CloudRun: onEvent(...) + sessionID
+else エンドポイントなし (cold path)
+  DB --> Provider: レコードなし
+
+  Provider -> DB: GetAvailableVMInstance(maxContainers)
+
+  alt 利用可能 VM あり (warm VM)
+    DB --> Provider: {id, internalIP, activeContainers < max}
+
+  else VM なし → 新規 VM 作成
+    DB --> Provider: エラー(なし)
+    Provider -> GCEAPI: CreateInstance(project, zone,\n  machineType, startupScript)
+    note over GCEAPI,VM
+      startup script (COS):
+      1. Docker daemon を TCP 2375 で設定
+      2. docker pull cc-remote-agent
+      3. docker run -d -p 9091:9091 cc-remote-agent
+    end note
+    GCEAPI --> Provider: {name: "cc-tunnel-xxxx"}
+    Provider -> DB: CreateVMInstance(gceInstanceName, zone, ip)
+
+    note over Provider: waitForVMReady() — 2段階確認
+
+    loop Stage 1: GCE RUNNING + internalIP 取得\n(タイムアウト: 3分, ポーリング: 5秒)
+      Provider -> GCEAPI: GetInstance(project, zone, vmName)
+      GCEAPI --> Provider: {status, networkIP}
+      alt status="RUNNING" && networkIP != ""
+        note over Provider: Stage 1 完了
+        break
+      end
+    end
+
+    Provider -> DB: UpdateVMInstanceIP(vmID, internalIP)
+
+    loop Stage 2: cc-remote-agent health check\n(タイムアウト: 1分, ポーリング: 5秒)
+      Provider -> Container: GET /auth/status\n(remoteclient.GetAuthStatus)
+      alt 応答あり (HTTP 200)
+        note over Provider: Stage 2 完了 → VM Ready
+        break
+      end
+    end
   end
+
+  Provider -> DB: CreateSessionEndpoint(\n  conversationID, vmInstanceID,\n  "cc-remote-agent", port)
+  DB --> Provider: {id, vmInstanceID, port}
+  Provider -> DB: IncrementVMActiveContainers(vmInstanceID)
 end
 
-CloudRun -> DB: UPDATE message (content_blocks, status)
+note over Provider: agentURL = http://{internalIP}:{port}
+Provider -> Container: remoteclient.NewClient(agentURL).Execute(req, onEvent)
+Container -> Container: claude CLI 実行 (ndjson streaming)
+Container --> Provider: ndjson stream → onEvent(...)
+
+Provider -> DB: UpdateSessionEndpointLastActivity(conversationID)
+Provider --> CloudRun: sessionID
+
+CloudRun -> DB: UPDATE message (content_blocks, status: "done")
 CloudRun --> Browser: 202 Accepted
 
 @enduml

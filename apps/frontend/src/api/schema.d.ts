@@ -72,7 +72,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/auth/input": {
+    "/auth/pty/input": {
         parameters: {
             query?: never;
             header?: never;
@@ -82,22 +82,22 @@ export interface paths {
         get?: never;
         put?: never;
         /** Submit input to the login process stdin */
-        post: operations["SubmitAuthInput"];
+        post: operations["SubmitAuthPtyInput"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/auth/output": {
+    "/auth/pty/stream": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get buffered stdout from the login process */
-        get: operations["GetAuthOutput"];
+        /** Stream PTY stdout via Server-Sent Events */
+        get: operations["GetAuthPtyStream"];
         put?: never;
         post?: never;
         delete?: never;
@@ -152,6 +152,57 @@ export interface paths {
         put?: never;
         /** Logout */
         post: operations["AppAuthLogout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check if credentials are registered and valid */
+        get: operations["GetCredentialsStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/relogin/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a re-login flow for a conversation session */
+        post: operations["PostReloginStart"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/relogin/finalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finalize re-login and store the new credentials */
+        post: operations["PostReloginFinalize"];
         delete?: never;
         options?: never;
         head?: never;
@@ -248,6 +299,11 @@ export interface components {
             loginUrl?: string;
         };
         LoginRequest: {
+            /**
+             * Format: uuid
+             * @description Conversation (session) ID to route to the per-session container
+             */
+            conversationId: string;
             /** @enum {string} */
             method?: "claudeai" | "console";
         };
@@ -257,17 +313,16 @@ export interface components {
             message: string;
         };
         AuthInputRequest: {
+            /**
+             * Format: uuid
+             * @description Conversation (session) ID to route to the per-session container
+             */
+            conversationId: string;
             /** @description Input to send to the login process stdin (can be empty string for Enter) */
             input: string;
         };
         AuthInputResponse: {
             message: string;
-        };
-        AuthOutputResponse: {
-            /** @description Base64-encoded PTY output bytes since the given cursor */
-            data: string;
-            /** @description New cursor position for the next request */
-            cursor: number;
         };
         AuthCancelResponse: {
             message: string;
@@ -333,6 +388,25 @@ export interface components {
             /** @example ok */
             status: string;
         };
+        ReloginStartRequest: {
+            /** Format: uuid */
+            conversationId: string;
+        };
+        ReloginStartResponse: {
+            ready: boolean;
+        };
+        ReloginFinalizeRequest: {
+            /** Format: uuid */
+            conversationId: string;
+        };
+        CredentialsStatusResponse: {
+            registered: boolean;
+            isValid: boolean;
+        };
+        ReloginFinalizeResponse: {
+            registered: boolean;
+            isValid: boolean;
+        };
         Error: {
             error: string;
         };
@@ -356,7 +430,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     GetAuthStatus: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description Conversation (session) ID to route to the per-session container */
+                conversationId: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -381,7 +458,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": components["schemas"]["LoginRequest"];
             };
@@ -400,7 +477,10 @@ export interface operations {
     };
     Logout: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description Conversation (session) ID to route to the per-session container */
+                conversationId: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -420,7 +500,10 @@ export interface operations {
     };
     CancelLogin: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description Conversation (session) ID to route to the per-session container */
+                conversationId: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -438,7 +521,7 @@ export interface operations {
             };
         };
     };
-    SubmitAuthInput: {
+    SubmitAuthPtyInput: {
         parameters: {
             query?: never;
             header?: never;
@@ -469,11 +552,11 @@ export interface operations {
             };
         };
     };
-    GetAuthOutput: {
+    GetAuthPtyStream: {
         parameters: {
-            query?: {
-                /** @description Cursor position to start from (0 = all lines) */
-                since?: number;
+            query: {
+                /** @description Conversation (session) ID to route to the per-session container */
+                conversationId: string;
             };
             header?: never;
             path?: never;
@@ -481,13 +564,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Stdout lines and new cursor */
+            /** @description SSE stream of base64-encoded PTY bytes (ANSI included) */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuthOutputResponse"];
+                    "text/event-stream": string;
                 };
             };
         };
@@ -593,6 +676,137 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    GetCredentialsStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Credentials status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialsStatusResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    PostReloginStart: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReloginStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Session container ready for re-login */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReloginStartResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    PostReloginFinalize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReloginFinalizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Credentials stored successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReloginFinalizeResponse"];
+                };
+            };
+            /** @description Credentials not ready (login not completed) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Bad gateway (error communicating with session container) */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };

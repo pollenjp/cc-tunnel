@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -9,10 +10,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/credential"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
 	dockerpkg "github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/docker"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/gce"
@@ -21,7 +24,6 @@ import (
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/cloudrunsandbox"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/dockergce"
 	localprovider "github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/local"
-	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
 
 func main() {
@@ -30,7 +32,6 @@ func main() {
 		defaultAddr = ":" + p
 	}
 	addr := flag.String("addr", defaultAddr, "listen address")
-	agentURL := flag.String("agent-url", "http://localhost:9091", "cc-remote-agent URL")
 	dbURL := flag.String("db-url", "", "PostgreSQL connection URL")
 	flag.Parse()
 
@@ -55,9 +56,6 @@ func main() {
 	defer pool.Close()
 
 	repo := db.NewRepository(pool)
-
-	// Auth remote: always points to the auth agent (cc-remote-agent-auth in compose).
-	remote := remoteclient.NewClient(*agentURL)
 
 	execProvider, err := newProviderFromEnv(ctx, os.Getenv("EXECUTION_PROVIDER"), repo)
 	if err != nil {
@@ -90,7 +88,26 @@ func main() {
 		os.Exit(0)
 	}()
 
-	handler := api.NewHandler(repo, remote, execProvider)
+	// CC_LOGIN_ENCRYPTION_KEY must be set (64 hex chars = 32 bytes for AES-256).
+	encKeyHex := os.Getenv("CC_LOGIN_ENCRYPTION_KEY")
+	if encKeyHex == "" {
+		slog.Error("CC_LOGIN_ENCRYPTION_KEY is not set; set a 64-char hex key (32 bytes)")
+		os.Exit(1)
+	}
+	encKeyBytes, err := hex.DecodeString(encKeyHex)
+	if err != nil {
+		slog.Error("CC_LOGIN_ENCRYPTION_KEY is not valid hex", "err", err)
+		os.Exit(1)
+	}
+	encryptor, err := credential.NewEncryptor(encKeyBytes, 1)
+	if err != nil {
+		slog.Error("failed to initialize encryptor", "err", err)
+		os.Exit(1)
+	}
+	credRepo := credential.NewCredentialRepository(pool)
+	credSvc := credential.NewCredentialService(credRepo, encryptor)
+
+	handler := api.NewHandlerFull(repo, execProvider, credSvc, credSvc)
 
 	mux := http.NewServeMux()
 	api.HandlerFromMux(handler, mux)
@@ -109,6 +126,15 @@ func getEnvOrDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
+func getEnvIntOrDefault(key string, defaultVal int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return defaultVal
+}
+
 // newProviderFromEnv selects the ExecutionProvider based on envVal.
 // Returns an error for unknown or empty envVal.
 func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository) (provider.ExecutionProvider, error) {
@@ -121,8 +147,6 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 		sm := dockerpkg.NewSessionManager(runner, dockerpkg.SessionManagerConfig{
 			Image:         getEnvOrDefault("CC_REMOTE_AGENT_IMAGE", "cc-remote-agent:latest"),
 			Network:       getEnvOrDefault("DOCKER_NETWORK", "apps_default"),
-			// apps_claude-sessions
-			VolumeName:    getEnvOrDefault("CLAUDE_SESSIONS_VOLUME", "claude-sessions"),
 			ContainerPort: getEnvOrDefault("CC_REMOTE_AGENT_PORT", "9091"),
 		})
 		return localprovider.NewLocalDockerProvider(sm), nil
@@ -142,12 +166,16 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 			return nil, fmt.Errorf("CC_REMOTE_AGENT_IMAGE environment variable is required for docker_gce provider")
 		}
 		cfg := dockergce.DockerGCEConfig{
-			ProjectID:   gceProjectID,
-			Zone:        getEnvOrDefault("GCE_ZONE", "us-central1-a"),
-			MachineType: getEnvOrDefault("GCE_MACHINE_TYPE", "e2-medium"),
-			AgentImage:  agentImage,
-			AgentPort:   9091,
-			IdleTimeout: 15 * time.Minute,
+			ProjectID:           gceProjectID,
+			Zone:                getEnvOrDefault("GCE_ZONE", "us-central1-a"),
+			MachineType:         getEnvOrDefault("GCE_MACHINE_TYPE", "e2-medium"),
+			AgentImage:          agentImage,
+			AgentPort:           9091,
+			IdleTimeout:         15 * time.Minute,
+			MaxContainers:       getEnvIntOrDefault("GCE_MAX_CONTAINERS", 10),
+			IdleCheckInterval:   time.Duration(getEnvIntOrDefault("GCE_IDLE_CHECK_INTERVAL_SECONDS", 300)) * time.Second,
+			DockerHostPort:      getEnvIntOrDefault("GCE_DOCKER_HOST_PORT", 2375),
+			ContainerNamePrefix: getEnvOrDefault("GCE_CONTAINER_NAME_PREFIX", "cc-remote-agent"),
 		}
 		return dockergce.NewDockerGCEProvider(cfg, gceClient, repo), nil
 	default:

@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/dockerhost"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/gce"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/dockergce"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
@@ -28,6 +30,11 @@ type mockDBRepo struct {
 	createEndpointErr error
 	availableVMErr    error // nil = return first vm, non-nil = return error
 	createVMErr       error
+	maxPortOnVM       int // returned by GetMaxPortOnVM (0 = no containers)
+
+	// Optional overrides for more granular test control (if non-nil, used instead of defaults).
+	createEndpointFn func(ctx context.Context, conversationID, vmInstanceID, containerName string, port int) (*db.SessionEndpoint, error)
+	maxPortOnVMFn    func(ctx context.Context, vmID string) (int, error)
 }
 
 func newMockDBRepo() *mockDBRepo {
@@ -51,9 +58,12 @@ func (m *mockDBRepo) GetSessionEndpointByConversationID(_ context.Context, conve
 	return ep, nil
 }
 
-func (m *mockDBRepo) CreateSessionEndpoint(_ context.Context, conversationID, vmInstanceID, containerName string, port int) (*db.SessionEndpoint, error) {
+func (m *mockDBRepo) CreateSessionEndpoint(ctx context.Context, conversationID, vmInstanceID, containerName string, port int) (*db.SessionEndpoint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.createEndpointFn != nil {
+		return m.createEndpointFn(ctx, conversationID, vmInstanceID, containerName, port)
+	}
 	if m.createEndpointErr != nil {
 		return nil, m.createEndpointErr
 	}
@@ -194,6 +204,15 @@ func (m *mockDBRepo) DeleteVMInstance(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *mockDBRepo) GetMaxPortOnVM(ctx context.Context, vmID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.maxPortOnVMFn != nil {
+		return m.maxPortOnVMFn(ctx, vmID)
+	}
+	return m.maxPortOnVM, nil
+}
+
 // --- helpers ---
 
 // fakeAgentServer starts a fake cc-remote-agent HTTP server that returns the given NDJSON events.
@@ -218,18 +237,28 @@ func fakeAgentServer(t *testing.T, events []remoteclient.StreamEvent) *httptest.
 	}))
 }
 
-func shortTimeoutConfig(agentHost string) dockergce.DockerGCEConfig {
+// noopContainerManagerFactory returns a ContainerManager that always succeeds and reports IsReady=true.
+func noopContainerManagerFactory() func(string) (dockerhost.ContainerManager, error) {
+	return func(_ string) (dockerhost.ContainerManager, error) {
+		return &dockerhost.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+		}, nil
+	}
+}
+
+func shortTimeoutConfig() dockergce.DockerGCEConfig {
 	return dockergce.DockerGCEConfig{
-		ProjectID:         "test-project",
-		Zone:              "us-central1-a",
-		MachineType:       "e2-medium",
-		AgentImage:        "cc-remote-agent:test",
-		AgentPort:         0, // will be replaced by httptest server port
-		IdleTimeout:       time.Minute,
-		MaxContainers:     1,
-		VMReadyTimeout:    200 * time.Millisecond,
-		AgentReadyTimeout: 200 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
+		ProjectID:               "test-project",
+		Zone:                    "us-central1-a",
+		MachineType:             "e2-medium",
+		AgentImage:              "cc-remote-agent:test",
+		AgentPort:               0, // will be replaced by httptest server port
+		IdleTimeout:             time.Minute,
+		MaxContainers:           1,
+		VMReadyTimeout:          200 * time.Millisecond,
+		AgentReadyTimeout:       200 * time.Millisecond,
+		PollInterval:            10 * time.Millisecond,
+		ContainerManagerFactory: noopContainerManagerFactory(),
 	}
 }
 
@@ -244,20 +273,10 @@ func TestDockerGCEProvider_Execute_NewSession(t *testing.T) {
 	srv := fakeAgentServer(t, []remoteclient.StreamEvent{resultEvent})
 	defer srv.Close()
 
-	// MockGCEClient: returns VM with the httptest server's host as IP
-	mockGCE := gce.NewMockGCEClient()
-	// Override CreateInstance to return the httptest server address as networkIP
-	// We can't easily set the port to match httptest, so we'll use a custom newClient factory
-	_ = mockGCE
-
-	// Build a real GCE mock where GetInstance also returns RUNNING
-	// Use default mock behavior (returns NetworkIP: "10.0.0.1")
 	repo := newMockDBRepo()
 	repo.availableVMErr = errors.New("no VM") // force VM creation
 
-	// We need the provider to contact srv for both health check and execute.
-	// Use a custom newClient that always points to srv.URL regardless of agentURL.
-	cfg := shortTimeoutConfig(srv.URL)
+	cfg := shortTimeoutConfig()
 	cfg.AgentPort = 9091
 
 	mockGCEClient := &customMockGCEClient{
@@ -321,13 +340,13 @@ func TestDockerGCEProvider_Execute_ExistingSession(t *testing.T) {
 		ID:             "ep-existing",
 		ConversationID: "conv-existing",
 		VMInstanceID:   vm.ID,
-		ContainerName:  "cc-remote-agent",
+		ContainerName:  "session-conv-existing",
 		Port:           9091,
 		Status:         "running",
 	}
 	repo.endpoints["conv-existing"] = ep
 
-	cfg := shortTimeoutConfig(srv.URL)
+	cfg := shortTimeoutConfig()
 	cfg.AgentPort = 9091
 
 	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, gce.NewMockGCEClient(), repo, func(_ string) *remoteclient.Client {
@@ -385,7 +404,7 @@ func TestDockerGCEProvider_GetOrCreateEndpoint_Concurrent(t *testing.T) {
 	repo := newMockDBRepo()
 	repo.availableVMErr = errors.New("no VM") // force VM creation path
 
-	cfg := shortTimeoutConfig(srv.URL)
+	cfg := shortTimeoutConfig()
 	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
 		return remoteclient.NewClient(srv.URL)
 	})
@@ -441,6 +460,7 @@ func TestDockerGCEProvider_WaitForVMReady_Timeout(t *testing.T) {
 		VMReadyTimeout:    50 * time.Millisecond, // very short
 		AgentReadyTimeout: 50 * time.Millisecond,
 		PollInterval:      5 * time.Millisecond,
+		// No ContainerManagerFactory needed: stage1 times out before stage2
 	}
 
 	p := dockergce.NewDockerGCEProvider(cfg, mockGCEClient, repo)
@@ -452,17 +472,38 @@ func TestDockerGCEProvider_WaitForVMReady_Timeout(t *testing.T) {
 }
 
 func TestDockerGCEProvider_CleanupOrphans(t *testing.T) {
+	var stopCalls, removeCalls []string
+	var mu sync.Mutex
+
 	deletedEndpoints := make(map[string]bool)
 	deletedVMs := make(map[string]bool)
 
+	factory := func(_ string) (dockerhost.ContainerManager, error) {
+		return &dockerhost.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+			StopContainerFunc: func(_ context.Context, name string) error {
+				mu.Lock()
+				stopCalls = append(stopCalls, name)
+				mu.Unlock()
+				return nil
+			},
+			RemoveContainerFunc: func(_ context.Context, name string) error {
+				mu.Lock()
+				removeCalls = append(removeCalls, name)
+				mu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
 	repo := &cleanupMockDBRepo{
 		endpointToReturn: []*db.SessionEndpoint{
-			{ID: "ep-idle-1", VMInstanceID: "vm-1"},
-			{ID: "ep-idle-2", VMInstanceID: "vm-2"},
+			{ID: "ep-idle-1", VMInstanceID: "vm-1", ContainerName: "session-conv1"},
+			{ID: "ep-idle-2", VMInstanceID: "vm-2", ContainerName: "session-conv2"},
 		},
 		vmsToReturn: []*db.VMInstance{
-			{ID: "vm-1", GCEInstanceName: "cc-tunnel-vm1", Zone: "us-central1-a"},
-			{ID: "vm-2", GCEInstanceName: "cc-tunnel-vm2", Zone: "us-central1-a"},
+			{ID: "vm-1", GCEInstanceName: "cc-tunnel-vm1", Zone: "us-central1-a", InternalIP: "10.0.0.1"},
+			{ID: "vm-2", GCEInstanceName: "cc-tunnel-vm2", Zone: "us-central1-a", InternalIP: "10.0.0.2"},
 		},
 		deletedEndpoints: deletedEndpoints,
 		deletedVMs:       deletedVMs,
@@ -471,9 +512,10 @@ func TestDockerGCEProvider_CleanupOrphans(t *testing.T) {
 	mockGCEClient := gce.NewMockGCEClient()
 
 	cfg := dockergce.DockerGCEConfig{
-		ProjectID:   "test-project",
-		Zone:        "us-central1-a",
-		IdleTimeout: time.Minute,
+		ProjectID:               "test-project",
+		Zone:                    "us-central1-a",
+		IdleTimeout:             time.Minute,
+		ContainerManagerFactory: factory,
 	}
 
 	p := dockergce.NewDockerGCEProvider(cfg, mockGCEClient, repo)
@@ -487,6 +529,550 @@ func TestDockerGCEProvider_CleanupOrphans(t *testing.T) {
 	}
 	if len(deletedVMs) != 2 {
 		t.Errorf("deleted %d VMs, want 2", len(deletedVMs))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(stopCalls) != 2 {
+		t.Errorf("StopContainer called %d times, want 2", len(stopCalls))
+	}
+	if len(removeCalls) != 2 {
+		t.Errorf("RemoveContainer called %d times, want 2", len(removeCalls))
+	}
+}
+
+// TestGetOrCreateEndpoint_NewVM: VMなし → 新規GCE起動 → コンテナ起動
+func TestGetOrCreateEndpoint_NewVM(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-newvm", Result: "success"},
+	})
+	defer srv.Close()
+
+	var runCalls []struct {
+		image, name string
+		hostPort    int
+	}
+	var runMu sync.Mutex
+
+	repo := newMockDBRepo()
+	repo.availableVMErr = errors.New("no VM")
+	repo.maxPortOnVM = 0 // no containers yet → next port = portRangeStart (9091)
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.PortRangeStart = 9091
+	cfg.ContainerManagerFactory = func(_ string) (dockerhost.ContainerManager, error) {
+		return &dockerhost.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+			RunAgentContainerFunc: func(_ context.Context, image, name string, hostPort, _ int) error {
+				runMu.Lock()
+				runCalls = append(runCalls, struct {
+					image, name string
+					hostPort    int
+				}{image, name, hostPort})
+				runMu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "10.1.1.1"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "10.1.1.1"}, nil
+		},
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	req := remoteclient.Request{ConversationID: "conv-newvm", Prompt: "hi"}
+	sessionID, err := p.Execute(context.Background(), req, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if sessionID != "sess-newvm" {
+		t.Errorf("sessionID = %q, want %q", sessionID, "sess-newvm")
+	}
+
+	runMu.Lock()
+	defer runMu.Unlock()
+	if len(runCalls) == 0 {
+		t.Fatal("RunAgentContainer was not called")
+	}
+	if runCalls[0].hostPort != 9091 {
+		t.Errorf("hostPort = %d, want 9091", runCalls[0].hostPort)
+	}
+	if runCalls[0].name != "session-conv-newvm" {
+		t.Errorf("containerName = %q, want %q", runCalls[0].name, "session-conv-newvm")
+	}
+}
+
+// TestGetOrCreateEndpoint_ExistingVM: 空きVM あり → 同VM上に追加コンテナ（ポート+1）
+func TestGetOrCreateEndpoint_ExistingVM(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-existing-vm", Result: "success"},
+	})
+	defer srv.Close()
+
+	var runCalls []struct{ hostPort int }
+	var runMu sync.Mutex
+
+	repo := newMockDBRepo()
+	// Existing VM with 1 container on port 9091
+	existingVM := &db.VMInstance{
+		ID:               "vm-abc",
+		GCEInstanceName:  "cc-tunnel-abc",
+		Zone:             "us-central1-a",
+		InternalIP:       "10.2.2.2",
+		Status:           "running",
+		ActiveContainers: 1,
+	}
+	repo.vms[existingVM.ID] = existingVM
+	repo.maxPortOnVM = 9091 // 1 container already on 9091 → next = 9092
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.PortRangeStart = 9091
+	cfg.MaxContainers = 10
+	cfg.ContainerManagerFactory = func(_ string) (dockerhost.ContainerManager, error) {
+		return &dockerhost.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+			RunAgentContainerFunc: func(_ context.Context, _, _ string, hostPort, _ int) error {
+				runMu.Lock()
+				runCalls = append(runCalls, struct{ hostPort int }{hostPort})
+				runMu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, gce.NewMockGCEClient(), repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	req := remoteclient.Request{ConversationID: "conv-second", Prompt: "hi"}
+	_, err := p.Execute(context.Background(), req, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	runMu.Lock()
+	defer runMu.Unlock()
+	if len(runCalls) == 0 {
+		t.Fatal("RunAgentContainer was not called")
+	}
+	if runCalls[0].hostPort != 9092 {
+		t.Errorf("hostPort = %d, want 9092 (second container on same VM)", runCalls[0].hostPort)
+	}
+}
+
+// TestGetOrCreateEndpoint_ScaleOut: active=MaxContainers → 新VM起動
+func TestGetOrCreateEndpoint_ScaleOut(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-scaleout", Result: "success"},
+	})
+	defer srv.Close()
+
+	var gceCreateCount int32
+
+	repo := newMockDBRepo()
+	// Force no available VM (all VMs full)
+	repo.availableVMErr = errors.New("no available VM")
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.MaxContainers = 2
+	cfg.ContainerManagerFactory = noopContainerManagerFactory()
+
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			atomic.AddInt32(&gceCreateCount, 1)
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "10.3.3.3"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "10.3.3.3"}, nil
+		},
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	req := remoteclient.Request{ConversationID: "conv-scaleout", Prompt: "hi"}
+	_, err := p.Execute(context.Background(), req, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if n := atomic.LoadInt32(&gceCreateCount); n != 1 {
+		t.Errorf("GCE CreateInstance called %d times, want 1", n)
+	}
+}
+
+// TestCleanupOrphans_StopsContainer: アイドルエンドポイントのコンテナが停止・削除される
+func TestCleanupOrphans_StopsContainer(t *testing.T) {
+	var stopped, removed []string
+	var mu sync.Mutex
+
+	repo := &cleanupMockDBRepo{
+		endpointToReturn: []*db.SessionEndpoint{
+			{ID: "ep-1", VMInstanceID: "vm-x", ContainerName: "session-abc"},
+		},
+		vmsToReturn: []*db.VMInstance{
+			{ID: "vm-x", GCEInstanceName: "cc-tunnel-x", Zone: "us-central1-a", InternalIP: "10.9.9.9"},
+		},
+		deletedEndpoints: make(map[string]bool),
+		deletedVMs:       make(map[string]bool),
+	}
+
+	factory := func(_ string) (dockerhost.ContainerManager, error) {
+		return &dockerhost.MockContainerManager{
+			StopContainerFunc: func(_ context.Context, name string) error {
+				mu.Lock()
+				stopped = append(stopped, name)
+				mu.Unlock()
+				return nil
+			},
+			RemoveContainerFunc: func(_ context.Context, name string) error {
+				mu.Lock()
+				removed = append(removed, name)
+				mu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
+	cfg := dockergce.DockerGCEConfig{
+		ProjectID:               "test-project",
+		Zone:                    "us-central1-a",
+		IdleTimeout:             time.Minute,
+		ContainerManagerFactory: factory,
+	}
+
+	p := dockergce.NewDockerGCEProvider(cfg, gce.NewMockGCEClient(), repo)
+	if err := p.CleanupOrphans(context.Background()); err != nil {
+		t.Fatalf("CleanupOrphans: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(stopped) != 1 || stopped[0] != "session-abc" {
+		t.Errorf("StopContainer calls = %v, want [session-abc]", stopped)
+	}
+	if len(removed) != 1 || removed[0] != "session-abc" {
+		t.Errorf("RemoveContainer calls = %v, want [session-abc]", removed)
+	}
+}
+
+// TestGetOrCreateEndpoint_AgentReadyFail_OrphanCleanup: RunAgentContainer 成功後に
+// waitForAgentReady が失敗した場合、コンテナが Stop/Remove される（orphan fix）
+func TestGetOrCreateEndpoint_AgentReadyFail_OrphanCleanup(t *testing.T) {
+	// Agent server that never becomes ready
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	var stopped, removed []string
+	var mu sync.Mutex
+
+	factory := func(_ string) (dockerhost.ContainerManager, error) {
+		return &dockerhost.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+			RunAgentContainerFunc: func(_ context.Context, _, _ string, _, _ int) error {
+				return nil
+			},
+			StopContainerFunc: func(_ context.Context, name string) error {
+				mu.Lock()
+				stopped = append(stopped, name)
+				mu.Unlock()
+				return nil
+			},
+			RemoveContainerFunc: func(_ context.Context, name string) error {
+				mu.Lock()
+				removed = append(removed, name)
+				mu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
+	repo := newMockDBRepo()
+	repo.availableVMErr = errors.New("no VM")
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.AgentReadyTimeout = 50 * time.Millisecond
+	cfg.ContainerManagerFactory = factory
+
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "127.0.0.1"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "127.0.0.1"}, nil
+		},
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	_, err := p.Execute(context.Background(), remoteclient.Request{ConversationID: "conv-orphan"}, func(remoteclient.StreamEvent) {})
+	if err == nil {
+		t.Fatal("expected error when agent not ready, got nil")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(stopped) == 0 {
+		t.Error("expected StopContainer to be called for orphan cleanup")
+	}
+	if len(removed) == 0 {
+		t.Error("expected RemoveContainer to be called for orphan cleanup")
+	}
+}
+
+// TestGetOrCreateEndpoint_PortCollisionRetry: CreateSessionEndpoint がポート衝突で失敗した場合、
+// コンテナを停止・削除して別ポートで再試行し成功する
+func TestGetOrCreateEndpoint_PortCollisionRetry(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-retry", Result: "success"},
+	})
+	defer srv.Close()
+
+	var stopped, removed []string
+	var runPorts []int
+	var mu sync.Mutex
+
+	factory := func(_ string) (dockerhost.ContainerManager, error) {
+		return &dockerhost.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+			RunAgentContainerFunc: func(_ context.Context, _, _ string, hostPort, _ int) error {
+				mu.Lock()
+				runPorts = append(runPorts, hostPort)
+				mu.Unlock()
+				return nil
+			},
+			StopContainerFunc: func(_ context.Context, name string) error {
+				mu.Lock()
+				stopped = append(stopped, name)
+				mu.Unlock()
+				return nil
+			},
+			RemoveContainerFunc: func(_ context.Context, name string) error {
+				mu.Lock()
+				removed = append(removed, name)
+				mu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
+	repo := newMockDBRepo()
+	repo.availableVMErr = errors.New("no VM")
+
+	// GetMaxPortOnVM: first call returns 0 (port=9091), second call returns 9091 (port=9092)
+	var maxPortCallCount int32
+	repo.maxPortOnVMFn = func(_ context.Context, _ string) (int, error) {
+		n := int(atomic.AddInt32(&maxPortCallCount, 1))
+		if n == 1 {
+			return 0, nil // → port 9091 (will collide)
+		}
+		return 9091, nil // → port 9092 (succeeds)
+	}
+
+	// CreateSessionEndpoint: fail on first call (port collision), succeed on second
+	var createCallCount int32
+	repo.createEndpointFn = func(_ context.Context, conversationID, vmInstanceID, containerName string, port int) (*db.SessionEndpoint, error) {
+		n := int(atomic.AddInt32(&createCallCount, 1))
+		if n == 1 {
+			return nil, errors.New("unique constraint violation: session_endpoints_vm_port_unique")
+		}
+		ep := &db.SessionEndpoint{
+			ID:             "ep-" + conversationID,
+			ConversationID: conversationID,
+			VMInstanceID:   vmInstanceID,
+			ContainerName:  containerName,
+			Port:           port,
+			Status:         "running",
+			LastActivity:   time.Now(),
+		}
+		return ep, nil
+	}
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.PortRangeStart = 9091
+	cfg.ContainerManagerFactory = factory
+	cfg.PollInterval = 5 * time.Millisecond // short backoff for retry
+
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "10.1.2.3"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "10.1.2.3"}, nil
+		},
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	_, err := p.Execute(context.Background(), remoteclient.Request{ConversationID: "conv-retry"}, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// First container (port 9091) should have been stopped and removed
+	if len(stopped) == 0 {
+		t.Error("expected StopContainer to be called after port collision")
+	}
+	if len(removed) == 0 {
+		t.Error("expected RemoveContainer to be called after port collision")
+	}
+
+	// Two RunAgentContainer calls: first on 9091, second on 9092
+	if len(runPorts) < 2 {
+		t.Fatalf("expected 2 RunAgentContainer calls, got %d", len(runPorts))
+	}
+	if runPorts[0] != 9091 {
+		t.Errorf("first RunAgentContainer port = %d, want 9091", runPorts[0])
+	}
+	if runPorts[1] != 9092 {
+		t.Errorf("second RunAgentContainer port = %d, want 9092", runPorts[1])
+	}
+}
+
+// TestVMScaler_Started: IdleCheckInterval > 0 のとき VMScaler が CleanupOrphans を呼ぶ
+func TestVMScaler_Started(t *testing.T) {
+	var cleanupCount int32
+
+	repo := &countingCleanupRepo{}
+
+	factory := func(_ string) (dockerhost.ContainerManager, error) {
+		return &dockerhost.MockContainerManager{}, nil
+	}
+
+	cfg := dockergce.DockerGCEConfig{
+		ProjectID:               "test-project",
+		Zone:                    "us-central1-a",
+		IdleTimeout:             time.Minute,
+		IdleCheckInterval:       20 * time.Millisecond, // very short for test
+		ContainerManagerFactory: factory,
+	}
+
+	_ = cleanupCount
+	p := dockergce.NewDockerGCEProvider(cfg, gce.NewMockGCEClient(), repo)
+	defer func() { _ = p.Close() }()
+
+	// Wait long enough for VMScaler to tick at least once
+	time.Sleep(100 * time.Millisecond)
+
+	n := atomic.LoadInt32(&repo.callCount)
+	if n == 0 {
+		t.Error("CleanupOrphans was never called by VMScaler/IdleChecker")
+	}
+}
+
+// countingCleanupRepo is a minimal dbRepository that counts CleanupOrphans calls.
+type countingCleanupRepo struct {
+	callCount int32
+}
+
+func (r *countingCleanupRepo) GetSessionEndpointByConversationID(_ context.Context, _ string) (*db.SessionEndpoint, error) {
+	return nil, errors.New("not found")
+}
+func (r *countingCleanupRepo) CreateSessionEndpoint(_ context.Context, _, _, _ string, _ int) (*db.SessionEndpoint, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *countingCleanupRepo) UpdateSessionEndpointLastActivity(_ context.Context, _ string) error {
+	return nil
+}
+func (r *countingCleanupRepo) GetVMInstance(_ context.Context, _ string) (*db.VMInstance, error) {
+	return nil, errors.New("not found")
+}
+func (r *countingCleanupRepo) GetAvailableVMInstance(_ context.Context, _ int) (*db.VMInstance, error) {
+	return nil, errors.New("no VM")
+}
+func (r *countingCleanupRepo) CreateVMInstance(_ context.Context, _, _, _ string) (*db.VMInstance, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *countingCleanupRepo) UpdateVMInstanceIP(_ context.Context, _, _ string) error { return nil }
+func (r *countingCleanupRepo) UpdateVMInstanceStatus(_ context.Context, _, _ string) error {
+	return nil
+}
+func (r *countingCleanupRepo) IncrementVMActiveContainers(_ context.Context, _ string) error {
+	return nil
+}
+func (r *countingCleanupRepo) DecrementVMActiveContainers(_ context.Context, _ string) error {
+	return nil
+}
+func (r *countingCleanupRepo) ListIdleSessionEndpoints(_ context.Context, _ time.Duration) ([]*db.SessionEndpoint, error) {
+	atomic.AddInt32(&r.callCount, 1)
+	return nil, nil
+}
+func (r *countingCleanupRepo) DeleteSessionEndpoint(_ context.Context, _ string) error { return nil }
+func (r *countingCleanupRepo) ListIdleVMInstances(_ context.Context, _ time.Duration) ([]*db.VMInstance, error) {
+	return nil, nil
+}
+func (r *countingCleanupRepo) DeleteVMInstance(_ context.Context, _ string) error { return nil }
+func (r *countingCleanupRepo) GetMaxPortOnVM(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
+// TestCreateGCEVM_NetworkTag verifies that createGCEVM passes the "cc-tunnel-agent" network tag.
+func TestCreateGCEVM_NetworkTag(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-tag", Result: "success"},
+	})
+	defer srv.Close()
+
+	var capturedReq *gce.CreateInstanceRequest
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			capturedReq = req
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "10.0.0.1"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "10.0.0.1"}, nil
+		},
+	}
+
+	repo := newMockDBRepo()
+	repo.availableVMErr = errors.New("no VM")
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	_, err := p.Execute(context.Background(), remoteclient.Request{ConversationID: "conv-tag", Prompt: "hi"}, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if capturedReq == nil {
+		t.Fatal("CreateInstance was not called")
+	}
+	found := false
+	for _, tag := range capturedReq.Tags {
+		if tag == "cc-tunnel-agent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Tags = %v, want to contain \"cc-tunnel-agent\"", capturedReq.Tags)
 	}
 }
 
@@ -532,7 +1118,12 @@ func (m *cleanupMockDBRepo) CreateSessionEndpoint(_ context.Context, _, _, _ str
 func (m *cleanupMockDBRepo) UpdateSessionEndpointLastActivity(_ context.Context, _ string) error {
 	return nil
 }
-func (m *cleanupMockDBRepo) GetVMInstance(_ context.Context, _ string) (*db.VMInstance, error) {
+func (m *cleanupMockDBRepo) GetVMInstance(_ context.Context, id string) (*db.VMInstance, error) {
+	for _, vm := range m.vmsToReturn {
+		if vm.ID == id {
+			return vm, nil
+		}
+	}
 	return nil, errors.New("not found")
 }
 func (m *cleanupMockDBRepo) GetAvailableVMInstance(_ context.Context, _ int) (*db.VMInstance, error) {
@@ -564,4 +1155,7 @@ func (m *cleanupMockDBRepo) ListIdleVMInstances(_ context.Context, _ time.Durati
 func (m *cleanupMockDBRepo) DeleteVMInstance(_ context.Context, id string) error {
 	m.deletedVMs[id] = true
 	return nil
+}
+func (m *cleanupMockDBRepo) GetMaxPortOnVM(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }

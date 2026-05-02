@@ -54,3 +54,19 @@ func TestNewProviderFromEnv_unknown(t *testing.T) {
 		t.Fatal("expected error for unknown envVal, got nil")
 	}
 }
+
+func TestGetEnvIntOrDefault(t *testing.T) {
+	t.Setenv("TEST_GET_ENV_INT", "42")
+	if got := getEnvIntOrDefault("TEST_GET_ENV_INT", 10); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+
+	t.Setenv("TEST_GET_ENV_INT", "not-a-number")
+	if got := getEnvIntOrDefault("TEST_GET_ENV_INT", 10); got != 10 {
+		t.Errorf("got %d, want 10 (fallback on invalid)", got)
+	}
+
+	if got := getEnvIntOrDefault("TEST_GET_ENV_INT_UNSET_12345", 99); got != 99 {
+		t.Errorf("got %d, want 99 (default when unset)", got)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -119,6 +120,10 @@ func (m *mockRepoCheckCtx) MergeMessageData(_ context.Context, _ string, data ma
 	return nil
 }
 
+func (m *mockRepoCheckCtx) UpdateSessionEndpointLastActivity(_ context.Context, _ string) error {
+	return nil
+}
+
 // --- Test doubles for remoteClient ---
 
 // mockRemoteWithCancel cancels the caller's r.Context() mid-execution to simulate
@@ -144,8 +149,8 @@ func (m *mockRemoteWithCancel) CancelLogin(_ context.Context) (*remoteclient.Aut
 func (m *mockRemoteWithCancel) SubmitAuthInput(_ context.Context, _ string) (*remoteclient.AuthInputResponse, error) {
 	return &remoteclient.AuthInputResponse{}, nil
 }
-func (m *mockRemoteWithCancel) GetAuthOutput(_ context.Context, _ int) (*remoteclient.AuthOutputResponse, error) {
-	return &remoteclient.AuthOutputResponse{}, nil
+func (m *mockRemoteWithCancel) GetAuthPtyStream(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func (m *mockRemoteWithCancel) Execute(_ context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
@@ -157,6 +162,18 @@ func (m *mockRemoteWithCancel) Execute(_ context.Context, _ remoteclient.Request
 		onEvent(e)
 	}
 	return m.sessionID, nil
+}
+
+func (m *mockRemoteWithCancel) PrepareForRelogin(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockRemoteWithCancel) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func (m *mockRemoteWithCancel) GetSessionClient(_ context.Context, _ string) (*remoteclient.Client, error) {
+	return nil, nil
 }
 
 // mockRemoteWithCancelAndCtxCheck cancels r.Context() then reports whether the
@@ -183,8 +200,8 @@ func (m *mockRemoteWithCancelAndCtxCheck) CancelLogin(_ context.Context) (*remot
 func (m *mockRemoteWithCancelAndCtxCheck) SubmitAuthInput(_ context.Context, _ string) (*remoteclient.AuthInputResponse, error) {
 	return &remoteclient.AuthInputResponse{}, nil
 }
-func (m *mockRemoteWithCancelAndCtxCheck) GetAuthOutput(_ context.Context, _ int) (*remoteclient.AuthOutputResponse, error) {
-	return &remoteclient.AuthOutputResponse{}, nil
+func (m *mockRemoteWithCancelAndCtxCheck) GetAuthPtyStream(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func (m *mockRemoteWithCancelAndCtxCheck) Execute(ctx context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
@@ -203,6 +220,18 @@ func (m *mockRemoteWithCancelAndCtxCheck) Execute(ctx context.Context, _ remotec
 		onEvent(e)
 	}
 	return m.sessionID, nil
+}
+
+func (m *mockRemoteWithCancelAndCtxCheck) PrepareForRelogin(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockRemoteWithCancelAndCtxCheck) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func (m *mockRemoteWithCancelAndCtxCheck) GetSessionClient(_ context.Context, _ string) (*remoteclient.Client, error) {
+	return nil, nil
 }
 
 // --- Failing ResponseWriter (simulates broken SSE connection) ---
@@ -277,7 +306,7 @@ func TestSendMessage_Returns202WithMessageID(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -330,7 +359,7 @@ func TestSendMessage_ContextCancelledDuringExecution_AssistantMessageSaved(t *te
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -377,7 +406,7 @@ func TestSendMessage_ExecuteContextIsIndependentOfRequestContext(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -418,7 +447,7 @@ func TestSendMessage_AssistantResponse_TitleUpdated(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -460,7 +489,7 @@ func TestSendMessage_StatusUpdatedToRunningThenCompleted(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -507,7 +536,7 @@ func TestSendMessage_StreamingMessageCreatedAtStart(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -549,7 +578,7 @@ func TestSendMessage_UpdateContentBlocksCalledOnCompletion(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -587,7 +616,7 @@ func TestSendMessage_MessageStatusCompletedOnSuccess(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/conversations/"+convIDStr+"/messages", body)
 	req.Header.Set("Content-Type", "application/json")
 
-	server := &Server{repo: repo, remote: remote, executionProvider: remote, doneCh: done}
+	server := &Server{repo: repo, executionProvider: remote, doneCh: done}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.SendMessage(w, req, convID)
 	<-done
@@ -631,8 +660,8 @@ func (m *mockRemoteSlowExec) CancelLogin(_ context.Context) (*remoteclient.AuthC
 func (m *mockRemoteSlowExec) SubmitAuthInput(_ context.Context, _ string) (*remoteclient.AuthInputResponse, error) {
 	return &remoteclient.AuthInputResponse{}, nil
 }
-func (m *mockRemoteSlowExec) GetAuthOutput(_ context.Context, _ int) (*remoteclient.AuthOutputResponse, error) {
-	return &remoteclient.AuthOutputResponse{}, nil
+func (m *mockRemoteSlowExec) GetAuthPtyStream(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 func (m *mockRemoteSlowExec) Execute(_ context.Context, _ remoteclient.Request, onEvent func(remoteclient.StreamEvent)) (string, error) {
 	for _, e := range m.events {
@@ -640,6 +669,18 @@ func (m *mockRemoteSlowExec) Execute(_ context.Context, _ remoteclient.Request, 
 	}
 	time.Sleep(m.sleepDur)
 	return m.sessionID, nil
+}
+
+func (m *mockRemoteSlowExec) PrepareForRelogin(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockRemoteSlowExec) PullCredentialsFromSession(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func (m *mockRemoteSlowExec) GetSessionClient(_ context.Context, _ string) (*remoteclient.Client, error) {
+	return nil, nil
 }
 
 // makeToolUseStartStreamEvent builds a stream_event/content_block_start event
@@ -695,7 +736,6 @@ func TestSendMessage_BatchTickerSavesToolCalls(t *testing.T) {
 	done := make(chan struct{})
 	server := &Server{
 		repo:              repo,
-		remote:            remote,
 		executionProvider: remote,
 		batchInterval:     1 * time.Millisecond,
 		doneCh:            done,

@@ -66,7 +66,7 @@ func TestGetConversation_returnsStatus(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/conversations/"+convIDStr, nil)
 
-	server := &Server{repo: repo, remote: nil}
+	server := &Server{repo: repo}
 	convID := ConversationId(uuid.MustParse(convIDStr))
 	server.GetConversation(w, req, convID)
 
@@ -110,7 +110,7 @@ func TestGetConversation_hasAllFields(t *testing.T) {
 	repo := &mockRepoCheckCtx{conv: conv, msgs: msgs}
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/conversations/"+convIDStr, nil)
-	server := &Server{repo: repo, remote: nil}
+	server := &Server{repo: repo}
 	server.GetConversation(w, req, ConversationId(uuid.MustParse(convIDStr)))
 
 	if w.Code != http.StatusOK {
@@ -156,7 +156,7 @@ func TestListConversations_hasAllFields(t *testing.T) {
 	repo := &mockRepoCheckCtx{conv: conv}
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/conversations", nil)
-	server := &Server{repo: repo, remote: nil}
+	server := &Server{repo: repo}
 	server.ListConversations(w, req)
 
 	if w.Code != http.StatusOK {

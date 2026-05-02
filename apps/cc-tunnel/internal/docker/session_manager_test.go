@@ -112,7 +112,7 @@ func TestSessionManager_GetOrCreate_newSession(t *testing.T) {
 	ts := newMockAuthServer(t)
 	sm := newTestSessionManager(t, runner, ts)
 
-	client, err := sm.GetOrCreate(context.Background(), "conv1")
+	client, err := sm.GetOrCreate(context.Background(), "conv1", nil)
 	if err != nil {
 		t.Fatalf("GetOrCreate: %v", err)
 	}
@@ -139,11 +139,11 @@ func TestSessionManager_GetOrCreate_cached(t *testing.T) {
 	sm := newTestSessionManager(t, runner, ts)
 	ctx := context.Background()
 
-	client1, err := sm.GetOrCreate(ctx, "conv1")
+	client1, err := sm.GetOrCreate(ctx, "conv1", nil)
 	if err != nil {
 		t.Fatalf("first GetOrCreate: %v", err)
 	}
-	client2, err := sm.GetOrCreate(ctx, "conv1")
+	client2, err := sm.GetOrCreate(ctx, "conv1", nil)
 	if err != nil {
 		t.Fatalf("second GetOrCreate: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestSessionManager_Stop(t *testing.T) {
 	sm := newTestSessionManager(t, runner, ts)
 	ctx := context.Background()
 
-	if _, err := sm.GetOrCreate(ctx, "conv1"); err != nil {
+	if _, err := sm.GetOrCreate(ctx, "conv1", nil); err != nil {
 		t.Fatalf("GetOrCreate: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestSessionManager_Stop(t *testing.T) {
 		atomic.AddInt32(&createCount2, 1)
 		return "cid2", nil
 	}
-	if _, err := sm.GetOrCreate(ctx, "conv1"); err != nil {
+	if _, err := sm.GetOrCreate(ctx, "conv1", nil); err != nil {
 		t.Fatalf("second GetOrCreate: %v", err)
 	}
 	if n := atomic.LoadInt32(&createCount2); n != 1 {
@@ -228,10 +228,10 @@ func TestSessionManager_StopAll(t *testing.T) {
 	sm := newTestSessionManager(t, runner, ts)
 	ctx := context.Background()
 
-	if _, err := sm.GetOrCreate(ctx, "conv1"); err != nil {
+	if _, err := sm.GetOrCreate(ctx, "conv1", nil); err != nil {
 		t.Fatalf("GetOrCreate conv1: %v", err)
 	}
-	if _, err := sm.GetOrCreate(ctx, "conv2"); err != nil {
+	if _, err := sm.GetOrCreate(ctx, "conv2", nil); err != nil {
 		t.Fatalf("GetOrCreate conv2: %v", err)
 	}
 
@@ -265,12 +265,90 @@ func TestSessionManager_compose_mode_unchanged(t *testing.T) {
 		return remoteclient.NewClient(ts.URL)
 	}
 
-	if _, err := sm.GetOrCreate(context.Background(), "conv12345678"); err != nil {
+	if _, err := sm.GetOrCreate(context.Background(), "conv12345678", nil); err != nil {
 		t.Fatalf("GetOrCreate: %v", err)
 	}
 	want := "http://cctunnel-session-conv1234:9091"
 	if capturedURL != want {
 		t.Errorf("expected containerURL %q, got %q", want, capturedURL)
+	}
+}
+
+// TestSessionManager_GetOrCreate_noTmpfsMounts verifies that the container is created
+// without any tmpfs or volume mounts (using normal container filesystem for isolation).
+func TestSessionManager_GetOrCreate_noTmpfsMounts(t *testing.T) {
+	var capturedOpts ContainerCreateOpts
+	runner := &mockRunner{
+		createFn: func(_ context.Context, opts ContainerCreateOpts) (string, error) {
+			capturedOpts = opts
+			return "cid-notmpfs", nil
+		},
+		inspectFn: func(_ context.Context, containerID string) (*ContainerInfo, error) {
+			return &ContainerInfo{ID: containerID, State: "running"}, nil
+		},
+	}
+	ts := newMockAuthServer(t)
+	sm := newTestSessionManager(t, runner, ts)
+
+	if _, err := sm.GetOrCreate(context.Background(), "conv-notmpfs", nil); err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+
+	if len(capturedOpts.VolumeMounts) != 0 {
+		t.Errorf("expected no volume mounts, got %v", capturedOpts.VolumeMounts)
+	}
+	if len(capturedOpts.TmpfsMounts) != 0 {
+		t.Errorf("expected no tmpfs mounts, got %v", capturedOpts.TmpfsMounts)
+	}
+}
+
+// TestSessionManager_GetOrCreate_injectsCredentials verifies that credentials are
+// sent to the container via /init when provided.
+func TestSessionManager_GetOrCreate_injectsCredentials(t *testing.T) {
+	runner := &mockRunner{
+		createFn: func(_ context.Context, _ ContainerCreateOpts) (string, error) {
+			return "cid-cred", nil
+		},
+		inspectFn: func(_ context.Context, containerID string) (*ContainerInfo, error) {
+			return &ContainerInfo{ID: containerID, State: "running"}, nil
+		},
+	}
+
+	var receivedCredJSON string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/status":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(remoteclient.AuthStatus{LoggedIn: true})
+		case "/init":
+			var body struct {
+				CredentialsJSON string `json:"credentialsJson"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			receivedCredJSON = body.CredentialsJSON
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"message":"credentials initialized"}`))
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	sm := NewSessionManager(runner, SessionManagerConfig{
+		Image:         "test-image:latest",
+		ContainerPort: "9091",
+		IdleTimeout:   time.Hour,
+	})
+	sm.newClientFn = func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(ts.URL)
+	}
+
+	creds := []byte(`{"access_token":"tok"}`)
+	if _, err := sm.GetOrCreate(context.Background(), "conv-cred", creds); err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+
+	if receivedCredJSON != string(creds) {
+		t.Errorf("expected credentials %q, got %q", creds, receivedCredJSON)
 	}
 }
 

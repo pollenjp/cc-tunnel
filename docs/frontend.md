@@ -2,7 +2,7 @@
 
 ## 技術スタック
 
-- React 18 + TypeScript
+- React 19 + TypeScript
 - Vite (ビルドツール)
 - Tailwind CSS v4
 - react-router-dom v7 (URLルーティング)
@@ -103,7 +103,7 @@ type ContentBlockEntry =
 |------------|-----|------|
 | `user` | `AppUser \| null` | 現在のログインユーザー情報（null = 未ログイン） |
 | `isLoading` | `boolean` | 認証状態確認中フラグ |
-| `login(username)` | `Promise<void>` | モック認証でログイン（`POST /app-auth/login`） |
+| `login(username)` | `Promise<void>` | アプリ認証でログイン（`POST /app-auth/login`）。サーバーが 32 バイト乱数を hex エンコードした 64 文字トークンを発行し、`sessionStorage` に保存される |
 | `logout()` | `Promise<void>` | ログアウト（`POST /app-auth/logout`） |
 | `updateNickname(name)` | `Promise<void>` | ニックネーム更新（`PATCH /app-auth/me`） |
 
@@ -115,6 +115,19 @@ type ContentBlockEntry =
 - ローディング中: スピナー表示
 - 未認証: `/login` にリダイレクト
 - 認証済み: `children` を描画
+
+### `CredentialGuard`
+
+`/chat/:id` 入室時に credentials の登録・有効性を確認するガードコンポーネント。
+
+- **実装ファイル**: `src/components/CredentialGuard.tsx`
+- マウント時に `GET /credentials/status`（Bearer トークン付き）を呼び出し、`{ registered, isValid }` を確認
+- `registered=false`: `/login/credentials?reason=missing&conversationId=<id>` にリダイレクト
+- `isValid=false`: `/login/credentials?reason=expired&conversationId=<id>` にリダイレクト
+- 確認完了まで: スピナー表示
+- credentials が有効: `children` を描画（fail-open: エンドポイント呼び出し失敗時も描画）
+
+**Bearer 認証ミドルウェア**: cc-tunnel API の保護エンドポイントはすべて `Authorization: Bearer <token>` ヘッダを検証する。`/app-auth/login` で発行された 64 文字 hex トークンを `sessionStorage` から取得して付与する（`src/api/credentials.ts` の `apiFetch` 参照）。
 
 ### `AuthGuard`
 
@@ -151,6 +164,16 @@ Agent 選択 UI コンポーネント。会話開始時に表示。
 | `ChatPage` | `pages/ChatPage.tsx` | `/chat`, `/chat/:id` | 会話画面（既存チャット機能を統合） |
 | `AccountSettingsPage` | `pages/AccountSettingsPage.tsx` | `/settings/account` | ニックネーム設定 |
 | `AgentSettingsPage` | `pages/AgentSettingsPage.tsx` | `/settings/agents` | Claude Code 認証 + Agent 一覧 |
+| `CredentialsLoginPage` | `pages/CredentialsLoginPage.tsx` | `/login/credentials` | credentials 再ログインフロー（PTY 認証 + 自動/手動完了ボタン） |
+
+#### `CredentialsLoginPage` — 認証完了トリガー（dual-trigger）
+
+`CredentialsLoginPage` は credentials 再ログインフローを担う。認証完了の検知は **dual-trigger** 方式:
+
+1. **自動検知**: `AuthTerminal` の `onTextOutput` コールバックで PTY 出力を監視し、`/Login successful|Logged in|authentication successful/i` パターンを検出したら自動で `POST /credentials/relogin/finalize` を呼び出す
+2. **手動ボタン**: PTY フェーズ中に「完了」ボタンを表示。ユーザーが手動でクリックしても finalize を実行できる
+
+どちらのトリガーも `finalizedRef` フラグで二重実行を防止する。finalize 成功後は `/chat/<conversationId>` にリダイレクトされる。
 
 ### `Sidebar`
 
@@ -364,7 +387,7 @@ LoginPage
         │
         ▼
 POST /app-auth/login
-  └─ モック認証（ユーザー名: "test user" で成功）
+  └─ サーバーが crypto/rand 32 バイトを hex エンコードし 64 文字トークンを発行
         │
         ▼
 AppAuthContext: user が設定される、token を sessionStorage に保存
@@ -374,6 +397,23 @@ AppAuthGuard
   ├─ ローディング中: スピナー表示
   ├─ 認証済み: children 描画
   └─ 未認証: /login にリダイレクト
+```
+
+### Credentials ガードフロー（CredentialGuard）
+
+`/chat/:id` にアクセスすると `CredentialGuard` が挿入され、credentials チェックを行う。
+
+```
+/chat/:id アクセス
+  └─ CredentialGuard マウント
+        │
+        ▼
+GET /credentials/status  (Authorization: Bearer <token>)
+  └─ { registered: bool, isValid: bool } を返す
+        │
+        ├─ registered=false → /login/credentials?reason=missing&conversationId=<id>
+        ├─ isValid=false    → /login/credentials?reason=expired&conversationId=<id>
+        └─ OK              → children (ChatPage) を描画
 ```
 
 ### Agent 認証フロー（Claude Code）

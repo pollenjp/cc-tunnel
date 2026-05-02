@@ -10,14 +10,11 @@ import {
 import { Sidebar } from '../components/Sidebar';
 import { ChatView } from '../components/ChatView';
 import { AgentSelector } from '../components/AgentSelector';
-import { useAuth } from '../hooks/useAuth';
-import { AuthGuard } from '../components/AuthGuard';
 import { useConversationListPoller } from '../hooks/useConversationListPoller';
 
 export function ChatPage() {
   const { id: urlId } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const auth = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -84,8 +81,7 @@ export function ChatPage() {
   });
 
   return (
-    <AuthGuard auth={auth}>
-      <div className="flex flex-row h-screen overflow-hidden bg-[var(--color-bg)]">
+    <div className="flex flex-row h-screen overflow-hidden bg-[var(--color-bg)]">
         <Sidebar
           conversations={conversations}
           selectedId={selectedId}
@@ -94,9 +90,6 @@ export function ChatPage() {
           onDelete={handleDeleteConversation}
           sidebarOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
-          authMethod={auth.status?.authMethod}
-          authEmail={auth.status?.email ?? undefined}
-          onLogout={auth.logout}
         />
         <main className="flex-1 flex flex-col overflow-hidden min-w-0">
           {selectedId ? (
@@ -123,6 +116,5 @@ export function ChatPage() {
           )}
         </main>
       </div>
-    </AuthGuard>
   );
 }

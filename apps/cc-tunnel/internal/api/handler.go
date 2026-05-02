@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -15,10 +17,27 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/credential"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
 )
+
+// getSessionClientOrRespond is a helper that calls executionProvider.GetSessionClient
+// and writes the appropriate HTTP error if the session is not found or another error occurs.
+// Returns the client and true on success, or nil and false (with the error already written) on failure.
+func getSessionClientOrRespond(w http.ResponseWriter, r *http.Request, ep provider.ExecutionProvider, convID string) (*remoteclient.Client, bool) {
+	client, err := ep.GetSessionClient(r.Context(), convID)
+	if err != nil {
+		if errors.Is(err, provider.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("session not found for conversation %s", convID))
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return nil, false
+	}
+	return client, true
+}
 
 // AppSession is an in-memory session store for mock authentication.
 // It maps Bearer tokens to AppUser values. Safe for concurrent use.
@@ -52,21 +71,37 @@ func (s *AppSession) delete(token string) {
 
 type Server struct {
 	repo              repository
-	remote            remoteClient
 	executionProvider provider.ExecutionProvider
 	session           *AppSession
-	batchInterval     time.Duration // 0 = default 2s; override for testing
-	doneCh            chan struct{}  // closed when Execute goroutine completes; for testing only
+	credService       credentialService // nil = skip credential check (testing / no-auth mode)
+	credStorer        credentialStorer  // nil = credential storage unavailable
+	batchInterval     time.Duration     // 0 = default 2s; override for testing
+	doneCh            chan struct{}      // closed when Execute goroutine completes; for testing only
 }
 
 var _ ServerInterface = (*Server)(nil)
 
-func NewHandler(repo *db.Repository, remote *remoteclient.Client, execProvider provider.ExecutionProvider) *Server {
-	return &Server{repo: repo, remote: remote, executionProvider: execProvider, session: newAppSession()}
+func NewHandler(repo *db.Repository, execProvider provider.ExecutionProvider) *Server {
+	return &Server{repo: repo, executionProvider: execProvider, session: newAppSession()}
 }
 
-func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := h.remote.GetAuthStatus(r.Context())
+// NewHandlerWithCredentials creates a Server with credential validation enabled.
+func NewHandlerWithCredentials(repo *db.Repository, execProvider provider.ExecutionProvider, credSvc credentialService) *Server {
+	return &Server{repo: repo, executionProvider: execProvider, session: newAppSession(), credService: credSvc}
+}
+
+// NewHandlerFull creates a Server with both credential validation and credential storage enabled.
+func NewHandlerFull(repo *db.Repository, execProvider provider.ExecutionProvider, credSvc credentialService, credStore credentialStorer) *Server {
+	return &Server{repo: repo, executionProvider: execProvider, session: newAppSession(), credService: credSvc, credStorer: credStore}
+}
+
+func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request, params GetAuthStatusParams) {
+	convID := params.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
+	status, err := sessionClient.GetAuthStatus(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -76,17 +111,20 @@ func (h *Server) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Server) InitiateLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	convID := req.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
 	}
 	method := ""
 	if req.Method != nil {
 		method = string(*req.Method)
 	}
-	resp, err := h.remote.InitiateLogin(r.Context(), method)
+	resp, err := sessionClient.InitiateLogin(r.Context(), method)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -94,8 +132,13 @@ func (h *Server) InitiateLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Server) Logout(w http.ResponseWriter, r *http.Request) {
-	status, err := h.remote.Logout(r.Context())
+func (h *Server) Logout(w http.ResponseWriter, r *http.Request, params LogoutParams) {
+	convID := params.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
+	status, err := sessionClient.Logout(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -103,8 +146,13 @@ func (h *Server) Logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
-func (h *Server) CancelLogin(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.remote.CancelLogin(r.Context())
+func (h *Server) CancelLogin(w http.ResponseWriter, r *http.Request, params CancelLoginParams) {
+	convID := params.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
+	resp, err := sessionClient.CancelLogin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -112,13 +160,18 @@ func (h *Server) CancelLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Server) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
+func (h *Server) SubmitAuthPtyInput(w http.ResponseWriter, r *http.Request) {
 	var req AuthInputRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	resp, err := h.remote.SubmitAuthInput(r.Context(), req.Input)
+	convID := req.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
+	}
+	resp, err := sessionClient.SubmitAuthInput(r.Context(), req.Input)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -126,20 +179,63 @@ func (h *Server) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Server) GetAuthOutput(w http.ResponseWriter, r *http.Request, params GetAuthOutputParams) {
-	since := 0
-	if params.Since != nil {
-		since = *params.Since
+func (h *Server) GetAuthPtyStream(w http.ResponseWriter, r *http.Request, params GetAuthPtyStreamParams) {
+	convID := params.ConversationId.String()
+	sessionClient, ok := getSessionClientOrRespond(w, r, h.executionProvider, convID)
+	if !ok {
+		return
 	}
-	resp, err := h.remote.GetAuthOutput(r.Context(), since)
+	rc, err := sessionClient.GetAuthPtyStream(r.Context(), convID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	defer func() {
+		if err := rc.Close(); err != nil {
+			slog.Warn("rc.Close failed", "error", err)
+		}
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := rc.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 func (h *Server) CreateConversation(w http.ResponseWriter, r *http.Request) {
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		_, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+	}
+
 	var req CreateConversationRequest
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -171,6 +267,19 @@ func (h *Server) CreateConversation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Server) ListConversations(w http.ResponseWriter, r *http.Request) {
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		_, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+	}
+
 	convs, err := h.repo.ListConversations(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -184,6 +293,19 @@ func (h *Server) ListConversations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Server) GetConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		_, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+	}
+
 	conv, err := h.repo.GetConversation(r.Context(), conversationId.String())
 	if err != nil {
 		writeError(w, http.StatusNotFound, "conversation not found")
@@ -198,12 +320,53 @@ func (h *Server) GetConversation(w http.ResponseWriter, r *http.Request, convers
 }
 
 func (h *Server) DeleteConversation(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		_, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+	}
+
 	if err := h.repo.DeleteConversation(r.Context(), conversationId.String()); err != nil {
 		writeError(w, http.StatusNotFound, "conversation not found")
 		return
 	}
 	slog.Info("conversation deleted", "conversation_id", conversationId.String())
 	writeJSON(w, http.StatusOK, StatusResponse{Status: "ok"})
+}
+
+func (h *Server) GetCredentialsStatus(w http.ResponseWriter, r *http.Request) {
+	if h.credService == nil {
+		writeJSON(w, http.StatusOK, CredentialsStatusResponse{Registered: true, IsValid: true})
+		return
+	}
+	token, ok := bearerToken(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	user, found := h.session.get(token)
+	if !found {
+		writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+		return
+	}
+	_, err := h.credService.FetchAndDecrypt(r.Context(), user.Name)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, CredentialsStatusResponse{Registered: true, IsValid: true})
+	case errors.Is(err, credential.ErrNotFound):
+		writeJSON(w, http.StatusOK, CredentialsStatusResponse{Registered: false, IsValid: false})
+	case errors.Is(err, credential.ErrCredentialsInvalid):
+		writeJSON(w, http.StatusOK, CredentialsStatusResponse{Registered: true, IsValid: false})
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversationId ConversationId) {
@@ -218,6 +381,41 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 	}
 
 	convIDStr := conversationId.String()
+
+	// Credential check: fetch and decrypt if credService is configured.
+	var credJSON []byte
+	if h.credService != nil {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		user, found := h.session.get(token)
+		if !found {
+			writeJSON(w, http.StatusUnauthorized, AppAuthError{Message: "unauthorized"})
+			return
+		}
+		var credErr error
+		credJSON, credErr = h.credService.FetchAndDecrypt(r.Context(), user.Name)
+		if errors.Is(credErr, credential.ErrNotFound) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error":    "credentials_required",
+				"redirect": fmt.Sprintf("/login/credentials?reason=missing&conversationId=%s", convIDStr),
+			})
+			return
+		}
+		if errors.Is(credErr, credential.ErrCredentialsInvalid) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error":    "credentials_invalid",
+				"redirect": fmt.Sprintf("/login/credentials?reason=expired&conversationId=%s", convIDStr),
+			})
+			return
+		}
+		if credErr != nil {
+			writeError(w, http.StatusInternalServerError, credErr.Error())
+			return
+		}
+	}
 
 	// 会話の存在確認 + 過去メッセージ取得
 	conv, err := h.repo.GetConversation(r.Context(), convIDStr)
@@ -283,6 +481,7 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		ConversationHistory:    convHistory,
 		IncludePartialMessages: true,
 		IncludeHookEvents:      true,
+		Credentials:            credJSON,
 	}
 	if conv.SystemPrompt != nil {
 		executeReq.SystemPrompt = *conv.SystemPrompt
@@ -575,6 +774,101 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 			slog.Error("failed to update conversation updated_at", "err", err, "conversation_id", convIDStr)
 		}
 	}()
+}
+
+// PostReloginStart starts a re-login flow for a conversation by ensuring its
+// session container is running (without credentials), so the frontend can
+// trigger the PTY-based /auth/* flow against it.
+func (h *Server) PostReloginStart(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	_, found := h.session.get(token)
+	if !found {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var body ReloginStartRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if body.ConversationId == (uuid.UUID{}) {
+		writeError(w, http.StatusBadRequest, "conversationId is required")
+		return
+	}
+
+	convIDStr := body.ConversationId.String()
+	if err := h.executionProvider.PrepareForRelogin(r.Context(), convIDStr); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	defer func() {
+		if err := h.repo.UpdateSessionEndpointLastActivity(r.Context(), convIDStr); err != nil {
+			slog.Warn("failed to update last_activity on relogin start", "err", err, "conversation_id", convIDStr)
+		}
+	}()
+
+	writeJSON(w, http.StatusOK, ReloginStartResponse{Ready: true})
+}
+
+// PostReloginFinalize reads the credentials written by the PTY login flow from
+// the session container, encrypts them, and stores them in the DB.
+func (h *Server) PostReloginFinalize(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	user, found := h.session.get(token)
+	if !found {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var body ReloginFinalizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if body.ConversationId == (uuid.UUID{}) {
+		writeError(w, http.StatusBadRequest, "conversationId is required")
+		return
+	}
+
+	convIDStr := body.ConversationId.String()
+	defer func() {
+		if err := h.repo.UpdateSessionEndpointLastActivity(r.Context(), convIDStr); err != nil {
+			slog.Warn("failed to update last_activity on relogin finalize", "err", err, "conversation_id", convIDStr)
+		}
+	}()
+
+	credJSON, err := h.executionProvider.PullCredentialsFromSession(r.Context(), convIDStr)
+	if errors.Is(err, remoteclient.ErrCredentialsNotReady) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "credentials not ready, complete /auth/login first",
+		})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	if h.credStorer == nil {
+		writeError(w, http.StatusInternalServerError, "credential storage not configured")
+		return
+	}
+	if err := h.credStorer.StoreCredential(r.Context(), user.Name, credJSON); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ReloginFinalizeResponse{Registered: true, IsValid: true})
 }
 
 func (h *Server) AppAuthLogin(w http.ResponseWriter, r *http.Request) {

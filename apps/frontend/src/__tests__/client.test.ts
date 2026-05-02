@@ -43,4 +43,28 @@ describe('sendMessage', () => {
 
     expect(result.message_id).toBe('abc-def');
   });
+
+  it('401 + redirect body → window.location.assign を呼ぶ（throw しない）', async () => {
+    const assignMock = vi.fn();
+    vi.stubGlobal('location', { assign: assignMock });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: vi.fn().mockResolvedValue({ redirect: '/login/credentials?reason=missing&conversationId=conv-1' }),
+    }));
+
+    await sendMessage('conv-1', 'hello');
+
+    expect(assignMock).toHaveBeenCalledWith('/login/credentials?reason=missing&conversationId=conv-1');
+  });
+
+  it('401 + redirect なし → throw する', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: vi.fn().mockResolvedValue({ error: 'unauthorized' }),
+    }));
+
+    await expect(sendMessage('conv-1', 'hello')).rejects.toThrow('sendMessage failed: 401');
+  });
 });

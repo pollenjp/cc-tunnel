@@ -140,8 +140,8 @@ func TestCreateSessionEndpoint_GetByConversationID(t *testing.T) {
 	if got.Port != 9091 {
 		t.Errorf("Port: got %d, want %d", got.Port, 9091)
 	}
-	if got.Status != "provisioning" {
-		t.Errorf("Status: got %q, want %q", got.Status, "provisioning")
+	if got.Status != "running" {
+		t.Errorf("Status: got %q, want %q", got.Status, "running")
 	}
 }
 

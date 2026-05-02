@@ -14,7 +14,6 @@ import (
 type SessionManagerConfig struct {
 	Image         string        // cc-remote-agent イメージ名（例: "cc-remote-agent:latest"）
 	Network       string        // compose ネットワーク名（例: "apps_default"）
-	VolumeName    string        // claude-sessions ボリューム名
 	ContainerPort string        // cc-remote-agent が Listen するポート（例: "9091"）
 	IdleTimeout   time.Duration // アイドルタイムアウト（デフォルト: 15分）
 	StartTimeout  time.Duration // コンテナ起動タイムアウト（デフォルト: 30秒）
@@ -55,7 +54,10 @@ func NewSessionManager(runner DockerRunner, config SessionManagerConfig) *Sessio
 
 // GetOrCreate returns the remoteclient.Client for the given convID,
 // creating a new container if one does not exist.
-func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string) (*remoteclient.Client, error) {
+// When credentials is non-nil, they are injected into the container via POST /init
+// after the container starts. On a cache hit the container already has credentials,
+// so credentials is ignored.
+func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string, credentials []byte) (*remoteclient.Client, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -83,9 +85,6 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string) (*remo
 		Image:   sm.config.Image,
 		Env:     []string{"PORT=" + sm.config.ContainerPort},
 		Network: sm.config.Network,
-		VolumeMounts: []VolumeMount{
-			{Source: sm.config.VolumeName, Target: "/home/user/.claude"},
-		},
 	}
 	containerID, err := sm.runner.ContainerCreate(ctx, opts)
 	if err != nil {
@@ -104,6 +103,15 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, convID string) (*remo
 		_ = sm.runner.ContainerStop(ctx, containerID)
 		_ = sm.runner.ContainerRemove(ctx, containerID)
 		return nil, fmt.Errorf("container health check: %w", err)
+	}
+
+	// Inject credentials into the container if provided.
+	if len(credentials) > 0 {
+		if err := client.InitCredentials(ctx, credentials); err != nil {
+			_ = sm.runner.ContainerStop(ctx, containerID)
+			_ = sm.runner.ContainerRemove(ctx, containerID)
+			return nil, fmt.Errorf("init credentials: %w", err)
+		}
 	}
 
 	s := &session{
@@ -138,6 +146,17 @@ func (sm *SessionManager) waitForReady(ctx context.Context, client *remoteclient
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+// GetClient returns the remoteclient.Client for an existing session, if any.
+func (sm *SessionManager) GetClient(convID string) (*remoteclient.Client, bool) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	s, ok := sm.sessions[convID]
+	if !ok {
+		return nil, false
+	}
+	return s.client, true
 }
 
 // Stop stops and removes the container for the given convID.

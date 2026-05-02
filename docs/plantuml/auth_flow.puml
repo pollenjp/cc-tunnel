@@ -80,15 +80,15 @@ partition "Agent 認証フロー（Claude Code への認証）" {
   :/settings/agents を表示;
   :「Claude Code」ボタン押下;
 
-  :POST /auth/login\n（cc-tunnel 経由）;
-  :cc-remote-agent-auth にプロキシ;
+  :POST /auth/login\n（cc-tunnel 経由、conversationId 必須）;
+  :per-session container にルーティング;
   :StartLogin() → claude /auth を PTY 起動\n（タイムアウト: 10分）;
 
   :loginPending = true\n→ AuthTerminal (xterm.js TUI) 表示;
 
   fork
-    :GET /auth/output?since=N\n（250ms ポーリング）;
-    :base64 デコード → xterm.js に表示;
+    #FFD700:SSE /auth/pty/stream?conversationId=... Subscribe;
+    #FFD700:text/event-stream → xterm.js renderer に表示;
     :PTY 出力から認証 URL を抽出\n→「認証URLを開く」ボタン表示;
   fork again
     :ユーザーがキー入力 or URL を開く;
@@ -97,7 +97,7 @@ partition "Agent 認証フロー（Claude Code への認証）" {
 
   if (認証成功?) then (yes)
     :loggedIn = true\nloginPending = false;
-    :ポーリング停止;
+    #FFD700:SSE ストリーム終了;
     :/settings/agents に戻る;
     note right
       以降のチャットで
@@ -131,9 +131,15 @@ partition "Agent 認証状態の UI 表示（useAuth フック）" {
 }
 
 note right
-  **認証種別の区別**\nアプリ認証 = cc-tunnel アプリへのログイン\n(モック → 将来 Google IAP)\nAgent 認証 = Claude Code 等の外部 Agent への認証\n(cc-remote-agent-auth 経由の PTY フロー)\nこの 2 つは独立した概念であり、両方が必要
+  **認証種別の区別**\nアプリ認証 = cc-tunnel アプリへのログイン\n(モック → 将来 Google IAP)\nAgent 認証 = Claude Code 等の外部 Agent への認証\n(per-session container 経由の PTY フロー)\nこの 2 つは独立した概念であり、両方が必要
 end note
 
 stop
+
+legend right
+  **凡例 (基準コミット: 95a54d5)**
+  |<#FFD700>  | 変更された要素 |
+  |<#90EE90>  | 新規追加の要素 |
+endlegend
 
 @enduml

@@ -60,6 +60,7 @@ sequenceDiagram
     T->>D: UPDATE conversations SET title=<生成タイトル>
     T->>D: UPDATE conversations SET updated_at=NOW()
     T->>D: UPDATE conversations SET status='completed'
+    Note over T: 実行完了後、POST /auth/finalize-credentials 経由で<br/>cc-remote-agent コンテナから credentials を取得し<br/>AES-256-GCM 暗号化後に credentials テーブルに UPSERT
 
     loop DB ポーリング（1秒間隔）
         F->>T: GET /conversations/{id}
@@ -103,4 +104,49 @@ sequenceDiagram
         C-->>A: stream-json lines (ndjson)
         Note over A: フォールバックストリームを転送
     end
+```
+
+## フロー 5: Credential Relogin（credentials 再取得フロー）
+
+```mermaid
+sequenceDiagram
+    participant F as Frontend (Browser)
+    participant T as cc-tunnel (API Server)
+    participant P as ExecutionProvider
+    participant A as cc-remote-agent (container)
+    participant D as PostgreSQL
+
+    Note over F: CredentialGuard が GET /credentials/status で<br/>registered=false または isValid=false を検知
+    F->>T: GET /credentials/status<br/>(Authorization: Bearer <token>)
+    T->>D: SELECT credentials WHERE username=<user>
+    D-->>T: row (or not found)
+    T-->>F: { registered: bool, isValid: bool }
+
+    Note over F: /login/credentials?reason=missing|expired&conversationId=<id> にリダイレクト
+
+    F->>T: POST /credentials/relogin/start<br/>{ conversationId }
+    T->>P: PrepareForRelogin(conversationId)
+    P-->>T: ok (コンテナ起動済み、credentials なし)
+    T-->>F: { ready: true }
+
+    F->>T: POST /auth/login<br/>{ conversationId }
+    T->>A: PTY で claude /auth 起動
+    T-->>F: 202 Accepted
+
+    Note over F: AuthTerminal (xterm.js) が PTY 出力をレンダリング<br/>ユーザーが Claude OAuth またはキー入力で認証
+
+    alt 自動検知（PTY 出力に "Login successful" を含む）
+        Note over F: onTextOutput コールバックが自動で finalize 呼び出し
+    else 手動ボタン（ユーザーが「完了」ボタンをクリック）
+        Note over F: ユーザーが手動で finalize トリガー
+    end
+
+    F->>T: POST /credentials/relogin/finalize<br/>{ conversationId }
+    T->>A: GET /finalize-credentials (内部 HTTP)
+    A-->>T: credentials JSON
+    T->>D: UPSERT credentials (AES-256-GCM 暗号化)
+    D-->>T: ok
+    T-->>F: { registered: true, isValid: true }
+
+    Note over F: /chat/<conversationId> にリダイレクト
 ```

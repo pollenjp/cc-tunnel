@@ -44,7 +44,7 @@ state "Agentログイン設定 (/settings/agents)" as AgentSettings {
 }
 
 state "Agent認証フロー" as AgentAuth {
-  AgentAuth : cc-remote-agent-auth 経由
+  AgentAuth : per-session container 経由
   AgentAuth : PTY (xterm.js TUI)
   AgentAuth : claude /auth
 }

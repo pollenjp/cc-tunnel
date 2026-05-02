@@ -209,6 +209,9 @@ type AuthCancelResponse struct {
 
 // AuthInputRequest defines model for AuthInputRequest.
 type AuthInputRequest struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `json:"conversationId"`
+
 	// Input Input to send to the login process stdin (can be empty string for Enter)
 	Input string `json:"input"`
 }
@@ -216,15 +219,6 @@ type AuthInputRequest struct {
 // AuthInputResponse defines model for AuthInputResponse.
 type AuthInputResponse struct {
 	Message string `json:"message"`
-}
-
-// AuthOutputResponse defines model for AuthOutputResponse.
-type AuthOutputResponse struct {
-	// Cursor New cursor position for the next request
-	Cursor int `json:"cursor"`
-
-	// Data Base64-encoded PTY output bytes since the given cursor
-	Data string `json:"data"`
 }
 
 // AuthStatus defines model for AuthStatus.
@@ -288,6 +282,12 @@ type CreateConversationRequest struct {
 // CreateConversationRequestExecutionMode 実行環境の選択（デフォルト: local）
 type CreateConversationRequestExecutionMode string
 
+// CredentialsStatusResponse defines model for CredentialsStatusResponse.
+type CredentialsStatusResponse struct {
+	IsValid    bool `json:"isValid"`
+	Registered bool `json:"registered"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Error string `json:"error"`
@@ -295,7 +295,9 @@ type Error struct {
 
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
-	Method *LoginRequestMethod `json:"method,omitempty"`
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID  `json:"conversationId"`
+	Method         *LoginRequestMethod `json:"method,omitempty"`
 }
 
 // LoginRequestMethod defines model for LoginRequest.Method.
@@ -324,6 +326,27 @@ type MessageRole string
 
 // MessageStatus defines model for Message.Status.
 type MessageStatus string
+
+// ReloginFinalizeRequest defines model for ReloginFinalizeRequest.
+type ReloginFinalizeRequest struct {
+	ConversationId openapi_types.UUID `json:"conversationId"`
+}
+
+// ReloginFinalizeResponse defines model for ReloginFinalizeResponse.
+type ReloginFinalizeResponse struct {
+	IsValid    bool `json:"isValid"`
+	Registered bool `json:"registered"`
+}
+
+// ReloginStartRequest defines model for ReloginStartRequest.
+type ReloginStartRequest struct {
+	ConversationId openapi_types.UUID `json:"conversationId"`
+}
+
+// ReloginStartResponse defines model for ReloginStartResponse.
+type ReloginStartResponse struct {
+	Ready bool `json:"ready"`
+}
 
 // SendMessageRequest defines model for SendMessageRequest.
 type SendMessageRequest struct {
@@ -356,10 +379,28 @@ type ConversationId = openapi_types.UUID
 // bearerAuthContextKey is the context key for BearerAuth security scheme
 type bearerAuthContextKey string
 
-// GetAuthOutputParams defines parameters for GetAuthOutput.
-type GetAuthOutputParams struct {
-	// Since Cursor position to start from (0 = all lines)
-	Since *int `form:"since,omitempty" json:"since,omitempty"`
+// CancelLoginParams defines parameters for CancelLogin.
+type CancelLoginParams struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
+}
+
+// LogoutParams defines parameters for Logout.
+type LogoutParams struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
+}
+
+// GetAuthPtyStreamParams defines parameters for GetAuthPtyStream.
+type GetAuthPtyStreamParams struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
+}
+
+// GetAuthStatusParams defines parameters for GetAuthStatus.
+type GetAuthStatusParams struct {
+	// ConversationId Conversation (session) ID to route to the per-session container
+	ConversationId openapi_types.UUID `form:"conversationId" json:"conversationId"`
 }
 
 // AppAuthLoginJSONRequestBody defines body for AppAuthLogin for application/json ContentType.
@@ -368,17 +409,23 @@ type AppAuthLoginJSONRequestBody = AppAuthLoginRequest
 // AppAuthUpdateMeJSONRequestBody defines body for AppAuthUpdateMe for application/json ContentType.
 type AppAuthUpdateMeJSONRequestBody = AppAuthUpdateMeRequest
 
-// SubmitAuthInputJSONRequestBody defines body for SubmitAuthInput for application/json ContentType.
-type SubmitAuthInputJSONRequestBody = AuthInputRequest
-
 // InitiateLoginJSONRequestBody defines body for InitiateLogin for application/json ContentType.
 type InitiateLoginJSONRequestBody = LoginRequest
+
+// SubmitAuthPtyInputJSONRequestBody defines body for SubmitAuthPtyInput for application/json ContentType.
+type SubmitAuthPtyInputJSONRequestBody = AuthInputRequest
 
 // CreateConversationJSONRequestBody defines body for CreateConversation for application/json ContentType.
 type CreateConversationJSONRequestBody = CreateConversationRequest
 
 // SendMessageJSONRequestBody defines body for SendMessage for application/json ContentType.
 type SendMessageJSONRequestBody = SendMessageRequest
+
+// PostReloginFinalizeJSONRequestBody defines body for PostReloginFinalize for application/json ContentType.
+type PostReloginFinalizeJSONRequestBody = ReloginFinalizeRequest
+
+// PostReloginStartJSONRequestBody defines body for PostReloginStart for application/json ContentType.
+type PostReloginStartJSONRequestBody = ReloginStartRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -396,22 +443,22 @@ type ServerInterface interface {
 	AppAuthUpdateMe(w http.ResponseWriter, r *http.Request)
 	// Cancel the in-progress login PTY process
 	// (POST /auth/cancel)
-	CancelLogin(w http.ResponseWriter, r *http.Request)
-	// Submit input to the login process stdin
-	// (POST /auth/input)
-	SubmitAuthInput(w http.ResponseWriter, r *http.Request)
+	CancelLogin(w http.ResponseWriter, r *http.Request, params CancelLoginParams)
 	// Initiate login flow
 	// (POST /auth/login)
 	InitiateLogin(w http.ResponseWriter, r *http.Request)
 	// Logout
 	// (POST /auth/logout)
-	Logout(w http.ResponseWriter, r *http.Request)
-	// Get buffered stdout from the login process
-	// (GET /auth/output)
-	GetAuthOutput(w http.ResponseWriter, r *http.Request, params GetAuthOutputParams)
+	Logout(w http.ResponseWriter, r *http.Request, params LogoutParams)
+	// Submit input to the login process stdin
+	// (POST /auth/pty/input)
+	SubmitAuthPtyInput(w http.ResponseWriter, r *http.Request)
+	// Stream PTY stdout via Server-Sent Events
+	// (GET /auth/pty/stream)
+	GetAuthPtyStream(w http.ResponseWriter, r *http.Request, params GetAuthPtyStreamParams)
 	// Get authentication status
 	// (GET /auth/status)
-	GetAuthStatus(w http.ResponseWriter, r *http.Request)
+	GetAuthStatus(w http.ResponseWriter, r *http.Request, params GetAuthStatusParams)
 	// List all conversations
 	// (GET /conversations)
 	ListConversations(w http.ResponseWriter, r *http.Request)
@@ -427,6 +474,15 @@ type ServerInterface interface {
 	// Send a message and process the assistant response asynchronously
 	// (POST /conversations/{conversationId}/messages)
 	SendMessage(w http.ResponseWriter, r *http.Request, conversationId ConversationId)
+	// Finalize re-login and store the new credentials
+	// (POST /credentials/relogin/finalize)
+	PostReloginFinalize(w http.ResponseWriter, r *http.Request)
+	// Start a re-login flow for a conversation session
+	// (POST /credentials/relogin/start)
+	PostReloginStart(w http.ResponseWriter, r *http.Request)
+	// Check if credentials are registered and valid
+	// (GET /credentials/status)
+	GetCredentialsStatus(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -515,22 +571,28 @@ func (siw *ServerInterfaceWrapper) AppAuthUpdateMe(w http.ResponseWriter, r *htt
 // CancelLogin operation middleware
 func (siw *ServerInterfaceWrapper) CancelLogin(w http.ResponseWriter, r *http.Request) {
 
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CancelLogin(w, r)
-	}))
+	var err error
 
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CancelLoginParams
+
+	// ------------- Required query parameter "conversationId" -------------
+
+	if paramValue := r.URL.Query().Get("conversationId"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversationId"})
+		return
 	}
 
-	handler.ServeHTTP(w, r)
-}
-
-// SubmitAuthInput operation middleware
-func (siw *ServerInterfaceWrapper) SubmitAuthInput(w http.ResponseWriter, r *http.Request) {
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversationId", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SubmitAuthInput(w, r)
+		siw.Handler.CancelLogin(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -557,8 +619,28 @@ func (siw *ServerInterfaceWrapper) InitiateLogin(w http.ResponseWriter, r *http.
 // Logout operation middleware
 func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LogoutParams
+
+	// ------------- Required query parameter "conversationId" -------------
+
+	if paramValue := r.URL.Query().Get("conversationId"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversationId"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversationId", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.Logout(w, r)
+		siw.Handler.Logout(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -568,24 +650,45 @@ func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request
 	handler.ServeHTTP(w, r)
 }
 
-// GetAuthOutput operation middleware
-func (siw *ServerInterfaceWrapper) GetAuthOutput(w http.ResponseWriter, r *http.Request) {
+// SubmitAuthPtyInput operation middleware
+func (siw *ServerInterfaceWrapper) SubmitAuthPtyInput(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitAuthPtyInput(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAuthPtyStream operation middleware
+func (siw *ServerInterfaceWrapper) GetAuthPtyStream(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetAuthOutputParams
+	var params GetAuthPtyStreamParams
 
-	// ------------- Optional query parameter "since" -------------
+	// ------------- Required query parameter "conversationId" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if paramValue := r.URL.Query().Get("conversationId"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversationId"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversationId", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetAuthOutput(w, r, params)
+		siw.Handler.GetAuthPtyStream(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -598,8 +701,28 @@ func (siw *ServerInterfaceWrapper) GetAuthOutput(w http.ResponseWriter, r *http.
 // GetAuthStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAuthStatusParams
+
+	// ------------- Required query parameter "conversationId" -------------
+
+	if paramValue := r.URL.Query().Get("conversationId"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversationId"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversationId", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetAuthStatus(w, r)
+		siw.Handler.GetAuthStatus(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -611,6 +734,12 @@ func (siw *ServerInterfaceWrapper) GetAuthStatus(w http.ResponseWriter, r *http.
 
 // ListConversations operation middleware
 func (siw *ServerInterfaceWrapper) ListConversations(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListConversations(w, r)
@@ -625,6 +754,12 @@ func (siw *ServerInterfaceWrapper) ListConversations(w http.ResponseWriter, r *h
 
 // CreateConversation operation middleware
 func (siw *ServerInterfaceWrapper) CreateConversation(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateConversation(w, r)
@@ -651,6 +786,12 @@ func (siw *ServerInterfaceWrapper) DeleteConversation(w http.ResponseWriter, r *
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteConversation(w, r, conversationId)
 	}))
@@ -675,6 +816,12 @@ func (siw *ServerInterfaceWrapper) GetConversation(w http.ResponseWriter, r *htt
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversationId", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetConversation(w, r, conversationId)
@@ -703,6 +850,66 @@ func (siw *ServerInterfaceWrapper) SendMessage(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SendMessage(w, r, conversationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostReloginFinalize operation middleware
+func (siw *ServerInterfaceWrapper) PostReloginFinalize(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostReloginFinalize(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostReloginStart operation middleware
+func (siw *ServerInterfaceWrapper) PostReloginStart(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostReloginStart(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCredentialsStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetCredentialsStatus(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCredentialsStatus(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -837,16 +1044,19 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/app-auth/me", wrapper.AppAuthGetMe)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/app-auth/me", wrapper.AppAuthUpdateMe)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cancel", wrapper.CancelLogin)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/input", wrapper.SubmitAuthInput)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.InitiateLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/output", wrapper.GetAuthOutput)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/pty/input", wrapper.SubmitAuthPtyInput)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/pty/stream", wrapper.GetAuthPtyStream)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/status", wrapper.GetAuthStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/conversations", wrapper.ListConversations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/conversations", wrapper.CreateConversation)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/conversations/{conversationId}", wrapper.DeleteConversation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/conversations/{conversationId}", wrapper.GetConversation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/conversations/{conversationId}/messages", wrapper.SendMessage)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/credentials/relogin/finalize", wrapper.PostReloginFinalize)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/credentials/relogin/start", wrapper.PostReloginStart)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/credentials/status", wrapper.GetCredentialsStatus)
 
 	return m
 }
@@ -854,41 +1064,46 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

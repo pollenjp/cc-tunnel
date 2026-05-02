@@ -36,7 +36,7 @@ else (docker_gce)
   partition "Docker on GCE フロー（DockerGCEProvider）" {
     :provider = providers["docker_gce"];
     :DockerGCEProvider.Execute(conversationID, req);
-    :SessionManager.GetOrCreateEndpoint(conversationID);
+    :DockerGCEProvider.getOrCreateEndpoint(conversationID);
 
     if (セッションエンドポイントあり?) then (あり)
       :既存の cc-remote-agent コンテナに接続;

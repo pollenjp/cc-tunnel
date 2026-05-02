@@ -52,6 +52,11 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 		labels = req.Labels
 	}
 
+	var tags *computepb.Tags
+	if len(req.Tags) > 0 {
+		tags = &computepb.Tags{Items: req.Tags}
+	}
+
 	insertReq := &computepb.InsertInstanceRequest{
 		Project: req.Project,
 		Zone:    req.Zone,
@@ -59,6 +64,7 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 			Name:        proto.String(req.Name),
 			MachineType: proto.String(machineTypeURL),
 			Labels:      labels,
+			Tags:        tags,
 			Disks: []*computepb.AttachedDisk{
 				{
 					Boot:       proto.Bool(true),

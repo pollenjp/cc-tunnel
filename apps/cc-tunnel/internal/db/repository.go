@@ -375,8 +375,8 @@ func scanVMInstance(row vmScanner) (*VMInstance, error) {
 
 func (r *Repository) CreateSessionEndpoint(ctx context.Context, conversationID, vmInstanceID, containerName string, port int) (*SessionEndpoint, error) {
 	const q = `
-		INSERT INTO session_endpoints (conversation_id, vm_instance_id, container_name, port)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO session_endpoints (conversation_id, vm_instance_id, container_name, port, status)
+		VALUES ($1, $2, $3, $4, 'running')
 		RETURNING id, conversation_id, vm_instance_id, container_name, port, status, last_activity, created_at
 	`
 	row := r.pool.QueryRow(ctx, q, conversationID, vmInstanceID, containerName, port)
@@ -429,6 +429,22 @@ func (r *Repository) ListIdleSessionEndpoints(ctx context.Context, idleThreshold
 func (r *Repository) DeleteSessionEndpoint(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM session_endpoints WHERE id = $1`, id)
 	return err
+}
+
+// GetMaxPortOnVM returns the maximum host port in use on the given VM among running session
+// endpoints, or 0 if no running endpoints exist. The caller computes the next port as
+// max(result, portRangeStart-1) + 1.
+func (r *Repository) GetMaxPortOnVM(ctx context.Context, vmID string) (int, error) {
+	const q = `
+		SELECT COALESCE(MAX(port), 0)
+		FROM session_endpoints
+		WHERE vm_instance_id = $1 AND status = 'running'
+	`
+	var maxPort int
+	if err := r.pool.QueryRow(ctx, q, vmID).Scan(&maxPort); err != nil {
+		return 0, err
+	}
+	return maxPort, nil
 }
 
 type epScanner interface {
