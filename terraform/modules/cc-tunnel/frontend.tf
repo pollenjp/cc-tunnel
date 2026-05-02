@@ -134,6 +134,10 @@ resource "google_service_account" "fe_runtime_sa" {
 }
 
 resource "google_cloud_run_v2_service" "fe_cloud_run" {
+  depends_on = [
+    terraform_data.run_trigger_once,
+  ]
+
   name                = local.fe_cloud_run_name
   location            = var.artifact_registry_repository_location
   ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"

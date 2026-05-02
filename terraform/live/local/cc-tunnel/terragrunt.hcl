@@ -25,4 +25,6 @@ inputs = {
   frontend_enable_public_access = true # LB 経由のみだが allUsers invoker 必須（ingress=INTERNAL_LOAD_BALANCER で .run.app 直接アクセスはブロック済）
 
   lb_fqdn = "cctunnel.pollenjp.com"
+
+  vpc_connector_subnet_cidr = "10.8.0.0/28"
 }

@@ -156,6 +156,17 @@ resource "google_service_account" "runtime_sa" {
 }
 
 resource "google_cloud_run_v2_service" "cloud_run" {
+  depends_on = [
+    google_project_iam_member.cs_runtime_sql_client,
+    google_secret_manager_secret_iam_member.cs_runtime_database_url_accessor,
+    google_secret_manager_secret_version.cs_database_url_secret_version,
+    google_project_iam_member.cr_runtime_compute_admin,
+    google_service_account_iam_member.cr_runtime_default_compute_sa_user,
+    google_artifact_registry_repository_iam_member.cra_default_compute_sa_reader,
+    terraform_data.cra_run_trigger_once,
+    terraform_data.run_trigger_once,
+  ]
+
   name                = local.cloud_run_name
   location            = local.cloud_run_location
   ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
@@ -216,16 +227,6 @@ resource "google_cloud_run_v2_service" "cloud_run" {
       }
     }
   }
-
-  depends_on = [
-    google_project_iam_member.cs_runtime_sql_client,
-    google_secret_manager_secret_iam_member.cs_runtime_database_url_accessor,
-    google_secret_manager_secret_version.cs_database_url_secret_version,
-    google_project_iam_member.cr_runtime_compute_admin,
-    google_service_account_iam_member.cr_runtime_default_compute_sa_user,
-    google_artifact_registry_repository_iam_member.cra_default_compute_sa_reader,
-    terraform_data.cra_run_trigger_once,
-  ]
 
   lifecycle {
     ignore_changes = [
