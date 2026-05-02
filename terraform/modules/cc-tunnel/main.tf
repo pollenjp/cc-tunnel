@@ -160,6 +160,8 @@ resource "google_cloud_run_v2_service" "cloud_run" {
     google_project_iam_member.cs_runtime_sql_client,
     google_secret_manager_secret_iam_member.cs_runtime_database_url_accessor,
     google_secret_manager_secret_version.cs_database_url_secret_version,
+    google_secret_manager_secret_iam_member.cc_runtime_login_encryption_key_accessor,
+    google_secret_manager_secret_version.cc_login_encryption_key,
     google_project_iam_member.cr_runtime_compute_admin,
     google_service_account_iam_member.cr_runtime_default_compute_sa_user,
     google_artifact_registry_repository_iam_member.cra_default_compute_sa_reader,
@@ -191,6 +193,15 @@ resource "google_cloud_run_v2_service" "cloud_run" {
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.cs_database_url_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name = "CC_LOGIN_ENCRYPTION_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.cc_login_encryption_key.secret_id
             version = "latest"
           }
         }

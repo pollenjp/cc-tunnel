@@ -23,6 +23,12 @@ output "cloud_sql_database_url_secret_id" {
   sensitive   = true
 }
 
+output "cc_login_encryption_key_secret_id" {
+  value       = google_secret_manager_secret.cc_login_encryption_key.secret_id
+  description = "Secret Manager secret_id for CC_LOGIN_ENCRYPTION_KEY"
+  sensitive   = true
+}
+
 output "cc_remote_agent_image" {
   value       = local.cra_fqim
   description = "Artifact Registry image URL for cc-remote-agent"
