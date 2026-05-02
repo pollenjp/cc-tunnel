@@ -70,12 +70,14 @@ function renderChatPage(initialPath = '/chat') {
 }
 
 describe('ChatPage', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.mocked(clientModule.listConversations).mockResolvedValue([]);
     vi.mocked(clientModule.createConversation).mockResolvedValue(makeConv('new-conv-id'));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(clientModule.getConversation).mockResolvedValue({ ...makeConv('new-conv-id'), messages: [] } as any);
+    const { useConversationsStore } = await import('../store/conversations');
+    useConversationsStore.setState({ conversations: [] });
   });
 
   it('新規会話時（会話未選択）に AgentSelector が表示されること', async () => {

@@ -109,16 +109,17 @@ function makeConvDetail(status: string, messages: Message[]): any {
 describe('ChatView', () => {
   const defaultProps = {
     conversationId: 'conv-1' as string | null,
-    onConversationUpdate: vi.fn(),
     onHamburger: vi.fn(),
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.mocked(clientModule.getConversation).mockResolvedValue(
       makeConvDetail('completed', [])
     );
     vi.mocked(clientModule.sendMessage).mockResolvedValue({ message_id: 'new-msg' });
+    const { useConversationsStore } = await import('../store/conversations');
+    useConversationsStore.setState({ conversations: [] });
   });
 
   // ===== TDD Cycle 1: ChatView が conversationId から内部で messages を管理 =====
@@ -210,8 +211,21 @@ describe('ChatView', () => {
     expect(screen.getByText('処理中...')).toBeTruthy();
   });
 
-  it('[Cycle3] メッセージ送信開始時に onSendStart が呼ばれること', async () => {
-    const onSendStart = vi.fn();
+  it('[Cycle3] メッセージ送信開始時に conversations store の markRunning が呼ばれること', async () => {
+    const { useConversationsStore } = await import('../store/conversations');
+    // Seed the store with the conversation we are about to send to so
+    // markRunning has something to flip.
+    useConversationsStore.setState({
+      conversations: [{
+        id: 'conv-1',
+        title: 'テスト',
+        model: 'claude-sonnet-4-6',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        status: 'idle',
+      }],
+    });
+
     vi.mocked(clientModule.getConversation).mockResolvedValue(
       makeConvDetail('completed', [])
     );
@@ -220,8 +234,6 @@ describe('ChatView', () => {
     render(
       <ChatView
         conversationId="conv-1"
-        onConversationUpdate={vi.fn()}
-        onSendStart={onSendStart}
         onHamburger={vi.fn()}
       />
     );
@@ -236,7 +248,7 @@ describe('ChatView', () => {
       fireEvent.click(screen.getByTestId('message-send-btn'));
     });
 
-    expect(onSendStart).toHaveBeenCalledTimes(1);
+    expect(useConversationsStore.getState().conversations[0].status).toBe('running');
   });
 
   it('[Cycle2] 送信中（sending=true）のとき TypingIndicator が表示されること', async () => {

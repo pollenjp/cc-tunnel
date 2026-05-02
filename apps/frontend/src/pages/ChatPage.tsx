@@ -1,39 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { Conversation } from '../api/client';
-import {
-  listConversations,
-  createConversation,
-  getConversation,
-  deleteConversation,
-} from '../api/client';
+import { getConversation } from '../api/client';
 import { Sidebar } from '../components/Sidebar';
 import { ChatView } from '../components/ChatView';
 import { AgentSelector } from '../components/AgentSelector';
 import { useConversationListPoller } from '../hooks/useConversationListPoller';
+import { useConversationsStore } from '../store/conversations';
 
 export function ChatPage() {
   const { id: urlId } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const conversations = useConversationsStore(s => s.conversations);
+  const refreshConversations = useConversationsStore(s => s.refresh);
+  const createConversationStore = useConversationsStore(s => s.create);
+  const removeConversation = useConversationsStore(s => s.remove);
+  const hasRunning = useConversationsStore(s => s.hasRunning());
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const selectedId = urlId ?? null;
 
-  const refreshConversations = useCallback(async () => {
-    try {
-      const list = await listConversations();
-      setConversations(list ?? []);
-    } catch (e) {
-      console.error('Failed to list conversations:', e);
-    }
-  }, []);
-
   useEffect(() => {
-    listConversations()
-      .then(list => setConversations(list ?? []))
-      .catch(e => console.error('Failed to list conversations:', e));
-  }, []);
+    void refreshConversations();
+  }, [refreshConversations]);
 
   useEffect(() => {
     if (!urlId) return;
@@ -53,8 +41,7 @@ export function ChatPage() {
 
   const handleAgentSelect = async () => {
     try {
-      const conv = await createConversation();
-      await refreshConversations();
+      const conv = await createConversationStore();
       handleSelectConversation(conv.id);
     } catch (e) {
       console.error('Failed to create conversation:', e);
@@ -64,17 +51,15 @@ export function ChatPage() {
   const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await deleteConversation(id);
+      await removeConversation(id);
       if (selectedId === id) {
         navigate('/');
       }
-      await refreshConversations();
     } catch (err) {
       console.error('Failed to delete conversation:', err);
     }
   };
 
-  const hasRunning = conversations.some(c => c.status === 'running');
   useConversationListPoller({
     hasRunning,
     onPoll: refreshConversations,
@@ -95,12 +80,6 @@ export function ChatPage() {
           {selectedId ? (
             <ChatView
               conversationId={selectedId}
-              onConversationUpdate={() => refreshConversations()}
-              onSendStart={() => {
-                setConversations(prev =>
-                  prev.map(c => c.id === selectedId ? { ...c, status: 'running' } : c)
-                );
-              }}
               onHamburger={() => setSidebarOpen(true)}
             />
           ) : (

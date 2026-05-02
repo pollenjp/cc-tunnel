@@ -7,11 +7,10 @@ import { MessageInput } from './MessageInput';
 import { ToolCallCard } from './ToolCallCard';
 import { TypingIndicator } from './TypingIndicator';
 import { useConversationPoller } from '../hooks/useConversationPoller';
+import { useConversationsStore } from '../store/conversations';
 
 interface ChatViewProps {
   conversationId: string | null;
-  onConversationUpdate?: () => void;
-  onSendStart?: () => void;
   onHamburger: () => void;
 }
 
@@ -20,7 +19,9 @@ type ContentBlockEntry =
   | { type: 'text'; content: string }
   | { type: 'tool_use'; tool_use_id: string }
 
-export function ChatView({ conversationId, onConversationUpdate, onSendStart, onHamburger }: ChatViewProps) {
+export function ChatView({ conversationId, onHamburger }: ChatViewProps) {
+  const markRunning = useConversationsStore(s => s.markRunning);
+  const refreshConversations = useConversationsStore(s => s.refresh);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
@@ -57,7 +58,7 @@ export function ChatView({ conversationId, onConversationUpdate, onSendStart, on
     onMessages: (msgs) => setMessages(msgs),
     onCompleted: () => {
       setIsPolling(false);
-      onConversationUpdate?.();
+      void refreshConversations();
     },
     intervalMs: 1000,
   });
@@ -66,7 +67,7 @@ export function ChatView({ conversationId, onConversationUpdate, onSendStart, on
     if (!content.trim() || !conversationId || sending) return;
     setSending(true);
     setInput('');
-    onSendStart?.();
+    markRunning(conversationId);
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
