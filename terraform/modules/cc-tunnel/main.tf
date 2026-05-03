@@ -167,6 +167,7 @@ resource "google_cloud_run_v2_service" "cloud_run" {
     google_artifact_registry_repository_iam_member.cra_default_compute_sa_reader,
     terraform_data.cra_run_trigger_once,
     terraform_data.run_trigger_once,
+    google_compute_subnetwork.cc_tunnel_egress,
   ]
 
   name                = local.cloud_run_name
@@ -177,6 +178,13 @@ resource "google_cloud_run_v2_service" "cloud_run" {
   template {
     service_account = google_service_account.runtime_sa.email
     timeout         = "3600s" # 60min
+    vpc_access {
+      egress = "PRIVATE_RANGES_ONLY"
+      network_interfaces {
+        network    = var.network_name
+        subnetwork = google_compute_subnetwork.cc_tunnel_egress.name
+      }
+    }
     containers {
       image = local.fqim
       ports {
