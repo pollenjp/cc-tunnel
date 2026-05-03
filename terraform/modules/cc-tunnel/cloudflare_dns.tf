@@ -1,15 +1,3 @@
-terraform {
-  required_providers {
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 5.0"
-    }
-  }
-}
-
-# Provider config は環境変数 CLOUDFLARE_API_TOKEN から取得
-provider "cloudflare" {}
-
 resource "cloudflare_dns_record" "lb" {
   zone_id = var.cloudflare_zone_id
   name    = var.lb_fqdn
