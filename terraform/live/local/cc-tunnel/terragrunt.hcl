@@ -30,5 +30,7 @@ inputs = {
 
   # Cloudflare Zone ID for pollenjp.com
   # Dashboard > pollenjp.com の Overview ページ右下から取得
-  cloudflare_zone_id = get_env("CLOUDFLARE_ZONE_ID")
+  # 既定値 "" は terragrunt hcl validate (環境変数なし) を通すため。
+  # 実値必須は modules/cc-tunnel/variables.tf cloudflare_zone_id の validation で plan/apply 時に強制する。
+  cloudflare_zone_id = get_env("CLOUDFLARE_ZONE_ID", "")
 }
