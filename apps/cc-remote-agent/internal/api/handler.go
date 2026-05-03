@@ -171,10 +171,13 @@ func (h *Handler) AuthPtyStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Connection", "keep-alive")
+
+	// Subscribe before flushing headers so any broadcast that happens
+	// after the client observes the response is delivered to this handler.
+	ch := h.authManager.Subscribe(r.Context())
+
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	ch := h.authManager.Subscribe(r.Context())
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
