@@ -101,13 +101,8 @@ provider "google" {
   %{endif~}
 }
 
-# API token は環境変数 CLOUDFLARE_API_TOKEN から取得し、
-# terragrunt の generate 段階で provider 引数に明示的に展開する。
-# (cloudflare provider v5 系で空 provider ブロックだと環境変数の
-#  自動検出が効かないケースがあるため明示指定する)
-provider "cloudflare" {
-  api_token = "${get_env("CLOUDFLARE_API_TOKEN", "")}"
-}
+# API token は環境変数 CLOUDFLARE_API_TOKEN から取得
+provider "cloudflare" {}
 EOF
 }
 

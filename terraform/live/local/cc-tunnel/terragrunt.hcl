@@ -30,5 +30,5 @@ inputs = {
 
   # Cloudflare Zone ID for pollenjp.com
   # Dashboard > pollenjp.com の Overview ページ右下から取得
-  cloudflare_zone_id = get_env("CLOUDFLARE_ZONE_ID", "")
+  cloudflare_zone_id = get_env("CLOUDFLARE_ZONE_ID")
 }
