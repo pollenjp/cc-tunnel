@@ -4,6 +4,10 @@ terraform = "1.14.9"
 terragrunt = "1.0.2"
 uv = "0.11.7"
 
+[env]
+# For 'op run' command
+ENV_TEMPLATE_PATH = "{{ config_root }}/.env.template"
+
 [tasks."tf:init:all"]
 description = "Run terragrunt init on all units"
 dir = "{{ cwd }}"
@@ -22,12 +26,12 @@ run = 'terragrunt run --all -- plan "${@}"'
 [tasks."tf:apply:single"]
 description = "Run terragrunt apply on a single unit"
 dir = "{{ cwd }}"
-run = 'terragrunt run -- apply "${@}"'
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt run -- apply "${@}"'
 
 [tasks."tf:apply:all"]
 description = "Run terragrunt apply on all units"
 dir = "{{ cwd }}"
-run = 'terragrunt --non-interactive run --all -- apply "${@}"'
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt --non-interactive run --all -- apply "${@}"'
 
 [tasks."tf:destroy:single"]
 description = "Run terragrunt destroy on a single unit"

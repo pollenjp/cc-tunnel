@@ -121,3 +121,31 @@ variable "vpc_connector_subnet_cidr" {
   description = "CIDR range of the VPC Connector subnet (source for Docker daemon firewall rule)"
   type        = string
 }
+
+variable "cloudflare_zone_id" {
+  type        = string
+  description = "Cloudflare Zone ID for the DNS record (Cloudflare Dashboard > 該当 zone の Overview ページ右下から取得)"
+
+  validation {
+    condition     = length(var.cloudflare_zone_id) > 0
+    error_message = "cloudflare_zone_id is required. Set the CLOUDFLARE_ZONE_ID environment variable."
+  }
+}
+
+variable "cloudflare_dns_ttl" {
+  type        = number
+  description = "TTL (seconds). proxied=true の場合は 1 (Auto)"
+  default     = 1
+}
+
+variable "cloudflare_dns_proxied" {
+  type        = bool
+  description = "Cloudflare のプロキシ (orange cloud) を有効にするか"
+  default     = false
+}
+
+variable "cloudflare_dns_comment" {
+  type        = string
+  description = "Cloudflare DNS record の comment"
+  default     = "cc-tunnel LB (managed by terraform)"
+}

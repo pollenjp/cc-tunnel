@@ -43,3 +43,13 @@ output "lb_https_url" {
   value       = "https://${var.lb_fqdn}"
   description = "LB HTTPS endpoint URL"
 }
+
+output "cloudflare_dns_record_id" {
+  value       = cloudflare_dns_record.lb.id
+  description = "Cloudflare DNS record ID for the LB"
+}
+
+output "cloudflare_dns_record_hostname" {
+  value       = cloudflare_dns_record.lb.name
+  description = "Cloudflare DNS record hostname (FQDN)"
+}

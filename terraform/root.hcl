@@ -69,6 +69,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 7.29.0"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 5"
+    }
   }
 
   %{if local.tfstate_bucket_name != null~}
@@ -96,6 +100,9 @@ provider "google" {
   impersonate_service_account = "${local.terraform_runner_sa_email}"
   %{endif~}
 }
+
+# API token は環境変数 CLOUDFLARE_API_TOKEN から取得
+provider "cloudflare" {}
 EOF
 }
 
