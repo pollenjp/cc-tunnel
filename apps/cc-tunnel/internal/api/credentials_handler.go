@@ -60,6 +60,7 @@ func (h *Server) PostReloginStart(w http.ResponseWriter, r *http.Request) {
 
 	convIDStr := body.ConversationId.String()
 	if err := h.executionProvider.PrepareForRelogin(r.Context(), convIDStr); err != nil {
+		slog.Error("relogin start: PrepareForRelogin failed", "err", err, "conversation_id", convIDStr)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -112,6 +113,7 @@ func (h *Server) PostReloginFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("relogin finalize: PullCredentialsFromSession failed", "err", err, "conversation_id", convIDStr)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -121,6 +123,7 @@ func (h *Server) PostReloginFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.credStorer.StoreCredential(r.Context(), user.Name, credJSON); err != nil {
+		slog.Error("relogin finalize: StoreCredential failed", "err", err, "conversation_id", convIDStr)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
