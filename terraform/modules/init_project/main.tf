@@ -80,3 +80,19 @@ resource "google_project_iam_member" "eventarc_service_agent" {
   role    = "roles/eventarc.serviceAgent"
   member  = "serviceAccount:${google_project_service_identity.eventarc.email}"
 }
+
+# IAM binding の propagation 待ち。
+# Eventarc trigger 作成時に "Permission denied while using the Eventarc Service
+# Agent ... permissions are propagated to the Service Agent" で落ちるのを防ぐ。
+# init unit 完了 = この sleep 完了 で、後続の cc-tunnel unit (terragrunt の
+# dependency chain: init -> artifact_registry -> cc-tunnel) はこの sleep 後に
+# 走るので propagation が済んでいる状態で eventarc trigger が作られる。
+resource "time_sleep" "wait_eventarc_agent_iam" {
+  depends_on = [google_project_iam_member.eventarc_service_agent]
+
+  create_duration = "60s"
+
+  triggers = {
+    binding = google_project_iam_member.eventarc_service_agent.id
+  }
+}
