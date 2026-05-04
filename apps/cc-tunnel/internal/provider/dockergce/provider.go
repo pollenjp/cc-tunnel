@@ -3,6 +3,7 @@ package dockergce
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,6 +53,10 @@ type DockerGCEConfig struct {
 	VMReadyTimeout    time.Duration // デフォルト: 3分
 	AgentReadyTimeout time.Duration // デフォルト: 1分
 	PollInterval      time.Duration // デフォルト: 5秒
+
+	// DockerPingTimeout は既存 VM 再利用時の Docker daemon 健全性チェックのタイムアウト。
+	// (デフォルト: 3秒)
+	DockerPingTimeout time.Duration
 
 	// Multi-container settings
 	ContainerNamePrefix string // default "session"
@@ -109,6 +114,9 @@ func NewDockerGCEProviderWithClientFactory(cfg DockerGCEConfig, gceClient gce.GC
 	}
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = 5 * time.Second
+	}
+	if cfg.DockerPingTimeout == 0 {
+		cfg.DockerPingTimeout = 3 * time.Second
 	}
 	if cfg.ContainerNamePrefix == "" {
 		cfg.ContainerNamePrefix = "session"
@@ -189,10 +197,12 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 			return ep, nil
 		}
 
-		// Find available VM or create a new one
-		vm, err := p.db.GetAvailableVMInstance(ctx, p.config.MaxContainers)
+		// Find available VM (with Docker daemon health check) or create a new one.
+		// 既存 VM の docker daemon (2375) が落ちていると ContainerCreate が 30 秒タイムアウトするため、
+		// 短い ping で先に弾いて DB 上 unhealthy にマークし、別 VM か新規作成にフォールバックする。
+		vm, err := p.pickHealthyAvailableVM(ctx)
 		if err != nil {
-			// No available VM: create a new GCE VM
+			// No healthy available VM: create a new GCE VM
 			vm, err = p.createGCEVM(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("create GCE VM: %w", err)
@@ -269,6 +279,52 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 		return nil, err
 	}
 	return v.(*db.SessionEndpoint), nil
+}
+
+// pickHealthyAvailableVM returns an available VM whose Docker daemon (2375) responds to a
+// short ping. Unhealthy VMs are demoted to status="unhealthy" in the DB so subsequent calls
+// to GetAvailableVMInstance skip them. Returns the same error shape as GetAvailableVMInstance
+// when nothing usable is left, so the caller falls through to createGCEVM.
+func (p *DockerGCEProvider) pickHealthyAvailableVM(ctx context.Context) (*db.VMInstance, error) {
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		vm, err := p.db.GetAvailableVMInstance(ctx, p.config.MaxContainers)
+		if err != nil {
+			return nil, err
+		}
+
+		dockerHost := fmt.Sprintf("tcp://%s:%d", vm.InternalIP, p.config.DockerHostPort)
+		dcm, err := p.newDockerClient(dockerHost)
+		if err != nil {
+			lastErr = fmt.Errorf("create docker client for %s: %w", dockerHost, err)
+			if markErr := p.db.UpdateVMInstanceStatus(ctx, vm.ID, "unhealthy"); markErr != nil {
+				slog.Warn("failed to mark VM unhealthy", "err", markErr, "vm_id", vm.ID)
+			}
+			continue
+		}
+
+		pingCtx, cancel := context.WithTimeout(ctx, p.config.DockerPingTimeout)
+		ready := dcm.IsReady(pingCtx)
+		cancel()
+		if ready {
+			return vm, nil
+		}
+
+		slog.Warn("reusable VM has unreachable docker daemon; marking unhealthy",
+			"vm_id", vm.ID, "internal_ip", vm.InternalIP, "docker_host", dockerHost)
+		if markErr := p.db.UpdateVMInstanceStatus(ctx, vm.ID, "unhealthy"); markErr != nil {
+			slog.Warn("failed to mark VM unhealthy", "err", markErr, "vm_id", vm.ID)
+			// Avoid infinite loop if the DB update keeps failing: the same VM would be returned again.
+			return nil, fmt.Errorf("mark VM %s unhealthy: %w", vm.ID, markErr)
+		}
+		lastErr = fmt.Errorf("docker daemon at %s unreachable", dockerHost)
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	// Should not reach here; defensively trigger the createGCEVM fallback.
+	return nil, fmt.Errorf("no healthy available VM after %d attempts", maxAttempts)
 }
 
 // createGCEVM creates a new GCE VM with the cc-remote-agent startup script and records it in the DB.
