@@ -100,8 +100,11 @@ func (m *mockDBRepo) GetAvailableVMInstance(_ context.Context, _ int) (*db.VMIns
 	if m.availableVMErr != nil {
 		return nil, m.availableVMErr
 	}
+	// Mirror the real DB query: only "running" VMs are eligible.
 	for _, vm := range m.vms {
-		return vm, nil
+		if vm.Status == "running" {
+			return vm, nil
+		}
 	}
 	return nil, errors.New("no available VM")
 }
@@ -666,6 +669,90 @@ func TestGetOrCreateEndpoint_ExistingVM(t *testing.T) {
 	}
 	if runCalls[0].hostPort != 9092 {
 		t.Errorf("hostPort = %d, want 9092 (second container on same VM)", runCalls[0].hostPort)
+	}
+}
+
+// TestGetOrCreateEndpoint_UnhealthyExistingVM_FallsBackToCreate:
+// fast path で再利用しようとした既存 VM の docker daemon が応答しない場合、
+// その VM を unhealthy にマークして新規 VM 作成にフォールバックすること。
+func TestGetOrCreateEndpoint_UnhealthyExistingVM_FallsBackToCreate(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-fallback", Result: "success"},
+	})
+	defer srv.Close()
+
+	repo := newMockDBRepo()
+	// Pre-populate an "available" VM whose Docker daemon is dead.
+	deadVM := &db.VMInstance{
+		ID:              "vm-dead",
+		GCEInstanceName: "cc-tunnel-dead",
+		Zone:            "us-central1-a",
+		InternalIP:      "10.99.99.99",
+		Status:          "running",
+	}
+	repo.vms[deadVM.ID] = deadVM
+
+	var gceCreateCount int32
+	var pingTargets []string
+	var pingMu sync.Mutex
+
+	factory := func(host string) (dockerhost.ContainerManager, error) {
+		pingMu.Lock()
+		pingTargets = append(pingTargets, host)
+		pingMu.Unlock()
+		// Dead VM (10.99.99.99) returns IsReady=false; new VM (10.4.4.4) returns true.
+		ready := host != "tcp://10.99.99.99:2375"
+		return &dockerhost.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return ready },
+		}, nil
+	}
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.PortRangeStart = 9091
+	cfg.MaxContainers = 10
+	cfg.DockerHostPort = 2375
+	cfg.DockerPingTimeout = 50 * time.Millisecond
+	cfg.ContainerManagerFactory = factory
+
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			atomic.AddInt32(&gceCreateCount, 1)
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "10.4.4.4"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "10.4.4.4"}, nil
+		},
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	_, err := p.Execute(context.Background(), remoteclient.Request{ConversationID: "conv-fallback", Prompt: "hi"}, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&gceCreateCount); got != 1 {
+		t.Errorf("GCE CreateInstance called %d times, want 1 (new VM after dead one demoted)", got)
+	}
+
+	if deadVM.Status != "unhealthy" {
+		t.Errorf("dead VM status = %q, want %q", deadVM.Status, "unhealthy")
+	}
+
+	pingMu.Lock()
+	defer pingMu.Unlock()
+	pingedDead := false
+	for _, h := range pingTargets {
+		if h == "tcp://10.99.99.99:2375" {
+			pingedDead = true
+			break
+		}
+	}
+	if !pingedDead {
+		t.Errorf("dead VM was not pinged before reuse; ping targets=%v", pingTargets)
 	}
 }
 
