@@ -100,7 +100,7 @@ provider "google" {
   default_labels = ${jsonencode(local.provider_default_labels)}
 
   %{if local.terraform_runner_sa_email != null
-&& path_relative_to_include() != "prepare/${local.env}/terraform_sa"~}
+  && path_relative_to_include() != "prepare/${local.env}/terraform_sa"~}
   impersonate_service_account = "${local.terraform_runner_sa_email}"
   %{endif~}
 }
