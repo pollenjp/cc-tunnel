@@ -7,6 +7,9 @@ locals {
     "run.googleapis.com",           # Cloud Run v2
     "sqladmin.googleapis.com",      # Cloud SQL (cc-tunnel module)
     "secretmanager.googleapis.com", # Secret Manager (cc-tunnel module / DB password)
+    "eventarc.googleapis.com",      # Eventarc (cc-tunnel auto-redeploy)
+    "workflows.googleapis.com",     # Workflows (cc-tunnel auto-redeploy)
+    "logging.googleapis.com",       # Audit logs / workflow call logs
   ]
 }
 
