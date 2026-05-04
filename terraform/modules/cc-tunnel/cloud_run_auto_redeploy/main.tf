@@ -44,7 +44,27 @@ resource "google_service_account_iam_member" "deployer_act_as_runtime" {
   member             = "serviceAccount:${google_service_account.deployer_sa.email}"
 }
 
+# IAM binding propagation 待ち。
+# deployer SA への role 付与が反映される前に Workflow / Eventarc trigger を
+# 作ると、それらが内部で deployer SA の権限チェックを行う際に失敗することが
+# あるため、各 binding 完了後に 2 分待つ。
+resource "time_sleep" "wait_deployer_sa_iam" {
+  depends_on = [
+    google_project_iam_member.deployer_sa_project_roles,
+    google_service_account_iam_member.deployer_act_as_runtime,
+  ]
+
+  create_duration = "120s"
+
+  triggers = {
+    project_roles = jsonencode([for r in google_project_iam_member.deployer_sa_project_roles : r.id])
+    act_as        = google_service_account_iam_member.deployer_act_as_runtime.id
+  }
+}
+
 resource "google_workflows_workflow" "redeploy" {
+  depends_on = [time_sleep.wait_deployer_sa_iam]
+
   name            = local.workflow_name
   region          = var.cloud_run_location
   service_account = google_service_account.deployer_sa.id
@@ -97,6 +117,8 @@ resource "google_workflows_workflow" "redeploy" {
 }
 
 resource "google_eventarc_trigger" "ar_image_push" {
+  depends_on = [time_sleep.wait_deployer_sa_iam]
+
   name     = local.trigger_name
   location = var.cloud_run_location
 
