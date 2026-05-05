@@ -167,6 +167,7 @@ resource "google_cloud_run_v2_service" "cloud_run" {
     google_artifact_registry_repository_iam_member.cra_default_compute_sa_reader,
     terraform_data.cra_run_trigger_once,
     terraform_data.run_trigger_once,
+    terraform_data.vm_image_run_trigger_once,
     google_compute_subnetwork.cc_tunnel_egress,
   ]
 
@@ -237,6 +238,10 @@ resource "google_cloud_run_v2_service" "cloud_run" {
       env {
         name  = "GCE_MAX_CONTAINERS"
         value = var.gce_max_containers
+      }
+      env {
+        name  = "GCE_VM_IMAGE"
+        value = local.vm_image_url
       }
     }
     volumes {

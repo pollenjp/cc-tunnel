@@ -41,6 +41,7 @@ type DockerGCEConfig struct {
 	ProjectID   string
 	Zone        string
 	MachineType string // デフォルト: "e2-medium"
+	VMImage     string // GCE source image (Packer で焼いた Docker 入り Ubuntu)
 	AgentImage  string // Artifact Registry の cc-remote-agent イメージ URL
 	AgentPort   int    // cc-remote-agent の listen ポート（デフォルト: 9091）
 	IdleTimeout time.Duration
@@ -336,6 +337,7 @@ func (p *DockerGCEProvider) createGCEVM(ctx context.Context) (*db.VMInstance, er
 		Zone:          p.config.Zone,
 		Name:          vmName,
 		MachineType:   p.config.MachineType,
+		SourceImage:   p.config.VMImage,
 		StartupScript: p.buildStartupScript(),
 		Labels:        map[string]string{"managed-by": "cc-tunnel"},
 		Tags:          []string{"cc-tunnel-agent"},
@@ -419,17 +421,12 @@ func (p *DockerGCEProvider) waitForAgentReady(ctx context.Context, vmIP string, 
 	}
 }
 
-// buildStartupScript generates the COS startup script that configures Docker TCP listener.
+// buildStartupScript generates the startup script run on each VM boot.
+// Docker と TCP listener (-H tcp://0.0.0.0:2375) は Packer で焼いたカスタムイメージに
+// 既に組み込まれているため、ここではエージェントイメージの事前取得のみ行う。
 // コンテナ起動は getOrCreateEndpoint から dockerhost 経由で行うため、ここでは docker run しない。
 func (p *DockerGCEProvider) buildStartupScript() string {
 	return fmt.Sprintf(`#!/bin/bash
-# COS では Docker がプリインストール済み
-# Docker daemon に TCP アクセスを追加してマルチコンテナ管理を可能にする
-# WARNING: TCP 2375 は暗号化なし。VPC 内 + ファイアウォールで保護すること。
-mkdir -p /etc/docker
-echo '{"hosts":["tcp://0.0.0.0:2375","unix:///var/run/docker.sock"]}' > /etc/docker/daemon.json
-systemctl restart docker 2>/dev/null || true
-sleep 5
 # cc-remote-agent イメージを事前取得（コンテナ起動の高速化）
 docker pull %s || true
 `, p.config.AgentImage)

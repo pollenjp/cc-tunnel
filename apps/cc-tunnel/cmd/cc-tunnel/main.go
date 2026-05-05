@@ -165,10 +165,15 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 		if agentImage == "" {
 			return nil, fmt.Errorf("CC_REMOTE_AGENT_IMAGE environment variable is required for docker_gce provider")
 		}
+		vmImage := os.Getenv("GCE_VM_IMAGE")
+		if vmImage == "" {
+			return nil, fmt.Errorf("GCE_VM_IMAGE environment variable is required for docker_gce provider")
+		}
 		cfg := dockergce.DockerGCEConfig{
 			ProjectID:           gceProjectID,
 			Zone:                getEnvOrDefault("GCE_ZONE", "us-central1-a"),
 			MachineType:         getEnvOrDefault("GCE_MACHINE_TYPE", "e2-medium"),
+			VMImage:             vmImage,
 			AgentImage:          agentImage,
 			AgentPort:           9091,
 			IdleTimeout:         15 * time.Minute,

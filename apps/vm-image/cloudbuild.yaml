@@ -1,0 +1,24 @@
+steps:
+  - id: packer-init
+    name: hashicorp/packer:1.11
+    dir: apps/vm-image
+    args: ["init", "packer.pkr.hcl"]
+
+  - id: packer-build
+    name: hashicorp/packer:1.11
+    dir: apps/vm-image
+    args:
+      - build
+      - "-var=project_id=${_PROJECT_ID}"
+      - "-var=zone=${_ZONE}"
+      - "-var=image_name=${_IMAGE_FAMILY}-${BUILD_ID}"
+      - "-var=image_family=${_IMAGE_FAMILY}"
+      - packer.pkr.hcl
+
+substitutions:
+  _PROJECT_ID: ""
+  _ZONE: us-central1-a
+  _IMAGE_FAMILY: cc-tunnel-vm
+
+options:
+  logging: CLOUD_LOGGING_ONLY
