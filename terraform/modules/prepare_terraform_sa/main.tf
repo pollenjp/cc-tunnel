@@ -51,6 +51,12 @@ resource "google_project_iam_member" "sa_roles" {
 
     # OS Login による SSH アクセス
     "roles/compute.osLogin",
+
+    # Workflows の作成・更新 (cc-tunnel auto-redeploy)
+    "roles/workflows.admin",
+
+    # Eventarc trigger の作成・更新 (cc-tunnel auto-redeploy)
+    "roles/eventarc.admin",
   ])
 
   project = var.project_id

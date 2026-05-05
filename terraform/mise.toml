@@ -16,12 +16,12 @@ run = 'terragrunt --non-interactive run --all -- init "${@}"'
 [tasks."tf:plan:single"]
 description = "Run terragrunt plan on a single unit"
 dir = "{{ cwd }}"
-run = 'terragrunt run -- plan "${@}"'
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt run -- plan "${@}"'
 
 [tasks."tf:plan:all"]
 description = "Run terragrunt plan on all units"
 dir = "{{ cwd }}"
-run = 'terragrunt run --all -- plan "${@}"'
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt run --all -- plan "${@}"'
 
 [tasks."tf:apply:single"]
 description = "Run terragrunt apply on a single unit"
@@ -36,12 +36,12 @@ run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt --non-interactive run --al
 [tasks."tf:destroy:single"]
 description = "Run terragrunt destroy on a single unit"
 dir = "{{ cwd }}"
-run = 'terragrunt run -- destroy "${@}"'
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt run -- destroy "${@}"'
 
 [tasks."tf:destroy:all"]
 description = "Run terragrunt destroy on all units"
 dir = "{{ cwd }}"
-run = 'terragrunt run --all -- destroy "${@}"'
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt run --all -- destroy "${@}"'
 
 [tasks."tf:find:init"]
 description = "Find terragrunt init units"

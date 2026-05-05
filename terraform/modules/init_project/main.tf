@@ -7,6 +7,9 @@ locals {
     "run.googleapis.com",           # Cloud Run v2
     "sqladmin.googleapis.com",      # Cloud SQL (cc-tunnel module)
     "secretmanager.googleapis.com", # Secret Manager (cc-tunnel module / DB password)
+    "eventarc.googleapis.com",      # Eventarc (cc-tunnel auto-redeploy)
+    "workflows.googleapis.com",     # Workflows (cc-tunnel auto-redeploy)
+    "logging.googleapis.com",       # Audit logs / workflow call logs
   ]
 }
 
@@ -46,5 +49,50 @@ resource "google_project_iam_audit_config" "artifactregistry" {
 
   audit_log_config {
     log_type = "DATA_WRITE"
+  }
+}
+
+# Workflows / Eventarc の Service Agent (P4SA) を明示的に provision する。
+# API を enable しただけでは agent が作られないことがあり、その場合
+# google_workflows_workflow / google_eventarc_trigger の作成が
+# "service agent does not exist" で失敗する。
+resource "google_project_service_identity" "workflows" {
+  provider = google-beta
+  depends_on = [module.project-services, time_sleep.wait_project_services]
+
+  project = var.project_id
+  service = "workflows.googleapis.com"
+}
+
+resource "google_project_service_identity" "eventarc" {
+  provider = google-beta
+  depends_on = [module.project-services, time_sleep.wait_project_services]
+
+  project = var.project_id
+  service = "eventarc.googleapis.com"
+}
+
+# Eventarc agent には trigger が Pub/Sub topic を作るために
+# roles/eventarc.serviceAgent が必要 (通常は API enable 時に自動付与されるが
+# 明示しておく)
+resource "google_project_iam_member" "eventarc_service_agent" {
+  project = var.project_id
+  role    = "roles/eventarc.serviceAgent"
+  member  = "serviceAccount:${google_project_service_identity.eventarc.email}"
+}
+
+# IAM binding の propagation 待ち。
+# Eventarc trigger 作成時に "Permission denied while using the Eventarc Service
+# Agent ... permissions are propagated to the Service Agent" で落ちるのを防ぐ。
+# init unit 完了 = この sleep 完了 で、後続の cc-tunnel unit (terragrunt の
+# dependency chain: init -> artifact_registry -> cc-tunnel) はこの sleep 後に
+# 走るので propagation が済んでいる状態で eventarc trigger が作られる。
+resource "time_sleep" "wait_eventarc_agent_iam" {
+  depends_on = [google_project_iam_member.eventarc_service_agent]
+
+  create_duration = "60s"
+
+  triggers = {
+    binding = google_project_iam_member.eventarc_service_agent.id
   }
 }

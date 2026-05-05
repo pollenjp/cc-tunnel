@@ -69,6 +69,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 7.29.0"
     }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 7.29.0"
+    }
     cloudflare = {
       source  = "cloudflare/cloudflare"
       version = "~> 5"
@@ -91,6 +95,17 @@ generate "provider" {
 
   contents = <<EOF
 provider "google" {
+  project        = "${local.gcp_project_id}"
+  region         = "${local.provider_default_region}"
+  default_labels = ${jsonencode(local.provider_default_labels)}
+
+  %{if local.terraform_runner_sa_email != null
+  && path_relative_to_include() != "prepare/${local.env}/terraform_sa"~}
+  impersonate_service_account = "${local.terraform_runner_sa_email}"
+  %{endif~}
+}
+
+provider "google-beta" {
   project        = "${local.gcp_project_id}"
   region         = "${local.provider_default_region}"
   default_labels = ${jsonencode(local.provider_default_labels)}
