@@ -36,6 +36,24 @@ resource "google_service_account_iam_member" "vm_image_builder_sa_use_default_co
   member             = "serviceAccount:${google_service_account.vm_image_builder_sa.email}"
 }
 
+# IAM binding propagation 待ち。
+# Cloud Build trigger を起動した瞬間に Packer が compute API を叩くが、
+# 上記 IAM 付与の反映に GCP 側で数十秒〜2 分の遅延があり、
+# 反映前にビルドが走ると "permission denied" で失敗するため待機する。
+resource "time_sleep" "wait_vm_image_builder_sa_iam" {
+  depends_on = [
+    google_project_iam_member.vm_image_builder_sa_roles,
+    google_service_account_iam_member.vm_image_builder_sa_use_default_compute_sa,
+  ]
+
+  create_duration = "120s"
+
+  triggers = {
+    project_roles = jsonencode([for r in google_project_iam_member.vm_image_builder_sa_roles : r.id])
+    act_as        = google_service_account_iam_member.vm_image_builder_sa_use_default_compute_sa.id
+  }
+}
+
 resource "google_cloudbuild_trigger" "vm_image_trigger" {
   name     = local.vm_image_trigger_name
   location = var.artifact_registry_repository_location
@@ -63,6 +81,7 @@ resource "terraform_data" "vm_image_run_trigger_once" {
     google_cloudbuild_trigger.vm_image_trigger,
     google_project_iam_member.vm_image_builder_sa_roles,
     google_service_account_iam_member.vm_image_builder_sa_use_default_compute_sa,
+    time_sleep.wait_vm_image_builder_sa_iam,
   ]
   triggers_replace = [google_cloudbuild_trigger.vm_image_trigger.id]
 
