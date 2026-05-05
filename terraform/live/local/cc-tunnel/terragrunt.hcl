@@ -26,7 +26,7 @@ inputs = {
 
   lb_fqdn = "cctunnel.pollenjp.com"
 
-  vpc_connector_subnet_cidr = "10.8.0.0/28"
+  vpc_connector_subnet_cidr = "10.8.0.0/26"
 
   # Cloudflare Zone ID for pollenjp.com
   # Dashboard > pollenjp.com の Overview ページ右下から取得

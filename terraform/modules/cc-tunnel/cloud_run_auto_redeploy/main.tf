@@ -65,10 +65,11 @@ resource "time_sleep" "wait_deployer_sa_iam" {
 resource "google_workflows_workflow" "redeploy" {
   depends_on = [time_sleep.wait_deployer_sa_iam]
 
-  name            = local.workflow_name
-  region          = var.cloud_run_location
-  service_account = google_service_account.deployer_sa.id
-  call_log_level  = "LOG_ALL_CALLS"
+  name                = local.workflow_name
+  region              = var.cloud_run_location
+  service_account     = google_service_account.deployer_sa.id
+  call_log_level      = "LOG_ALL_CALLS"
+  deletion_protection = false
 
   source_contents = <<-YAML
     main:
@@ -119,8 +120,9 @@ resource "google_workflows_workflow" "redeploy" {
 resource "google_eventarc_trigger" "ar_image_push" {
   depends_on = [time_sleep.wait_deployer_sa_iam]
 
-  name     = local.trigger_name
-  location = var.cloud_run_location
+  name            = local.trigger_name
+  location        = var.cloud_run_location
+  service_account = google_service_account.deployer_sa.email
 
   matching_criteria {
     attribute = "type"
@@ -146,6 +148,4 @@ resource "google_eventarc_trigger" "ar_image_push" {
   destination {
     workflow = google_workflows_workflow.redeploy.id
   }
-
-  service_account = google_service_account.deployer_sa.email
 }
