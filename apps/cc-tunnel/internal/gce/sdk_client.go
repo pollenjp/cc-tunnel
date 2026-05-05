@@ -10,10 +10,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	cosImage = "projects/cos-cloud/global/images/family/cos-stable"
-)
-
 // SDKGCEClient は cloud.google.com/go/compute/apiv1 を使った GCEClient 実装
 type SDKGCEClient struct {
 	instancesClient *compute.InstancesClient
@@ -36,8 +32,12 @@ func (c *SDKGCEClient) Close() error {
 }
 
 // CreateInstance は GCE VM インスタンスを作成する
-// COS (Container-Optimized OS) を使用し、startup-script で cc-remote-agent を起動する
+// req.SourceImage で指定されたカスタムイメージ (Packer で焼かれた Docker 入り Ubuntu) を使用し、
+// startup-script で cc-remote-agent を起動する。
 func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRequest) (*Instance, error) {
+	if req.SourceImage == "" {
+		return nil, fmt.Errorf("CreateInstance: SourceImage is required")
+	}
 	machineTypeURL := fmt.Sprintf("zones/%s/machineTypes/%s", req.Zone, req.MachineType)
 
 	metadata := []*computepb.Items{
@@ -70,7 +70,7 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 					Boot:       proto.Bool(true),
 					AutoDelete: proto.Bool(true),
 					InitializeParams: &computepb.AttachedDiskInitializeParams{
-						SourceImage: proto.String(cosImage),
+						SourceImage: proto.String(req.SourceImage),
 					},
 				},
 			},

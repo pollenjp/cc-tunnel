@@ -22,6 +22,7 @@ type CreateInstanceRequest struct {
 	Zone          string
 	Name          string
 	MachineType   string
+	SourceImage   string // GCE source image (e.g. "projects/<proj>/global/images/family/cc-tunnel-vm")
 	StartupScript string
 	Labels        map[string]string
 	Tags          []string `json:"tags,omitempty"` // network tags for firewall rules
