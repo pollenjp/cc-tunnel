@@ -1,8 +1,12 @@
-# cc_tunnel_url + cloud_sql_* outputs disabled while those resources are stopped.
+# Disabled while cc-tunnel API + frontend Cloud Run + Cloud SQL are stopped.
 /*
 output "cc_tunnel_url" {
   value       = google_cloud_run_v2_service.cloud_run.uri
   description = "cc-tunnel API Cloud Run service URL"
+}
+
+output "frontend_url" {
+  value = google_cloud_run_v2_service.fe_cloud_run.uri
 }
 
 output "cloud_sql_instance_connection_name" {
@@ -20,11 +24,12 @@ output "cloud_sql_database_url_secret_id" {
   description = "Secret Manager secret_id for DATABASE_URL"
   sensitive   = true
 }
-*/
 
-output "frontend_url" {
-  value = google_cloud_run_v2_service.fe_cloud_run.uri
+output "lb_https_url" {
+  value       = "https://${var.lb_fqdn}"
+  description = "LB HTTPS endpoint URL"
 }
+*/
 
 output "cc_login_encryption_key_secret_id" {
   value       = google_secret_manager_secret.cc_login_encryption_key.secret_id
@@ -40,11 +45,6 @@ output "cc_remote_agent_image" {
 output "lb_ip" {
   value       = google_compute_global_address.lb_ip.address
   description = "Global LB external IP address (Cloudflare の A レコードに設定)"
-}
-
-output "lb_https_url" {
-  value       = "https://${var.lb_fqdn}"
-  description = "LB HTTPS endpoint URL"
 }
 
 output "cloudflare_dns_record_id" {
