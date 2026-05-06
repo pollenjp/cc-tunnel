@@ -7,12 +7,10 @@
 // It is intentionally separate from the production cc-tunnel-vm image so the
 // experiment cannot accidentally affect production VMs.
 //
-// Local usage:
-//   gcloud auth application-default login
-//   packer init  apps/metadata-test-vm/packer.pkr.hcl
-//   packer build -var=project_id=cc-tunnel-local \
-//                -var=image_name=metadata-test-vm-$(date +%s) \
-//                apps/metadata-test-vm/packer.pkr.hcl
+// Build pipeline: Cloud Build via apps/metadata-test-vm/cloudbuild.yaml,
+// triggered by the Terraform module terraform/modules/metadata_test/.
+// Local `packer build` is supported as a fallback only — the canonical path
+// is `terragrunt apply` under terraform/live/local/metadata_test/.
 
 packer {
   required_plugins {

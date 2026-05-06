@@ -6,6 +6,17 @@ variable "deploy_env" {
   type = string
 }
 
+variable "terraform_runner_sa_email" {
+  type        = string
+  description = "Runner SA to impersonate when invoking gcloud from local-exec"
+}
+
+variable "packer_build_branch" {
+  type        = string
+  description = "GitHub branch the Cloud Build trigger should checkout for the one-shot Packer build. Set to the feature branch when applying before merge to main."
+  default     = "main"
+}
+
 variable "artifact_registry_repository_location" {
   type = string
 }

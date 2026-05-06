@@ -72,7 +72,10 @@ resource "time_sleep" "wait_iam_propagation" {
 }
 
 resource "google_compute_instance" "vm" {
-  depends_on = [time_sleep.wait_iam_propagation]
+  depends_on = [
+    time_sleep.wait_iam_propagation,
+    terraform_data.packer_run_trigger_once,
+  ]
 
   name         = local.resource_base
   machine_type = var.machine_type
