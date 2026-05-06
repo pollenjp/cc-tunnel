@@ -5,6 +5,7 @@ locals {
     "compute.googleapis.com",
     "iam.googleapis.com",
     "run.googleapis.com",           # Cloud Run v2
+    "cloudscheduler.googleapis.com", # Cloud Scheduler (vm_image_cleaner module)
     "sqladmin.googleapis.com",      # Cloud SQL (cc-tunnel module)
     "secretmanager.googleapis.com", # Secret Manager (cc-tunnel module / DB password)
     "eventarc.googleapis.com",      # Eventarc (cc-tunnel auto-redeploy)
