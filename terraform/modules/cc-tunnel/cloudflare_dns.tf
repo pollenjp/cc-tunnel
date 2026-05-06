@@ -1,5 +1,3 @@
-# Disabled to save cost (LB is disabled). Re-enable by removing the surrounding block comment.
-/*
 resource "cloudflare_dns_record" "lb" {
   zone_id = var.cloudflare_zone_id
   name    = var.lb_fqdn
@@ -9,4 +7,3 @@ resource "cloudflare_dns_record" "lb" {
   proxied = var.cloudflare_dns_proxied
   comment = var.cloudflare_dns_comment
 }
-*/

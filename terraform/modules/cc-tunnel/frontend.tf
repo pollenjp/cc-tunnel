@@ -128,8 +128,6 @@ resource "terraform_data" "fe_run_trigger_once" {
   }
 }
 
-# Disabled to save cost. Re-enable by removing the surrounding block comment.
-/*
 resource "google_service_account" "fe_runtime_sa" {
   account_id   = local.fe_runtime_sa_name
   display_name = "Frontend Cloud Run Runtime SA"
@@ -153,10 +151,11 @@ resource "google_cloud_run_v2_service" "fe_cloud_run" {
       ports {
         container_port = var.frontend_container_port
       }
-      env {
-        name  = "API_UPSTREAM"
-        value = google_cloud_run_v2_service.cloud_run.uri
-      }
+      # API_UPSTREAM env disabled while cc-tunnel API Cloud Run is stopped to save cost.
+      # env {
+      #   name  = "API_UPSTREAM"
+      #   value = google_cloud_run_v2_service.cloud_run.uri
+      # }
       env {
         name  = "BACKEND_URL"
         value = "/api"
@@ -179,4 +178,3 @@ resource "google_cloud_run_v2_service_iam_member" "fe_public_access" {
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
-*/

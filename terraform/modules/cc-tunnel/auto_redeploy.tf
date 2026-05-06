@@ -4,7 +4,7 @@
 # Audit logs for artifactregistry.googleapis.com (DATA_WRITE) must be enabled
 # at the project level — handled in modules/init_project.
 
-# Disabled to save cost (Cloud Run services are disabled). Re-enable by removing the surrounding block comment.
+# cc_tunnel_auto_redeploy disabled while cc-tunnel API Cloud Run is stopped.
 /*
 module "cc_tunnel_auto_redeploy" {
   source = "./cloud_run_auto_redeploy"
@@ -16,6 +16,7 @@ module "cc_tunnel_auto_redeploy" {
   cloud_run_runtime_sa_id = google_service_account.runtime_sa.id
   fqim                    = local.fqim
 }
+*/
 
 module "frontend_auto_redeploy" {
   source = "./cloud_run_auto_redeploy"
@@ -27,4 +28,3 @@ module "frontend_auto_redeploy" {
   cloud_run_runtime_sa_id = google_service_account.fe_runtime_sa.id
   fqim                    = local.fe_fqim
 }
-*/

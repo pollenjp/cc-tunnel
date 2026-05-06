@@ -1,5 +1,3 @@
-# Disabled to save cost. Re-enable by removing the surrounding block comment.
-/*
 locals {
   lb_name_prefix = "${var.deploy_env}-${random_string.unique_id.result}-lb"
   lb_fqdn        = var.lb_fqdn
@@ -11,6 +9,8 @@ resource "google_compute_global_address" "lb_ip" {
 }
 
 # Serverless NEG: cc-tunnel
+# Disabled while cc-tunnel API Cloud Run is stopped to save cost.
+/*
 resource "google_compute_region_network_endpoint_group" "cc_tunnel_neg" {
   name                  = "${local.lb_name_prefix}-cct-neg"
   region                = local.cloud_run_location
@@ -19,6 +19,7 @@ resource "google_compute_region_network_endpoint_group" "cc_tunnel_neg" {
     service = google_cloud_run_v2_service.cloud_run.name
   }
 }
+*/
 
 # Serverless NEG: frontend
 resource "google_compute_region_network_endpoint_group" "frontend_neg" {
@@ -31,6 +32,8 @@ resource "google_compute_region_network_endpoint_group" "frontend_neg" {
 }
 
 # Backend service: cc-tunnel
+# Disabled while cc-tunnel API Cloud Run is stopped to save cost.
+/*
 resource "google_compute_backend_service" "cc_tunnel_backend" {
   name                  = "${local.lb_name_prefix}-cct-backend"
   protocol              = "HTTP"
@@ -40,6 +43,7 @@ resource "google_compute_backend_service" "cc_tunnel_backend" {
   }
   log_config { enable = true }
 }
+*/
 
 # Backend service: frontend
 resource "google_compute_backend_service" "frontend_backend" {
@@ -52,7 +56,9 @@ resource "google_compute_backend_service" "frontend_backend" {
   log_config { enable = true }
 }
 
-# URL map: /api/* → cc-tunnel（url_rewrite で /api strip）、default → frontend
+# URL map: default → frontend
+# /api/* → cc-tunnel ルートは cc-tunnel API 停止中のためコメントアウト。
+# 復旧時は path_rule を戻すこと。
 resource "google_compute_url_map" "lb_url_map" {
   name            = "${local.lb_name_prefix}-url-map"
   default_service = google_compute_backend_service.frontend_backend.id
@@ -66,15 +72,16 @@ resource "google_compute_url_map" "lb_url_map" {
     name            = "main"
     default_service = google_compute_backend_service.frontend_backend.id
 
-    path_rule {
-      paths   = ["/api", "/api/*"]
-      service = google_compute_backend_service.cc_tunnel_backend.id
-      route_action {
-        url_rewrite {
-          path_prefix_rewrite = "/"
-        }
-      }
-    }
+    # /api/* path_rule disabled while cc-tunnel API Cloud Run is stopped.
+    # path_rule {
+    #   paths   = ["/api", "/api/*"]
+    #   service = google_compute_backend_service.cc_tunnel_backend.id
+    #   route_action {
+    #     url_rewrite {
+    #       path_prefix_rewrite = "/"
+    #     }
+    #   }
+    # }
   }
 }
 
@@ -101,4 +108,3 @@ resource "google_compute_global_forwarding_rule" "lb_https_forwarding_rule" {
   ip_address            = google_compute_global_address.lb_ip.id
   load_balancing_scheme = "EXTERNAL_MANAGED"
 }
-*/

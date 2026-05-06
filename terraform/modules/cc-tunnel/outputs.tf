@@ -1,12 +1,8 @@
-# Disabled while cc-tunnel Cloud Run + Cloud SQL are disabled. Re-enable together with the underlying resources.
+# cc_tunnel_url + cloud_sql_* outputs disabled while those resources are stopped.
 /*
 output "cc_tunnel_url" {
   value       = google_cloud_run_v2_service.cloud_run.uri
   description = "cc-tunnel API Cloud Run service URL"
-}
-
-output "frontend_url" {
-  value = google_cloud_run_v2_service.fe_cloud_run.uri
 }
 
 output "cloud_sql_instance_connection_name" {
@@ -26,6 +22,10 @@ output "cloud_sql_database_url_secret_id" {
 }
 */
 
+output "frontend_url" {
+  value = google_cloud_run_v2_service.fe_cloud_run.uri
+}
+
 output "cc_login_encryption_key_secret_id" {
   value       = google_secret_manager_secret.cc_login_encryption_key.secret_id
   description = "Secret Manager secret_id for CC_LOGIN_ENCRYPTION_KEY"
@@ -37,8 +37,6 @@ output "cc_remote_agent_image" {
   description = "Artifact Registry image URL for cc-remote-agent"
 }
 
-# Disabled while LB and Cloudflare DNS record are disabled.
-/*
 output "lb_ip" {
   value       = google_compute_global_address.lb_ip.address
   description = "Global LB external IP address (Cloudflare の A レコードに設定)"
@@ -58,4 +56,3 @@ output "cloudflare_dns_record_hostname" {
   value       = cloudflare_dns_record.lb.name
   description = "Cloudflare DNS record hostname (FQDN)"
 }
-*/
