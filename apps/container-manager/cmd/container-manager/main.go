@@ -1,0 +1,61 @@
+package main
+
+import (
+	"log/slog"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/pollenjp/cc-tunnel/apps/container-manager/internal/api"
+	dockerops "github.com/pollenjp/cc-tunnel/apps/container-manager/internal/docker"
+)
+
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.statusCode,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	})
+}
+
+func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
+	mgr, err := dockerops.NewManager()
+	if err != nil {
+		slog.Error("docker manager init", "err", err)
+		os.Exit(1)
+	}
+
+	h := api.NewHandler(mgr)
+
+	addr := ":" + getenv("PORT", "9090")
+	slog.Info("container-manager listening", "addr", addr)
+	if err := http.ListenAndServe(addr, loggingMiddleware(h.Routes())); err != nil {
+		slog.Error("server failed", "err", err)
+		os.Exit(1)
+	}
+}
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}

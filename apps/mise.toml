@@ -2,6 +2,10 @@
 dir = "cc-remote-agent"
 run = 'mise run cc-remote-agent:test'
 
+[tasks."test:container-manager"]
+dir = "container-manager"
+run = 'mise run container-manager:test'
+
 [tasks."dev:up"]
 description = "Start infra (postgres) for local host development"
 run = '''
@@ -58,6 +62,10 @@ depends = ["test:*"]
 [tasks."lint:cc-remote-agent"]
 dir = "cc-remote-agent"
 run = 'mise run cc-remote-agent:lint'
+
+[tasks."lint:container-manager"]
+dir = "container-manager"
+run = 'mise run container-manager:lint'
 
 [tasks."lint:cc-tunnel"]
 dir = "cc-tunnel"

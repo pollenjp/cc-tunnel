@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/cmclient"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
-	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/dockerhost"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/gce"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
@@ -55,19 +55,22 @@ type DockerGCEConfig struct {
 	AgentReadyTimeout time.Duration // デフォルト: 1分
 	PollInterval      time.Duration // デフォルト: 5秒
 
-	// DockerPingTimeout は既存 VM 再利用時の Docker daemon 健全性チェックのタイムアウト。
+	// DockerPingTimeout は既存 VM 再利用時の container-manager 健全性チェックのタイムアウト。
 	// (デフォルト: 3秒)
 	DockerPingTimeout time.Duration
 
 	// Multi-container settings
 	ContainerNamePrefix string // default "session"
 	PortRangeStart      int    // default 9091
-	// WARNING: DockerHostPort 2375 は暗号化なし。VPC 内 + ファイアウォールで保護すること。
-	DockerHostPort int // default 2375
+	// ContainerManagerPort is the host port that the container-manager service
+	// listens on inside each VM. Default 9090. cc-tunnel reaches it as
+	// http://<vm_internal_ip>:<port>; the channel is unauthenticated and
+	// must be reachable only from the cc-tunnel VPC connector subnet.
+	ContainerManagerPort int
 
-	// ContainerManagerFactory は VM ごとに ContainerManager を生成するファクトリ。
-	// nil の場合 dockerhost.NewClient が使われる。
-	ContainerManagerFactory func(host string) (dockerhost.ContainerManager, error)
+	// ContainerManagerFactory builds a cmclient.ContainerManager for the given
+	// base URL (e.g. "http://10.0.0.2:9090"). If nil, cmclient.NewClient is used.
+	ContainerManagerFactory func(baseURL string) (cmclient.ContainerManager, error)
 }
 
 // DockerGCEProvider implements ExecutionProvider using GCE VMs with Docker.
@@ -77,7 +80,7 @@ type DockerGCEProvider struct {
 	db              dbRepository
 	sf              singleflight.Group
 	newClient       func(baseURL string) *remoteclient.Client
-	newDockerClient func(host string) (dockerhost.ContainerManager, error)
+	newDockerClient func(baseURL string) (cmclient.ContainerManager, error)
 	idleChecker     *IdleChecker
 	vmScaler        *VMScaler
 }
@@ -125,14 +128,14 @@ func NewDockerGCEProviderWithClientFactory(cfg DockerGCEConfig, gceClient gce.GC
 	if cfg.PortRangeStart == 0 {
 		cfg.PortRangeStart = 9091
 	}
-	if cfg.DockerHostPort == 0 {
-		cfg.DockerHostPort = 2375
+	if cfg.ContainerManagerPort == 0 {
+		cfg.ContainerManagerPort = 9090
 	}
 
 	dockerClientFactory := cfg.ContainerManagerFactory
 	if dockerClientFactory == nil {
-		dockerClientFactory = func(host string) (dockerhost.ContainerManager, error) {
-			return dockerhost.NewClient(host)
+		dockerClientFactory = func(baseURL string) (cmclient.ContainerManager, error) {
+			return cmclient.NewClient(baseURL)
 		}
 	}
 
@@ -198,8 +201,8 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 			return ep, nil
 		}
 
-		// Find available VM (with Docker daemon health check) or create a new one.
-		// 既存 VM の docker daemon (2375) が落ちていると ContainerCreate が 30 秒タイムアウトするため、
+		// Find available VM (with container-manager health check) or create a new one.
+		// 既存 VM の container-manager が応答しないと ContainerCreate が 30 秒タイムアウトするため、
 		// 短い ping で先に弾いて DB 上 unhealthy にマークし、別 VM か新規作成にフォールバックする。
 		vm, err := p.pickHealthyAvailableVM(ctx)
 		if err != nil {
@@ -220,8 +223,9 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 		// Unique container name per conversation (stable across retries)
 		containerName := fmt.Sprintf("%s-%s", p.config.ContainerNamePrefix, conversationID)
 
-		// WARNING: TCP 2375 は暗号化なし。VPC 内 + ファイアウォールで保護すること。
-		dockerHost := fmt.Sprintf("tcp://%s:%d", vm.InternalIP, p.config.DockerHostPort)
+		// container-manager API URL on the VM. Unauthenticated by design;
+		// VPC + firewall restricts access to the cc-tunnel VPC connector.
+		cmURL := fmt.Sprintf("http://%s:%d", vm.InternalIP, p.config.ContainerManagerPort)
 
 		// Retry loop for port collision (UNIQUE constraint on vm_instance_id + port).
 		var ep *db.SessionEndpoint
@@ -236,9 +240,9 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 				hostPort = p.config.PortRangeStart
 			}
 
-			dcm, err := p.newDockerClient(dockerHost)
+			dcm, err := p.newDockerClient(cmURL)
 			if err != nil {
-				return nil, fmt.Errorf("create docker client for %s: %w", dockerHost, err)
+				return nil, fmt.Errorf("create container-manager client for %s: %w", cmURL, err)
 			}
 			if err := dcm.RunAgentContainer(ctx, p.config.AgentImage, containerName, hostPort, p.config.AgentPort); err != nil {
 				return nil, fmt.Errorf("run agent container on %s: %w", vm.InternalIP, err)
@@ -282,7 +286,7 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 	return v.(*db.SessionEndpoint), nil
 }
 
-// pickHealthyAvailableVM returns an available VM whose Docker daemon (2375) responds to a
+// pickHealthyAvailableVM returns an available VM whose container-manager responds to a
 // short ping. Unhealthy VMs are demoted to status="unhealthy" in the DB so subsequent calls
 // to GetAvailableVMInstance skip them. Returns the same error shape as GetAvailableVMInstance
 // when nothing usable is left, so the caller falls through to createGCEVM.
@@ -295,10 +299,10 @@ func (p *DockerGCEProvider) pickHealthyAvailableVM(ctx context.Context) (*db.VMI
 			return nil, err
 		}
 
-		dockerHost := fmt.Sprintf("tcp://%s:%d", vm.InternalIP, p.config.DockerHostPort)
-		dcm, err := p.newDockerClient(dockerHost)
+		cmURL := fmt.Sprintf("http://%s:%d", vm.InternalIP, p.config.ContainerManagerPort)
+		dcm, err := p.newDockerClient(cmURL)
 		if err != nil {
-			lastErr = fmt.Errorf("create docker client for %s: %w", dockerHost, err)
+			lastErr = fmt.Errorf("create container-manager client for %s: %w", cmURL, err)
 			if markErr := p.db.UpdateVMInstanceStatus(ctx, vm.ID, "unhealthy"); markErr != nil {
 				slog.Warn("failed to mark VM unhealthy", "err", markErr, "vm_id", vm.ID)
 			}
@@ -312,14 +316,14 @@ func (p *DockerGCEProvider) pickHealthyAvailableVM(ctx context.Context) (*db.VMI
 			return vm, nil
 		}
 
-		slog.Warn("reusable VM has unreachable docker daemon; marking unhealthy",
-			"vm_id", vm.ID, "internal_ip", vm.InternalIP, "docker_host", dockerHost)
+		slog.Warn("reusable VM has unreachable container-manager; marking unhealthy",
+			"vm_id", vm.ID, "internal_ip", vm.InternalIP, "container_manager_url", cmURL)
 		if markErr := p.db.UpdateVMInstanceStatus(ctx, vm.ID, "unhealthy"); markErr != nil {
 			slog.Warn("failed to mark VM unhealthy", "err", markErr, "vm_id", vm.ID)
 			// Avoid infinite loop if the DB update keeps failing: the same VM would be returned again.
 			return nil, fmt.Errorf("mark VM %s unhealthy: %w", vm.ID, markErr)
 		}
-		lastErr = fmt.Errorf("docker daemon at %s unreachable", dockerHost)
+		lastErr = fmt.Errorf("container-manager at %s unreachable", cmURL)
 	}
 	if lastErr != nil {
 		return nil, lastErr
@@ -378,12 +382,11 @@ func (p *DockerGCEProvider) waitForVMReady(ctx context.Context, vm *db.VMInstanc
 	_ = p.db.UpdateVMInstanceIP(ctx, vm.ID, networkIP)
 	_ = p.db.UpdateVMInstanceStatus(ctx, vm.ID, "running")
 
-	// Stage 2: Wait for Docker daemon to be reachable via TCP.
-	// WARNING: TCP 2375 は暗号化なし。VPC 内 + ファイアウォールで保護すること。
-	dockerHost := fmt.Sprintf("tcp://%s:%d", networkIP, p.config.DockerHostPort)
-	dcm, err := p.newDockerClient(dockerHost)
+	// Stage 2: Wait for the container-manager HTTP API to become reachable.
+	cmURL := fmt.Sprintf("http://%s:%d", networkIP, p.config.ContainerManagerPort)
+	dcm, err := p.newDockerClient(cmURL)
 	if err != nil {
-		return "", fmt.Errorf("create docker client for %s: %w", dockerHost, err)
+		return "", fmt.Errorf("create container-manager client for %s: %w", cmURL, err)
 	}
 
 	stage2Ctx, cancel2 := context.WithTimeout(ctx, p.config.AgentReadyTimeout)
@@ -395,7 +398,7 @@ func (p *DockerGCEProvider) waitForVMReady(ctx context.Context, vm *db.VMInstanc
 		}
 		select {
 		case <-stage2Ctx.Done():
-			return "", fmt.Errorf("timeout waiting for Docker daemon at %s: %w", dockerHost, stage2Ctx.Err())
+			return "", fmt.Errorf("timeout waiting for container-manager at %s: %w", cmURL, stage2Ctx.Err())
 		case <-time.After(p.config.PollInterval):
 		}
 	}
@@ -422,14 +425,12 @@ func (p *DockerGCEProvider) waitForAgentReady(ctx context.Context, vmIP string, 
 }
 
 // buildStartupScript generates the startup script run on each VM boot.
-// Docker と TCP listener (-H tcp://0.0.0.0:2375) は Packer で焼いたカスタムイメージに
-// 既に組み込まれているため、ここではエージェントイメージの事前取得のみ行う。
-// コンテナ起動は getOrCreateEndpoint から dockerhost 経由で行うため、ここでは docker run しない。
+// Docker daemon と container-manager コンテナの起動は Packer で焼いたカスタム
+// イメージの systemd unit が担当するため、ここでは追加の処理を行わない。
+// cc-remote-agent イメージの pull は container-manager がリクエスト時に行う
+// (VM の SA 経由で Artifact Registry に認証する)。
 func (p *DockerGCEProvider) buildStartupScript() string {
-	return fmt.Sprintf(`#!/bin/bash
-# cc-remote-agent イメージを事前取得（コンテナ起動の高速化）
-docker pull %s || true
-`, p.config.AgentImage)
+	return "#!/bin/bash\n# managed by Packer image; nothing to do at boot.\n"
 }
 
 // PrepareForRelogin ensures a session endpoint exists for the given conversation
@@ -490,12 +491,11 @@ func (p *DockerGCEProvider) CleanupOrphans(ctx context.Context) error {
 		return fmt.Errorf("list idle session endpoints: %w", err)
 	}
 	for _, ep := range endpoints {
-		// Stop and remove the container via Docker daemon (non-fatal on failure)
+		// Stop and remove the container via container-manager (non-fatal on failure)
 		vm, vmErr := p.db.GetVMInstance(ctx, ep.VMInstanceID)
 		if vmErr == nil && vm.InternalIP != "" {
-			// WARNING: TCP 2375 は暗号化なし。VPC 内 + ファイアウォールで保護すること。
-			dockerHost := fmt.Sprintf("tcp://%s:%d", vm.InternalIP, p.config.DockerHostPort)
-			if dcm, dcErr := p.newDockerClient(dockerHost); dcErr == nil {
+			cmURL := fmt.Sprintf("http://%s:%d", vm.InternalIP, p.config.ContainerManagerPort)
+			if dcm, dcErr := p.newDockerClient(cmURL); dcErr == nil {
 				_ = dcm.StopContainer(ctx, ep.ContainerName)
 				_ = dcm.RemoveContainer(ctx, ep.ContainerName)
 			}

@@ -1,4 +1,17 @@
 steps:
+  - id: pull-container-manager
+    name: gcr.io/cloud-builders/docker
+    args: ["pull", "${_CM_IMAGE}"]
+
+  - id: save-container-manager
+    name: gcr.io/cloud-builders/docker
+    dir: apps/vm-image
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker save "${_CM_IMAGE}" -o container-manager.tar
+
   - id: packer-init
     name: hashicorp/packer:1.11
     dir: apps/vm-image
@@ -13,12 +26,15 @@ steps:
       - "-var=zone=${_ZONE}"
       - "-var=image_name=${_IMAGE_FAMILY}-${BUILD_ID}"
       - "-var=image_family=${_IMAGE_FAMILY}"
+      - "-var=container_manager_image=${_CM_IMAGE}"
+      - "-var=container_manager_image_tar=./container-manager.tar"
       - packer.pkr.hcl
 
 substitutions:
   _PROJECT_ID: ""
   _ZONE: us-central1-a
   _IMAGE_FAMILY: cc-tunnel-vm
+  _CM_IMAGE: ""
 
 options:
   logging: CLOUD_LOGGING_ONLY
