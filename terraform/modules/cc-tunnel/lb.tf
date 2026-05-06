@@ -1,3 +1,5 @@
+# Disabled to save cost. Re-enable by removing the surrounding block comment.
+/*
 locals {
   lb_name_prefix = "${var.deploy_env}-${random_string.unique_id.result}-lb"
   lb_fqdn        = var.lb_fqdn
@@ -99,3 +101,4 @@ resource "google_compute_global_forwarding_rule" "lb_https_forwarding_rule" {
   ip_address            = google_compute_global_address.lb_ip.id
   load_balancing_scheme = "EXTERNAL_MANAGED"
 }
+*/

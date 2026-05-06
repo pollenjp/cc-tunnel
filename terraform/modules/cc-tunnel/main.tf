@@ -150,6 +150,8 @@ locals {
   cr_runtime_sa_name   = "${substr("${local.cloud_run_name}", 0, 30 - length(local.cr_runtime_sa_suffix))}${local.cr_runtime_sa_suffix}"
 }
 
+# Disabled to save cost. Re-enable by removing the surrounding block comment.
+/*
 resource "google_service_account" "runtime_sa" {
   account_id   = local.cr_runtime_sa_name
   display_name = "Cloud Run Runtime SA"
@@ -285,3 +287,4 @@ resource "google_service_account_iam_member" "cr_runtime_default_compute_sa_user
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.runtime_sa.email}"
 }
+*/

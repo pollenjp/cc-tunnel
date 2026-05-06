@@ -1,3 +1,5 @@
+# Disabled to save cost. Re-enable by removing the surrounding block comment.
+/*
 locals {
   cs_instance_suffix = "-${random_string.unique_id.result}-pg"
   cs_instance_name   = "${substr(var.deploy_env, 0, 30 - length(local.cs_instance_suffix))}${local.cs_instance_suffix}"
@@ -78,3 +80,4 @@ resource "google_secret_manager_secret_iam_member" "cs_runtime_database_url_acce
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runtime_sa.email}"
 }
+*/
