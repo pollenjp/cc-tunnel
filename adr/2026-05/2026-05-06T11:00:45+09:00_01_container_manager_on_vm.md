@@ -136,8 +136,24 @@ Docker Engine API のプロキシではなく、用途を絞った RPC を提供
   - chicken-and-egg 回避 (registry 認証なしで起動できる必要がある)
   - container-manager は更新頻度が低いコンポーネントのため Packer 再焼きで許容可能
   - ネットワーク疎通や public registry 可用性に依存しない
-- 起動方式: Packer で `systemd` unit を仕込み、VM 起動時に
-  `docker run --restart=always --network=host -v /var/run/docker.sock:/var/run/docker.sock ...`
+- 起動方式: Packer で `systemd` unit を仕込み、VM 起動時に以下のように起動する。
+
+  ```
+  docker run --restart=always \
+    --network=bridge \
+    -p 9090:9090 \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    container-manager:<version>
+  ```
+
+  - `--network=bridge` を採用し、VM の network namespace は共有しない。
+    既存 cc-remote-agent コンテナと同じネットワーク方針に揃える。
+  - GCE metadata server (`169.254.169.254`) は Docker bridge ネットワーク
+    からも到達可能なため、AR トークン取得・SDK の `DefaultTokenSource` は
+    bridge モードでそのまま動作する。
+  - cc-tunnel からの HTTP API 受け口はポートフォワード (`-p`) で公開する。
+  - dockerd への操作は `/var/run/docker.sock` の bind mount 経由のため
+    ネットワークモードに依存しない。
 
 ### 7. 既存 dockerhost パッケージの扱い
 
@@ -217,6 +233,10 @@ Docker Engine API のプロキシではなく、用途を絞った RPC を提供
 
 ## 残課題・確認事項
 
+- [ ] **実装着手前に**、Docker bridge ネットワーク内のコンテナから GCE
+      metadata server (`http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token`)
+      に到達できること、および VM SA のアクセストークンで AR pull が
+      成功することを実 VM 上で疎通確認する。
 - [ ] container-manager と cc-tunnel 間の認証方式を確定する
       (既存 cc-remote-agent との整合性を含む)。
 - [ ] container-manager の更新フロー: Packer 再焼き必須か、cc-tunnel から
