@@ -11,9 +11,21 @@ variable "terraform_runner_sa_email" {
   description = "Runner SA to impersonate when invoking gcloud from local-exec"
 }
 
-variable "packer_build_branch" {
+variable "github_owner" {
   type        = string
-  description = "GitHub branch the Cloud Build trigger should checkout for the one-shot Packer build. Set to the feature branch when applying before merge to main."
+  description = "GitHub owner/org for the Cloud Build trigger source"
+  default     = "pollenjp"
+}
+
+variable "github_repo_name" {
+  type        = string
+  description = "GitHub repository name for the Cloud Build trigger source"
+  default     = "cc-tunnel"
+}
+
+variable "github_branch_name" {
+  type        = string
+  description = "GitHub branch the Cloud Build trigger watches AND the branch checked out for the one-shot Packer build run from terraform_data. Set to the feature branch when applying before merge to main."
   default     = "main"
 }
 

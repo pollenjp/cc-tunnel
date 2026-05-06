@@ -6,11 +6,12 @@
 //   1. Push the branch containing apps/metadata-test-vm/ to GitHub
 //      (the Cloud Build GitHub connection must already be authorized for
 //      pollenjp/cc-tunnel; the existing cc-tunnel module sets that up).
-//   2. terragrunt apply
+//   2. Set `github_branch_name` below to the branch you just pushed
+//      (use the feature branch while iterating; switch back to "main"
+//      after merge), then run `terragrunt apply`.
 //        -> creates the Cloud Build trigger + Packer builder SA, runs the
-//           trigger once against `packer_build_branch` (default "main";
-//           set to the feature branch when applying before merge), waits
-//           for the image, then provisions the test VM.
+//           trigger once against `github_branch_name`, waits for the
+//           image, then provisions the test VM.
 //   3. Inspect the result (verify.sh writes to /var/log/metadata-test.log
 //      and to the serial console):
 //        $(terragrunt output -raw serial_log_command)
@@ -41,7 +42,9 @@ inputs = {
   artifact_registry_repository_location = "${dependency.artifact_registry.outputs.artifact_registry_repository_location}"
   artifact_registry_repository_name     = "${dependency.artifact_registry.outputs.artifact_registry_repository_name}"
 
-  // Override via TF_VAR_packer_build_branch when applying from a feature
-  // branch before it is merged to main.
-  // packer_build_branch = "claude/setup-metadata-test-env-HvAJT"
+  // Branch the Cloud Build trigger watches AND uses for the one-shot
+  // run-on-apply. Set to the feature branch while iterating; switch back
+  // to "main" after merge. github_owner / github_repo_name default to
+  // pollenjp/cc-tunnel and rarely need to be overridden.
+  github_branch_name = "claude/setup-metadata-test-env-HvAJT"
 }

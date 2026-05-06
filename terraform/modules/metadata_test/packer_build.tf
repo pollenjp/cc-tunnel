@@ -2,18 +2,14 @@
 // Mirrors terraform/modules/cc-tunnel/vm_image.tf so that the throwaway
 // experiment uses the same build pipeline as production.
 //
-// The trigger is wired to GitHub push events on the configured branch
-// (default: main). For first-time runs (or running against a feature
-// branch before merge), `terraform_data.packer_run_trigger_once` invokes
-// `gcloud builds triggers run --branch=<var.packer_build_branch>` so the
+// The trigger watches GitHub push events on var.github_branch_name. For
+// first-time runs (or iterating on a feature branch before merge),
+// `terraform_data.packer_run_trigger_once` invokes
+// `gcloud builds triggers run --branch=<var.github_branch_name>` so the
 // image is built immediately on apply against the branch that actually
 // contains apps/metadata-test-vm/.
 
 locals {
-  github_owner       = "pollenjp"
-  github_repo_name   = "cc-tunnel"
-  github_branch_name = "main"
-
   packer_dir = "apps/metadata-test-vm"
 
   packer_builder_suffix  = "-${random_string.unique_id.result}-mdt-bld"
@@ -72,9 +68,9 @@ resource "google_cloudbuild_trigger" "packer_trigger" {
   service_account = google_service_account.packer_builder_sa.id
 
   github {
-    owner = local.github_owner
-    name  = local.github_repo_name
-    push { branch = "^${local.github_branch_name}$" }
+    owner = var.github_owner
+    name  = var.github_repo_name
+    push { branch = "^${var.github_branch_name}$" }
   }
   included_files = ["${local.packer_dir}/**"]
 
@@ -101,11 +97,11 @@ resource "terraform_data" "packer_run_trigger_once" {
     command     = <<-EOT
       impersonate_flag="--impersonate-service-account=${var.terraform_runner_sa_email}"
       project_flag="--project=${var.project_id}"
-      echo "==> Running Cloud Build trigger: ${google_cloudbuild_trigger.packer_trigger.name} (branch=${var.packer_build_branch})"
+      echo "==> Running Cloud Build trigger: ${google_cloudbuild_trigger.packer_trigger.name} (branch=${var.github_branch_name})"
       BUILD_ID=$(gcloud $impersonate_flag $project_flag \
         builds triggers run "${google_cloudbuild_trigger.packer_trigger.name}" \
         --region="${google_cloudbuild_trigger.packer_trigger.location}" \
-        --branch="${var.packer_build_branch}" \
+        --branch="${var.github_branch_name}" \
         --format="value(metadata.build.id)")
       echo "==> Waiting for build $BUILD_ID..."
       while true; do
