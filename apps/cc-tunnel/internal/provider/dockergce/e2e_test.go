@@ -181,11 +181,12 @@ func TestDockerGCEProvider_MultiContainerIntegration(t *testing.T) {
 		AgentPort:               9091,
 		MaxContainers:           2, // 1 VM holds up to 2 containers
 		IdleTimeout:             time.Minute,
-		VMReadyTimeout:          500 * time.Millisecond,
-		AgentReadyTimeout:       500 * time.Millisecond,
-		PollInterval:            10 * time.Millisecond,
-		PortRangeStart:          9091,
-		ContainerManagerFactory: containerManagerFactory,
+		VMReadyTimeout:               500 * time.Millisecond,
+		ContainerManagerReadyTimeout: 500 * time.Millisecond,
+		AgentReadyTimeout:            500 * time.Millisecond,
+		PollInterval:                 10 * time.Millisecond,
+		PortRangeStart:               9091,
+		ContainerManagerFactory:      containerManagerFactory,
 	}
 
 	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {

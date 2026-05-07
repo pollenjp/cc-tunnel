@@ -51,9 +51,10 @@ type DockerGCEConfig struct {
 	IdleCheckInterval time.Duration
 
 	// VM 起動待機のタイムアウト設定（0 はデフォルト値を使用）
-	VMReadyTimeout    time.Duration // デフォルト: 3分
-	AgentReadyTimeout time.Duration // デフォルト: 1分
-	PollInterval      time.Duration // デフォルト: 5秒
+	VMReadyTimeout               time.Duration // デフォルト: 3分
+	ContainerManagerReadyTimeout time.Duration // デフォルト: 5分 (cold boot + dockerd + container-manager systemd unit + 9090 listen までの猶予)
+	AgentReadyTimeout            time.Duration // デフォルト: 1分 (cc-remote-agent /auth/status 応答までの猶予)
+	PollInterval                 time.Duration // デフォルト: 5秒
 
 	// DockerPingTimeout は既存 VM 再利用時の container-manager 健全性チェックのタイムアウト。
 	// (デフォルト: 3秒)
@@ -112,6 +113,9 @@ func NewDockerGCEProviderWithClientFactory(cfg DockerGCEConfig, gceClient gce.GC
 	}
 	if cfg.VMReadyTimeout == 0 {
 		cfg.VMReadyTimeout = 3 * time.Minute
+	}
+	if cfg.ContainerManagerReadyTimeout == 0 {
+		cfg.ContainerManagerReadyTimeout = 5 * time.Minute
 	}
 	if cfg.AgentReadyTimeout == 0 {
 		cfg.AgentReadyTimeout = time.Minute
@@ -389,7 +393,7 @@ func (p *DockerGCEProvider) waitForVMReady(ctx context.Context, vm *db.VMInstanc
 		return "", fmt.Errorf("create container-manager client for %s: %w", cmURL, err)
 	}
 
-	stage2Ctx, cancel2 := context.WithTimeout(ctx, p.config.AgentReadyTimeout)
+	stage2Ctx, cancel2 := context.WithTimeout(ctx, p.config.ContainerManagerReadyTimeout)
 	defer cancel2()
 
 	for {

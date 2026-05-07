@@ -258,10 +258,11 @@ func shortTimeoutConfig() dockergce.DockerGCEConfig {
 		AgentPort:               0, // will be replaced by httptest server port
 		IdleTimeout:             time.Minute,
 		MaxContainers:           1,
-		VMReadyTimeout:          200 * time.Millisecond,
-		AgentReadyTimeout:       200 * time.Millisecond,
-		PollInterval:            10 * time.Millisecond,
-		ContainerManagerFactory: noopContainerManagerFactory(),
+		VMReadyTimeout:               200 * time.Millisecond,
+		ContainerManagerReadyTimeout: 200 * time.Millisecond,
+		AgentReadyTimeout:            200 * time.Millisecond,
+		PollInterval:                 10 * time.Millisecond,
+		ContainerManagerFactory:      noopContainerManagerFactory(),
 	}
 }
 
@@ -460,9 +461,10 @@ func TestDockerGCEProvider_WaitForVMReady_Timeout(t *testing.T) {
 		AgentPort:         9091,
 		MaxContainers:     1,
 		IdleTimeout:       time.Minute,
-		VMReadyTimeout:    50 * time.Millisecond, // very short
-		AgentReadyTimeout: 50 * time.Millisecond,
-		PollInterval:      5 * time.Millisecond,
+		VMReadyTimeout:               50 * time.Millisecond, // very short
+		ContainerManagerReadyTimeout: 50 * time.Millisecond,
+		AgentReadyTimeout:            50 * time.Millisecond,
+		PollInterval:                 5 * time.Millisecond,
 		// No ContainerManagerFactory needed: stage1 times out before stage2
 	}
 
