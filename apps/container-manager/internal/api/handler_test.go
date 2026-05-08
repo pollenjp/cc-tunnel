@@ -76,7 +76,7 @@ func TestCreateAgent_Success(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
-	var got CreateAgentResponse
+	var got CreateAgentResult
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
 	assert.Equal(t, "abc123", got.Id)
 	assert.Equal(t, "img:tag", mgr.lastRun.Image)

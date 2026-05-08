@@ -1,5 +1,6 @@
+# oapi-codegen config for container-manager (HTTP server).
+# Used by apps/container-manager/internal/api/handler.go via go:generate.
 package: api
-output: ../internal/api/gen.go
 generate:
   std-http-server: true
   models: true

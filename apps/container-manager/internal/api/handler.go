@@ -4,9 +4,9 @@
 // Docker daemon (Unix socket). cc-tunnel (Cloud Run) calls these endpoints
 // over the VPC; no registry credentials cross the cc-tunnel <-> VM boundary.
 //
-// The HTTP surface is defined in api/openapi.yaml and the request/response
-// types plus routing glue are generated into gen.go via oapi-codegen. This
-// file implements the generated StrictServerInterface.
+// The HTTP surface is defined in apps/openapi/container-manager.yaml and the
+// request/response types plus routing glue are generated into gen.go via
+// oapi-codegen. This file implements the generated StrictServerInterface.
 package api
 
 import (
@@ -19,7 +19,7 @@ import (
 	dockerops "github.com/pollenjp/cc-tunnel/apps/container-manager/internal/docker"
 )
 
-//go:generate oapi-codegen -config ../../api/oapi-codegen.yaml ../../api/openapi.yaml
+//go:generate go tool oapi-codegen -config ../../../openapi/container-manager.server.yaml -o gen.go ../../../openapi/container-manager.yaml
 
 // AgentManager is the subset of operations Server needs.
 type AgentManager interface {

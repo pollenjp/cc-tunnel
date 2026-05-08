@@ -42,7 +42,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateAgentResponse'
+                $ref: '#/components/schemas/CreateAgentResult'
         '400':
           description: Invalid request.
           content:
@@ -148,7 +148,7 @@ components:
           type: array
           items:
             type: string
-    CreateAgentResponse:
+    CreateAgentResult:
       type: object
       required: [id]
       properties:

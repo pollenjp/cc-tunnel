@@ -4,6 +4,8 @@
 // in place.
 package cmclient
 
+//go:generate go tool oapi-codegen -config ../../../openapi/container-manager.client.yaml -o genclient/gen.go ../../../openapi/container-manager.yaml
+
 import "context"
 
 // RunAgentRequest mirrors container-manager's POST /v1/agents body. HostPort=0
