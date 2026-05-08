@@ -57,14 +57,25 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 		tags = &computepb.Tags{Items: req.Tags}
 	}
 
+	var serviceAccounts []*computepb.ServiceAccount
+	if req.ServiceAccountEmail != "" {
+		serviceAccounts = []*computepb.ServiceAccount{
+			{
+				Email:  proto.String(req.ServiceAccountEmail),
+				Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+			},
+		}
+	}
+
 	insertReq := &computepb.InsertInstanceRequest{
 		Project: req.Project,
 		Zone:    req.Zone,
 		InstanceResource: &computepb.Instance{
-			Name:        proto.String(req.Name),
-			MachineType: proto.String(machineTypeURL),
-			Labels:      labels,
-			Tags:        tags,
+			Name:            proto.String(req.Name),
+			MachineType:     proto.String(machineTypeURL),
+			Labels:          labels,
+			Tags:            tags,
+			ServiceAccounts: serviceAccounts,
 			Disks: []*computepb.AttachedDisk{
 				{
 					Boot:       proto.Bool(true),

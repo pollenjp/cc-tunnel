@@ -26,6 +26,9 @@ type CreateInstanceRequest struct {
 	StartupScript string
 	Labels        map[string]string
 	Tags          []string `json:"tags,omitempty"` // network tags for firewall rules
+	// ServiceAccountEmail は VM にアタッチする SA のメールアドレス。
+	// 空文字の場合 GCE のデフォルト挙動 (default compute SA) になる。
+	ServiceAccountEmail string
 }
 
 // Instance は GCE VM インスタンスの情報

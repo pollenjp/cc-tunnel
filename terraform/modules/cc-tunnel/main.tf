@@ -163,8 +163,8 @@ resource "google_cloud_run_v2_service" "cloud_run" {
     google_secret_manager_secret_iam_member.cc_runtime_login_encryption_key_accessor,
     google_secret_manager_secret_version.cc_login_encryption_key,
     google_project_iam_member.cr_runtime_compute_admin,
-    google_service_account_iam_member.cr_runtime_default_compute_sa_user,
-    google_artifact_registry_repository_iam_member.cra_default_compute_sa_reader,
+    google_service_account_iam_member.cr_runtime_vm_sa_user,
+    google_artifact_registry_repository_iam_member.vm_runtime_sa_ar_reader,
     terraform_data.cra_run_trigger_once,
     terraform_data.run_trigger_once,
     terraform_data.vm_image_run_trigger_once,
@@ -243,6 +243,10 @@ resource "google_cloud_run_v2_service" "cloud_run" {
         name  = "GCE_VM_IMAGE"
         value = local.vm_image_url
       }
+      env {
+        name  = "GCE_VM_SERVICE_ACCOUNT"
+        value = google_service_account.vm_runtime_sa.email
+      }
     }
     volumes {
       name = "cloudsql"
@@ -280,8 +284,3 @@ resource "google_project_iam_member" "cr_runtime_compute_admin" {
   member  = "serviceAccount:${google_service_account.runtime_sa.email}"
 }
 
-resource "google_service_account_iam_member" "cr_runtime_default_compute_sa_user" {
-  service_account_id = "projects/${var.project_id}/serviceAccounts/${data.google_project.current.number}-compute@developer.gserviceaccount.com"
-  role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${google_service_account.runtime_sa.email}"
-}
