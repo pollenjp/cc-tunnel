@@ -59,6 +59,11 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 
 	var serviceAccounts []*computepb.ServiceAccount
 	if req.ServiceAccountEmail != "" {
+		// 実効権限は (OAuth scope) ∩ (SA に付与された IAM role) で決まる。
+		// cloud-platform は scope レイヤで全 GCP API を許可する宣言で、
+		// 実際の権限制御は SA の IAM role 側に寄せる方針 (Google 推奨)。
+		// VM 作成後に scope は変更不可なので広めに取り、IAM で絞る。
+		// https://cloud.google.com/compute/docs/access/service-accounts#scopes_best_practice
 		serviceAccounts = []*computepb.ServiceAccount{
 			{
 				Email:  proto.String(req.ServiceAccountEmail),
