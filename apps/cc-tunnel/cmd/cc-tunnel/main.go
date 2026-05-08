@@ -205,6 +205,7 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 			Zone:                getEnvOrDefault("GCE_ZONE", "us-central1-a"),
 			MachineType:         getEnvOrDefault("GCE_MACHINE_TYPE", "e2-medium"),
 			VMImage:             vmImage,
+			VMServiceAccount:    os.Getenv("GCE_VM_SERVICE_ACCOUNT"),
 			AgentImage:          agentImage,
 			AgentPort:           9091,
 			IdleTimeout:         15 * time.Minute,

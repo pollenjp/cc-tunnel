@@ -92,10 +92,3 @@ resource "terraform_data" "cra_run_trigger_once" {
 data "google_project" "current" {
   project_id = var.project_id
 }
-
-resource "google_artifact_registry_repository_iam_member" "cra_default_compute_sa_reader" {
-  location   = var.artifact_registry_repository_location
-  repository = var.artifact_registry_repository_name
-  role       = "roles/artifactregistry.reader"
-  member     = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
-}

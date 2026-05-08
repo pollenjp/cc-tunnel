@@ -38,13 +38,14 @@ type dbRepository interface {
 
 // DockerGCEConfig は DockerGCEProvider の設定
 type DockerGCEConfig struct {
-	ProjectID   string
-	Zone        string
-	MachineType string // デフォルト: "e2-medium"
-	VMImage     string // GCE source image (Packer で焼いた Docker 入り Ubuntu)
-	AgentImage  string // Artifact Registry の cc-remote-agent イメージ URL
-	AgentPort   int    // cc-remote-agent の listen ポート（デフォルト: 9091）
-	IdleTimeout time.Duration
+	ProjectID        string
+	Zone             string
+	MachineType      string // デフォルト: "e2-medium"
+	VMImage          string // GCE source image (Packer で焼いた Docker 入り Ubuntu)
+	VMServiceAccount string // VM にアタッチする SA のメールアドレス（空なら GCE default compute SA）
+	AgentImage       string // Artifact Registry の cc-remote-agent イメージ URL
+	AgentPort        int    // cc-remote-agent の listen ポート（デフォルト: 9091）
+	IdleTimeout      time.Duration
 	MaxContainers int // デフォルト: 10
 
 	// IdleCheckInterval は IdleChecker / VMScaler が CleanupOrphans を呼ぶ間隔（0 = 無効）
@@ -341,14 +342,15 @@ func (p *DockerGCEProvider) createGCEVM(ctx context.Context) (*db.VMInstance, er
 	vmName := "cc-tunnel-" + uuid.New().String()[:8]
 
 	inst, err := p.gce.CreateInstance(ctx, &gce.CreateInstanceRequest{
-		Project:       p.config.ProjectID,
-		Zone:          p.config.Zone,
-		Name:          vmName,
-		MachineType:   p.config.MachineType,
-		SourceImage:   p.config.VMImage,
-		StartupScript: p.buildStartupScript(),
-		Labels:        map[string]string{"managed-by": "cc-tunnel"},
-		Tags:          []string{"cc-tunnel-agent"},
+		Project:             p.config.ProjectID,
+		Zone:                p.config.Zone,
+		Name:                vmName,
+		MachineType:         p.config.MachineType,
+		SourceImage:         p.config.VMImage,
+		ServiceAccountEmail: p.config.VMServiceAccount,
+		StartupScript:       p.buildStartupScript(),
+		Labels:              map[string]string{"managed-by": "cc-tunnel"},
+		Tags:                []string{"cc-tunnel-agent"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create GCE instance: %w", err)
