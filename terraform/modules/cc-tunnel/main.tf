@@ -247,6 +247,13 @@ resource "google_cloud_run_v2_service" "cloud_run" {
         name  = "GCE_VM_SERVICE_ACCOUNT"
         value = google_service_account.vm_runtime_sa.email
       }
+      # 新規 VM が乗る subnet。Private Google Access が有効なので外部 IP なし
+      # でも Artifact Registry に到達できる。値は fully qualified な subnet
+      # path (projects/<proj>/regions/<region>/subnetworks/<name>)。
+      env {
+        name  = "GCE_VM_SUBNETWORK"
+        value = google_compute_subnetwork.cc_remote_agent_vm.id
+      }
     }
     volumes {
       name = "cloudsql"

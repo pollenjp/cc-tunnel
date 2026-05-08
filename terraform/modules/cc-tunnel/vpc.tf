@@ -10,3 +10,21 @@ resource "google_compute_subnetwork" "cc_tunnel_egress" {
   ip_cidr_range = var.vpc_connector_subnet_cidr
   description   = "Direct VPC egress subnet for cc-tunnel Cloud Run -> GCE VM internal IPs"
 }
+
+locals {
+  # Derive region from zone (e.g. "us-central1-a" -> "us-central1").
+  gce_region = regex("^(.*)-[a-z]$", var.gce_zone)[0]
+}
+
+# Subnet for cc-remote-agent VMs with Private Google Access enabled, so VMs
+# without external IPs can still reach Artifact Registry (`*.pkg.dev`) and
+# other Google APIs to pull the cc-remote-agent image.
+resource "google_compute_subnetwork" "cc_remote_agent_vm" {
+  name                     = "cc-remote-agent-vm"
+  project                  = var.project_id
+  region                   = local.gce_region
+  network                  = var.network_name
+  ip_cidr_range            = var.cc_remote_agent_subnet_cidr
+  private_ip_google_access = true
+  description              = "cc-remote-agent VM subnet (PGA-enabled for Artifact Registry pull)"
+}

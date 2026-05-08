@@ -133,6 +133,12 @@ variable "vpc_connector_subnet_cidr" {
   type        = string
 }
 
+variable "cc_remote_agent_subnet_cidr" {
+  description = "CIDR for the cc-remote-agent VM subnet. The subnet has Private Google Access enabled so VMs without external IPs can pull cc-remote-agent images from Artifact Registry."
+  type        = string
+  default     = "10.16.0.0/20"
+}
+
 variable "cloudflare_zone_id" {
   type        = string
   description = "Cloudflare Zone ID for the DNS record (Cloudflare Dashboard > 該当 zone の Overview ページ右下から取得)"

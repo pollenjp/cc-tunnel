@@ -91,9 +91,7 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 				},
 			},
 			NetworkInterfaces: []*computepb.NetworkInterface{
-				{
-					Name: proto.String("global/networks/default"),
-				},
+				networkInterface(req.Subnetwork),
 			},
 			Metadata: &computepb.Metadata{
 				Items: metadata,
@@ -110,6 +108,22 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 	}
 
 	return c.GetInstance(ctx, req.Project, req.Zone, req.Name)
+}
+
+// networkInterface builds a NetworkInterface for VM creation. When subnetwork
+// is non-empty (production: PGA-enabled subnet), GCE infers the network from
+// the subnet. When empty, the VM is placed on the project's "default" network
+// using its auto-mode region subnet, which has no Private Google Access — so
+// without an external IP the VM cannot reach Artifact Registry.
+func networkInterface(subnetwork string) *computepb.NetworkInterface {
+	if subnetwork != "" {
+		return &computepb.NetworkInterface{
+			Subnetwork: proto.String(subnetwork),
+		}
+	}
+	return &computepb.NetworkInterface{
+		Network: proto.String("global/networks/default"),
+	}
 }
 
 // GetInstance は VM インスタンスの情報を取得する
