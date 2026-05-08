@@ -110,19 +110,34 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 	return c.GetInstance(ctx, req.Project, req.Zone, req.Name)
 }
 
-// networkInterface builds a NetworkInterface for VM creation. When subnetwork
-// is non-empty (production: PGA-enabled subnet), GCE infers the network from
-// the subnet. When empty, the VM is placed on the project's "default" network
-// using its auto-mode region subnet, which has no Private Google Access — so
-// without an external IP the VM cannot reach Artifact Registry.
+// networkInterface builds a NetworkInterface for VM creation.
+//
+// An ephemeral external IP is always attached via AccessConfigs so the VM can
+// reach arbitrary external services (GitHub, npm, pypi, apt repos, ...) that
+// cc-remote-agent containers may need. PGA on the subnet still helps for
+// Google APIs (`*.googleapis.com`, `*.pkg.dev`) when present, but is no longer
+// required for Artifact Registry pull.
+//
+// Ingress is independently controlled by VPC firewall rules — only the
+// container-manager rule (source = VPC connector subnet) and project-default
+// rules apply. Review default-allow-ssh / default-allow-rdp on the `default`
+// network if exposing port 22/3389 to the internet is undesirable.
 func networkInterface(subnetwork string) *computepb.NetworkInterface {
+	accessConfigs := []*computepb.AccessConfig{
+		{
+			Name: proto.String("External NAT"),
+			Type: proto.String("ONE_TO_ONE_NAT"),
+		},
+	}
 	if subnetwork != "" {
 		return &computepb.NetworkInterface{
-			Subnetwork: proto.String(subnetwork),
+			Subnetwork:    proto.String(subnetwork),
+			AccessConfigs: accessConfigs,
 		}
 	}
 	return &computepb.NetworkInterface{
-		Network: proto.String("global/networks/default"),
+		Network:       proto.String("global/networks/default"),
+		AccessConfigs: accessConfigs,
 	}
 }
 
