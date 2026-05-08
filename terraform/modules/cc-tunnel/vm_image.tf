@@ -65,7 +65,8 @@ resource "google_cloudbuild_trigger" "vm_image_trigger" {
     name  = local.github_repo_name
     push { branch = "^${local.github_branch_name}$" }
   }
-  included_files = ["${local.vm_image_dir}/**"]
+  # Rebuild the VM image when container-manager (baked into the image) changes.
+  included_files = ["${local.vm_image_dir}/**", "${local.cm_dockerfile_dir}/**"]
 
   filename = "${local.vm_image_dir}/cloudbuild.yaml"
 
@@ -73,6 +74,7 @@ resource "google_cloudbuild_trigger" "vm_image_trigger" {
     _PROJECT_ID   = var.project_id
     _ZONE         = var.gce_zone
     _IMAGE_FAMILY = local.vm_image_family
+    _CM_IMAGE     = local.cm_fqim
   }
 }
 
@@ -82,6 +84,9 @@ resource "terraform_data" "vm_image_run_trigger_once" {
     google_project_iam_member.vm_image_builder_sa_roles,
     google_service_account_iam_member.vm_image_builder_sa_use_default_compute_sa,
     time_sleep.wait_vm_image_builder_sa_iam,
+    # container-manager image must exist in AR before Packer pulls it.
+    terraform_data.cm_run_trigger_once,
+    google_artifact_registry_repository_iam_member.cm_packer_builder_reader,
   ]
   triggers_replace = [google_cloudbuild_trigger.vm_image_trigger.id]
 

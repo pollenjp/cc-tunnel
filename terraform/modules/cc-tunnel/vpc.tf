@@ -1,5 +1,5 @@
 # Subnet used by Cloud Run Direct VPC egress so that the cc-tunnel service can
-# reach GCE VMs (Docker daemon TCP 2375) by their internal IPs.
+# reach the container-manager HTTP API on each GCE VM (by internal IP).
 # The CIDR matches firewall.tf source_ranges and is sized /28 per Direct VPC
 # egress requirement (minimum /28 in the same region as the Cloud Run service).
 resource "google_compute_subnetwork" "cc_tunnel_egress" {

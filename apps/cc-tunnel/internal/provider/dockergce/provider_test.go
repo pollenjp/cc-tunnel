@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/cmclient"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
-	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/dockerhost"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/gce"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/dockergce"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
@@ -241,9 +241,9 @@ func fakeAgentServer(t *testing.T, events []remoteclient.StreamEvent) *httptest.
 }
 
 // noopContainerManagerFactory returns a ContainerManager that always succeeds and reports IsReady=true.
-func noopContainerManagerFactory() func(string) (dockerhost.ContainerManager, error) {
-	return func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{
+func noopContainerManagerFactory() func(string) (cmclient.ContainerManager, error) {
+	return func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
 			IsReadyFunc: func(_ context.Context) bool { return true },
 		}, nil
 	}
@@ -258,10 +258,11 @@ func shortTimeoutConfig() dockergce.DockerGCEConfig {
 		AgentPort:               0, // will be replaced by httptest server port
 		IdleTimeout:             time.Minute,
 		MaxContainers:           1,
-		VMReadyTimeout:          200 * time.Millisecond,
-		AgentReadyTimeout:       200 * time.Millisecond,
-		PollInterval:            10 * time.Millisecond,
-		ContainerManagerFactory: noopContainerManagerFactory(),
+		VMReadyTimeout:               200 * time.Millisecond,
+		ContainerManagerReadyTimeout: 200 * time.Millisecond,
+		AgentReadyTimeout:            200 * time.Millisecond,
+		PollInterval:                 10 * time.Millisecond,
+		ContainerManagerFactory:      noopContainerManagerFactory(),
 	}
 }
 
@@ -460,9 +461,10 @@ func TestDockerGCEProvider_WaitForVMReady_Timeout(t *testing.T) {
 		AgentPort:         9091,
 		MaxContainers:     1,
 		IdleTimeout:       time.Minute,
-		VMReadyTimeout:    50 * time.Millisecond, // very short
-		AgentReadyTimeout: 50 * time.Millisecond,
-		PollInterval:      5 * time.Millisecond,
+		VMReadyTimeout:               50 * time.Millisecond, // very short
+		ContainerManagerReadyTimeout: 50 * time.Millisecond,
+		AgentReadyTimeout:            50 * time.Millisecond,
+		PollInterval:                 5 * time.Millisecond,
 		// No ContainerManagerFactory needed: stage1 times out before stage2
 	}
 
@@ -481,8 +483,8 @@ func TestDockerGCEProvider_CleanupOrphans(t *testing.T) {
 	deletedEndpoints := make(map[string]bool)
 	deletedVMs := make(map[string]bool)
 
-	factory := func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{
+	factory := func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
 			IsReadyFunc: func(_ context.Context) bool { return true },
 			StopContainerFunc: func(_ context.Context, name string) error {
 				mu.Lock()
@@ -563,8 +565,8 @@ func TestGetOrCreateEndpoint_NewVM(t *testing.T) {
 	cfg := shortTimeoutConfig()
 	cfg.AgentPort = 9091
 	cfg.PortRangeStart = 9091
-	cfg.ContainerManagerFactory = func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{
+	cfg.ContainerManagerFactory = func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
 			IsReadyFunc: func(_ context.Context) bool { return true },
 			RunAgentContainerFunc: func(_ context.Context, image, name string, hostPort, _ int) error {
 				runMu.Lock()
@@ -640,8 +642,8 @@ func TestGetOrCreateEndpoint_ExistingVM(t *testing.T) {
 	cfg.AgentPort = 9091
 	cfg.PortRangeStart = 9091
 	cfg.MaxContainers = 10
-	cfg.ContainerManagerFactory = func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{
+	cfg.ContainerManagerFactory = func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
 			IsReadyFunc: func(_ context.Context) bool { return true },
 			RunAgentContainerFunc: func(_ context.Context, _, _ string, hostPort, _ int) error {
 				runMu.Lock()
@@ -696,13 +698,13 @@ func TestGetOrCreateEndpoint_UnhealthyExistingVM_FallsBackToCreate(t *testing.T)
 	var pingTargets []string
 	var pingMu sync.Mutex
 
-	factory := func(host string) (dockerhost.ContainerManager, error) {
+	factory := func(host string) (cmclient.ContainerManager, error) {
 		pingMu.Lock()
 		pingTargets = append(pingTargets, host)
 		pingMu.Unlock()
 		// Dead VM (10.99.99.99) returns IsReady=false; new VM (10.4.4.4) returns true.
-		ready := host != "tcp://10.99.99.99:2375"
-		return &dockerhost.MockContainerManager{
+		ready := host != "http://10.99.99.99:9090"
+		return &cmclient.MockContainerManager{
 			IsReadyFunc: func(_ context.Context) bool { return ready },
 		}, nil
 	}
@@ -711,7 +713,7 @@ func TestGetOrCreateEndpoint_UnhealthyExistingVM_FallsBackToCreate(t *testing.T)
 	cfg.AgentPort = 9091
 	cfg.PortRangeStart = 9091
 	cfg.MaxContainers = 10
-	cfg.DockerHostPort = 2375
+	cfg.ContainerManagerPort = 9090
 	cfg.DockerPingTimeout = 50 * time.Millisecond
 	cfg.ContainerManagerFactory = factory
 
@@ -746,7 +748,7 @@ func TestGetOrCreateEndpoint_UnhealthyExistingVM_FallsBackToCreate(t *testing.T)
 	defer pingMu.Unlock()
 	pingedDead := false
 	for _, h := range pingTargets {
-		if h == "tcp://10.99.99.99:2375" {
+		if h == "http://10.99.99.99:9090" {
 			pingedDead = true
 			break
 		}
@@ -815,8 +817,8 @@ func TestCleanupOrphans_StopsContainer(t *testing.T) {
 		deletedVMs:       make(map[string]bool),
 	}
 
-	factory := func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{
+	factory := func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
 			StopContainerFunc: func(_ context.Context, name string) error {
 				mu.Lock()
 				stopped = append(stopped, name)
@@ -866,8 +868,8 @@ func TestGetOrCreateEndpoint_AgentReadyFail_OrphanCleanup(t *testing.T) {
 	var stopped, removed []string
 	var mu sync.Mutex
 
-	factory := func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{
+	factory := func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
 			IsReadyFunc: func(_ context.Context) bool { return true },
 			RunAgentContainerFunc: func(_ context.Context, _, _ string, _, _ int) error {
 				return nil
@@ -935,8 +937,8 @@ func TestGetOrCreateEndpoint_PortCollisionRetry(t *testing.T) {
 	var runPorts []int
 	var mu sync.Mutex
 
-	factory := func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{
+	factory := func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
 			IsReadyFunc: func(_ context.Context) bool { return true },
 			RunAgentContainerFunc: func(_ context.Context, _, _ string, hostPort, _ int) error {
 				mu.Lock()
@@ -1044,8 +1046,8 @@ func TestVMScaler_Started(t *testing.T) {
 
 	repo := &countingCleanupRepo{}
 
-	factory := func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{}, nil
+	factory := func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{}, nil
 	}
 
 	cfg := dockergce.DockerGCEConfig{

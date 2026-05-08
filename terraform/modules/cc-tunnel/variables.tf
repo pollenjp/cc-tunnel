@@ -100,6 +100,17 @@ variable "cc_remote_agent_image_name" {
   default = "cc-remote-agent"
 }
 
+variable "container_manager_image_name" {
+  type    = string
+  default = "container-manager"
+}
+
+variable "container_manager_port" {
+  description = "Host port that container-manager listens on inside each cc-tunnel VM"
+  type        = number
+  default     = 9090
+}
+
 variable "lb_fqdn" {
   type        = string
   description = "FQDN for HTTPS LB (Google-managed SSL cert はこのドメインで発行)"
@@ -118,7 +129,7 @@ variable "network_name" {
 }
 
 variable "vpc_connector_subnet_cidr" {
-  description = "CIDR range of the VPC Connector subnet (source for Docker daemon firewall rule)"
+  description = "CIDR range of the VPC Connector subnet (source for the container-manager firewall rule)"
   type        = string
 }
 

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/cmclient"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
-	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/dockerhost"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/gce"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/provider/dockergce"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/remoteclient"
@@ -132,8 +132,8 @@ func TestDockerGCEProvider_MultiContainerIntegration(t *testing.T) {
 		stopCalls []string
 	)
 
-	containerManagerFactory := func(_ string) (dockerhost.ContainerManager, error) {
-		return &dockerhost.MockContainerManager{
+	containerManagerFactory := func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
 			IsReadyFunc: func(_ context.Context) bool { return true },
 			RunAgentContainerFunc: func(_ context.Context, _, name string, hostPort, _ int) error {
 				mu.Lock()
@@ -181,11 +181,12 @@ func TestDockerGCEProvider_MultiContainerIntegration(t *testing.T) {
 		AgentPort:               9091,
 		MaxContainers:           2, // 1 VM holds up to 2 containers
 		IdleTimeout:             time.Minute,
-		VMReadyTimeout:          500 * time.Millisecond,
-		AgentReadyTimeout:       500 * time.Millisecond,
-		PollInterval:            10 * time.Millisecond,
-		PortRangeStart:          9091,
-		ContainerManagerFactory: containerManagerFactory,
+		VMReadyTimeout:               500 * time.Millisecond,
+		ContainerManagerReadyTimeout: 500 * time.Millisecond,
+		AgentReadyTimeout:            500 * time.Millisecond,
+		PollInterval:                 10 * time.Millisecond,
+		PortRangeStart:               9091,
+		ContainerManagerFactory:      containerManagerFactory,
 	}
 
 	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {

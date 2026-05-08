@@ -1,0 +1,12 @@
+[tools]
+go = "1.26.1"
+"golangci-lint" = "2.11.4"
+
+[tasks."container-manager:dev:up"]
+run = 'go run ./cmd/container-manager/ '
+
+[tasks."container-manager:test"]
+run = 'go test ./...'
+
+[tasks."container-manager:lint"]
+run = 'golangci-lint run ./...'

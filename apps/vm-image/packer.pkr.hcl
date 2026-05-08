@@ -41,6 +41,23 @@ variable "machine_type" {
   default = "e2-small"
 }
 
+variable "container_manager_image" {
+  type        = string
+  description = "Fully-qualified container-manager image reference (e.g. <region>-docker.pkg.dev/<project>/<repo>/container-manager:latest). The image is loaded from the tarball below; no pull is performed at VM runtime."
+}
+
+variable "container_manager_image_tar" {
+  type        = string
+  description = "Path on the Packer host (relative to the working directory) of the container-manager image saved via 'docker save'. Uploaded to the VM and loaded with 'docker load'."
+  default     = "./container-manager.tar"
+}
+
+variable "container_manager_port" {
+  type        = number
+  default     = 9090
+  description = "Host port that container-manager listens on."
+}
+
 source "googlecompute" "cc_tunnel_vm" {
   project_id              = var.project_id
   zone                    = var.zone
@@ -61,6 +78,9 @@ build {
   name    = "cc-tunnel-vm"
   sources = ["source.googlecompute.cc_tunnel_vm"]
 
+  # 1. Install Docker (no TCP listener; Unix socket only — only the
+  #    container-manager container talks to dockerd via the bind-mounted
+  #    socket).
   provisioner "shell" {
     execute_command = "sudo -E bash '{{ .Path }}'"
     inline_shebang  = "/bin/bash -euo pipefail"
@@ -74,14 +94,52 @@ build {
       "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable' > /etc/apt/sources.list.d/docker.list",
       "for i in 1 2 3 4 5; do apt-get update && break || sleep 5; done",
       "apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io",
-      "mkdir -p /etc/systemd/system/docker.service.d",
-      "cat > /etc/systemd/system/docker.service.d/tcp.conf <<'EOF'",
+      "systemctl enable docker",
+    ]
+  }
+
+  # 2. Upload the container-manager image tarball pre-built by the upstream
+  #    Cloud Build step.
+  provisioner "file" {
+    source      = var.container_manager_image_tar
+    destination = "/tmp/container-manager.tar"
+  }
+
+  # 3. Load the image and install a systemd unit that runs container-manager
+  #    in --network=bridge with a port mapping and the docker socket
+  #    bind-mounted. container-manager is the only client of dockerd.
+  #
+  #    Values are interpolated at Packer build time (HCL ${...}) and the
+  #    heredoc is quoted (<<'EOF') so the runtime shell does not try to
+  #    re-expand anything. We deliberately do not rely on Packer's
+  #    environment_vars here because the overridden execute_command would
+  #    need {{ .Vars }} to propagate them — direct interpolation is simpler.
+  provisioner "shell" {
+    execute_command = "sudo -E bash '{{ .Path }}'"
+    inline_shebang  = "/bin/bash -euo pipefail"
+    inline = [
+      "systemctl start docker",
+      "docker load -i /tmp/container-manager.tar",
+      "rm -f /tmp/container-manager.tar",
+      "cat > /etc/systemd/system/container-manager.service <<'EOF'",
+      "[Unit]",
+      "Description=cc-tunnel container-manager",
+      "After=docker.service",
+      "Requires=docker.service",
+      "",
       "[Service]",
-      "ExecStart=",
-      "ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375 --containerd=/run/containerd/containerd.sock",
+      "Type=simple",
+      "Restart=always",
+      "RestartSec=5",
+      "ExecStartPre=-/usr/bin/docker rm -f container-manager",
+      "ExecStart=/usr/bin/docker run --rm --name container-manager --network=bridge -p ${var.container_manager_port}:9090 -v /var/run/docker.sock:/var/run/docker.sock ${var.container_manager_image}",
+      "ExecStop=/usr/bin/docker stop container-manager",
+      "",
+      "[Install]",
+      "WantedBy=multi-user.target",
       "EOF",
       "systemctl daemon-reload",
-      "systemctl enable docker",
+      "systemctl enable container-manager.service",
       "apt-get clean",
       "rm -rf /var/lib/apt/lists/*",
     ]

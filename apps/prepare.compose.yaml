@@ -4,3 +4,8 @@ services:
     build:
       context: ./cc-remote-agent
     image: cc-remote-agent:latest
+
+  container-manager:
+    build:
+      context: ./container-manager
+    image: container-manager:latest
