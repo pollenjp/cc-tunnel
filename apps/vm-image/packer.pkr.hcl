@@ -108,18 +108,20 @@ build {
   # 3. Load the image and install a systemd unit that runs container-manager
   #    in --network=bridge with a port mapping and the docker socket
   #    bind-mounted. container-manager is the only client of dockerd.
+  #
+  #    Values are interpolated at Packer build time (HCL ${...}) and the
+  #    heredoc is quoted (<<'EOF') so the runtime shell does not try to
+  #    re-expand anything. We deliberately do not rely on Packer's
+  #    environment_vars here because the overridden execute_command would
+  #    need {{ .Vars }} to propagate them — direct interpolation is simpler.
   provisioner "shell" {
     execute_command = "sudo -E bash '{{ .Path }}'"
     inline_shebang  = "/bin/bash -euo pipefail"
-    environment_vars = [
-      "CM_IMAGE=${var.container_manager_image}",
-      "CM_PORT=${var.container_manager_port}",
-    ]
     inline = [
       "systemctl start docker",
       "docker load -i /tmp/container-manager.tar",
       "rm -f /tmp/container-manager.tar",
-      "cat > /etc/systemd/system/container-manager.service <<EOF",
+      "cat > /etc/systemd/system/container-manager.service <<'EOF'",
       "[Unit]",
       "Description=cc-tunnel container-manager",
       "After=docker.service",
@@ -130,7 +132,7 @@ build {
       "Restart=always",
       "RestartSec=5",
       "ExecStartPre=-/usr/bin/docker rm -f container-manager",
-      "ExecStart=/usr/bin/docker run --rm --name container-manager --network=bridge -p $${CM_PORT}:9090 -v /var/run/docker.sock:/var/run/docker.sock $${CM_IMAGE}",
+      "ExecStart=/usr/bin/docker run --rm --name container-manager --network=bridge -p ${var.container_manager_port}:9090 -v /var/run/docker.sock:/var/run/docker.sock ${var.container_manager_image}",
       "ExecStop=/usr/bin/docker stop container-manager",
       "",
       "[Install]",
