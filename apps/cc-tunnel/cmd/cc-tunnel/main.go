@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/cmclient"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/credential"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/db"
 	dockerpkg "github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/docker"
@@ -135,19 +136,49 @@ func getEnvIntOrDefault(key string, defaultVal int) int {
 	return defaultVal
 }
 
+// newLocalRunner returns a DockerRunner for local-mode SessionManager.
+// When CONTAINER_MANAGER_URL is set, requests are proxied to a remote
+// container-manager (matching the production architecture). The container
+// port string returned is what SessionManager uses to build the agent URL
+// (http://<container-name>:<port>); in container-manager mode, env injection
+// of PORT is not used and we fall back to cc-remote-agent's default 9090.
+func newLocalRunner() (dockerpkg.DockerRunner, string, error) {
+	if cmURL := os.Getenv("CONTAINER_MANAGER_URL"); cmURL != "" {
+		c, err := cmclient.NewClient(cmURL)
+		if err != nil {
+			return nil, "", fmt.Errorf("cmclient: %w", err)
+		}
+		port := getEnvOrDefault("CC_REMOTE_AGENT_PORT", "9090")
+		portInt, err := strconv.Atoi(port)
+		if err != nil {
+			return nil, "", fmt.Errorf("parse CC_REMOTE_AGENT_PORT: %w", err)
+		}
+		return dockerpkg.NewCMRunner(c, portInt), port, nil
+	}
+	runner, err := dockerpkg.NewSDKRunner()
+	if err != nil {
+		return nil, "", fmt.Errorf("docker runner: %w", err)
+	}
+	return runner, getEnvOrDefault("CC_REMOTE_AGENT_PORT", "9091"), nil
+}
+
 // newProviderFromEnv selects the ExecutionProvider based on envVal.
 // Returns an error for unknown or empty envVal.
 func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository) (provider.ExecutionProvider, error) {
 	switch envVal {
 	case "local":
-		runner, err := dockerpkg.NewSDKRunner()
+		// When CONTAINER_MANAGER_URL is set, drive Docker through a remote
+		// container-manager instance instead of the local Docker SDK. This
+		// mirrors the production architecture during local development and
+		// removes the need to bind-mount /var/run/docker.sock into cc-tunnel.
+		runner, containerPortStr, err := newLocalRunner()
 		if err != nil {
-			return nil, fmt.Errorf("docker runner: %w", err)
+			return nil, err
 		}
 		sm := dockerpkg.NewSessionManager(runner, dockerpkg.SessionManagerConfig{
 			Image:         getEnvOrDefault("CC_REMOTE_AGENT_IMAGE", "cc-remote-agent:latest"),
 			Network:       getEnvOrDefault("DOCKER_NETWORK", "apps_default"),
-			ContainerPort: getEnvOrDefault("CC_REMOTE_AGENT_PORT", "9091"),
+			ContainerPort: containerPortStr,
 		})
 		return localprovider.NewLocalDockerProvider(sm), nil
 	case "cloud_run_sandbox":

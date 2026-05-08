@@ -53,12 +53,14 @@ func (h *Handler) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAgentRequest struct {
-	Image         string `json:"image"`
-	Name          string `json:"name"`
-	HostPort      int    `json:"host_port"`
-	ContainerPort int    `json:"container_port"`
-	MemoryMiB     int64  `json:"memory_mib,omitempty"`
-	NanoCPUs      int64  `json:"nano_cpus,omitempty"`
+	Image         string   `json:"image"`
+	Name          string   `json:"name"`
+	HostPort      int      `json:"host_port"`
+	ContainerPort int      `json:"container_port"`
+	MemoryMiB     int64    `json:"memory_mib,omitempty"`
+	NanoCPUs      int64    `json:"nano_cpus,omitempty"`
+	Network       string   `json:"network,omitempty"`
+	Env           []string `json:"env,omitempty"`
 }
 
 type createAgentResponse struct {
@@ -71,8 +73,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "decode body: "+err.Error())
 		return
 	}
-	if req.Image == "" || req.Name == "" || req.HostPort == 0 || req.ContainerPort == 0 {
-		writeError(w, http.StatusBadRequest, "image, name, host_port, container_port are required")
+	if req.Image == "" || req.Name == "" || req.ContainerPort == 0 {
+		writeError(w, http.StatusBadRequest, "image, name, container_port are required")
 		return
 	}
 	if strings.ContainsAny(req.Name, "/ \t\n") {
@@ -87,6 +89,8 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		ContainerPort: req.ContainerPort,
 		MemoryBytes:   req.MemoryMiB * 1024 * 1024,
 		NanoCPUs:      req.NanoCPUs,
+		Network:       req.Network,
+		Env:           req.Env,
 	})
 	if err != nil {
 		slog.Error("RunAgent failed", "err", err, "name", req.Name)

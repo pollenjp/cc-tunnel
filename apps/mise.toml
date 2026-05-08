@@ -13,7 +13,7 @@ run = '''
 set -euo pipefail
 shopt -s inherit_errexit
 
-echo "Building cc-remote-agent image..."
+echo "Building cc-remote-agent and container-manager images..."
 docker compose -f prepare.compose.yaml build
 
 echo "Starting infrastructure (postgres)..."
@@ -23,6 +23,10 @@ echo ""
 echo "Infrastructure ready. Run in separate terminals:"
 echo "  Terminal 1: cd cc-tunnel && mise run cc-tunnel:dev:up"
 echo "  Terminal 2: cd frontend && mise run frontend:dev:up"
+echo ""
+echo "Note: 'cc-tunnel:dev:up' (host process) still uses the local Docker SDK"
+echo "      directly. To exercise the container-manager path, run 'mise run docker:up'"
+echo "      which brings up the full compose stack."
 '''
 
 [tasks."docker:up"]

@@ -32,36 +32,46 @@ func NewClient(baseURL string) (*Client, error) {
 }
 
 type createAgentRequest struct {
-	Image         string `json:"image"`
-	Name          string `json:"name"`
-	HostPort      int    `json:"host_port"`
-	ContainerPort int    `json:"container_port"`
+	Image         string   `json:"image"`
+	Name          string   `json:"name"`
+	HostPort      int      `json:"host_port"`
+	ContainerPort int      `json:"container_port"`
+	Network       string   `json:"network,omitempty"`
+	Env           []string `json:"env,omitempty"`
 }
 
-// RunAgentContainer issues POST /v1/agents on container-manager.
-// container-manager pulls the image (using its VM service-account credentials)
-// and starts the container; no registry credentials cross this boundary.
-func (c *Client) RunAgentContainer(ctx context.Context, image, name string, hostPort, containerPort int) error {
-	body, err := json.Marshal(createAgentRequest{
-		Image: image, Name: name, HostPort: hostPort, ContainerPort: containerPort,
-	})
+// RunAgent issues POST /v1/agents on container-manager. container-manager
+// pulls the image (using its own credentials) and starts the container; no
+// registry credentials cross this boundary.
+func (c *Client) RunAgent(ctx context.Context, req RunAgentRequest) error {
+	body, err := json.Marshal(createAgentRequest(req))
 	if err != nil {
 		return fmt.Errorf("cmclient: marshal create request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/agents", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/agents", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("cmclient: build create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("cmclient: create container %q: %w", name, err)
+		return fmt.Errorf("cmclient: create container %q: %w", req.Name, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("cmclient: create container %q: %s", name, statusError(resp))
+		return fmt.Errorf("cmclient: create container %q: %s", req.Name, statusError(resp))
 	}
 	return nil
+}
+
+// RunAgentContainer is the production GCE path's convenience wrapper.
+func (c *Client) RunAgentContainer(ctx context.Context, image, name string, hostPort, containerPort int) error {
+	return c.RunAgent(ctx, RunAgentRequest{
+		Image:         image,
+		Name:          name,
+		HostPort:      hostPort,
+		ContainerPort: containerPort,
+	})
 }
 
 // StopContainer issues POST /v1/agents/{name}/stop.

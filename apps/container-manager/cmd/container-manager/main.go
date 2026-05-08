@@ -37,7 +37,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-	mgr, err := dockerops.NewManager()
+	mgr, err := dockerops.NewManager(os.Getenv("DEFAULT_NETWORK"))
 	if err != nil {
 		slog.Error("docker manager init", "err", err)
 		os.Exit(1)

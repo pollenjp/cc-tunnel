@@ -70,7 +70,7 @@ func TestCreateAgent_Success(t *testing.T) {
 	srv := newServer(mgr)
 	defer srv.Close()
 
-	body := `{"image":"img:tag","name":"sess-1","host_port":9091,"container_port":9090,"memory_mib":256}`
+	body := `{"image":"img:tag","name":"sess-1","host_port":9091,"container_port":9090,"memory_mib":256,"network":"my-net","env":["PORT=9090"]}`
 	resp, err := http.Post(srv.URL+"/v1/agents", "application/json", strings.NewReader(body))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -84,6 +84,21 @@ func TestCreateAgent_Success(t *testing.T) {
 	assert.Equal(t, 9091, mgr.lastRun.HostPort)
 	assert.Equal(t, 9090, mgr.lastRun.ContainerPort)
 	assert.Equal(t, int64(256*1024*1024), mgr.lastRun.MemoryBytes)
+	assert.Equal(t, "my-net", mgr.lastRun.Network)
+	assert.Equal(t, []string{"PORT=9090"}, mgr.lastRun.Env)
+}
+
+func TestCreateAgent_NoHostPort(t *testing.T) {
+	mgr := &fakeManager{runID: "abc"}
+	srv := newServer(mgr)
+	defer srv.Close()
+
+	body := `{"image":"img:tag","name":"sess-1","container_port":9090}`
+	resp, err := http.Post(srv.URL+"/v1/agents", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, 0, mgr.lastRun.HostPort)
 }
 
 func TestCreateAgent_BadRequest(t *testing.T) {

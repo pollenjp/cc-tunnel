@@ -19,6 +19,21 @@ services:
     expose:
       - "5432"
 
+  # container-manager is the only client of /var/run/docker.sock. cc-tunnel
+  # talks to it via HTTP on port 9090. New cc-remote-agent containers it
+  # creates join the apps_default network so cc-tunnel can reach them by
+  # container name (DEFAULT_NETWORK below).
+  container-manager:
+    image: container-manager:latest
+    pull_policy: never # built locally via prepare.compose.yaml
+    environment:
+      PORT: "9090"
+      DEFAULT_NETWORK: apps_default
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "9090"
+
   cc-tunnel:
     build:
       context: ./cc-tunnel
@@ -26,9 +41,8 @@ services:
       PORT: ${CC_TUNNEL_ENV_PORT:-8080}
       DATABASE_URL: "postgres://cctunnel:${POSTGRES_PASSWORD:-cctunnel_dev}@postgres:5432/cctunnel?sslmode=disable"
       EXECUTION_PROVIDER: local
+      CONTAINER_MANAGER_URL: "http://container-manager:9090"
       CC_LOGIN_ENCRYPTION_KEY: "${CC_LOGIN_ENCRYPTION_KEY:-012345678901234567890123456789012345678901234567890123456789abcd}"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     expose:
       - "${CC_TUNNEL_ENV_PORT:-8080}"
     ports: # To allow access from Vite running manually (not in Compose)
@@ -36,6 +50,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      container-manager:
+        condition: service_started
 
   frontend:
     profiles:

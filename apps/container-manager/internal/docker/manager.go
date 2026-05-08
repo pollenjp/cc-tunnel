@@ -48,24 +48,33 @@ func (MetadataTokenSource) Token(ctx context.Context) (string, error) {
 // Manager wraps the Docker SDK with image-pull authentication and the small
 // set of container lifecycle operations container-manager exposes over HTTP.
 type Manager struct {
-	cli   *dockerclient.Client
-	token TokenSource
+	cli            *dockerclient.Client
+	token          TokenSource
+	defaultNetwork string
 }
 
 // NewManager constructs a Manager that talks to the local Docker daemon
 // (defaults to /var/run/docker.sock unless DOCKER_HOST is set) and uses
-// MetadataTokenSource for registry auth.
-func NewManager() (*Manager, error) {
+// MetadataTokenSource for registry auth. defaultNetwork is the Docker network
+// new containers join when the request does not specify one (use "" for
+// "bridge").
+func NewManager(defaultNetwork string) (*Manager, error) {
 	cli, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	return &Manager{cli: cli, token: MetadataTokenSource{}}, nil
+	if defaultNetwork == "" {
+		defaultNetwork = "bridge"
+	}
+	return &Manager{cli: cli, token: MetadataTokenSource{}, defaultNetwork: defaultNetwork}, nil
 }
 
 // NewManagerWithDeps is for tests.
-func NewManagerWithDeps(cli *dockerclient.Client, token TokenSource) *Manager {
-	return &Manager{cli: cli, token: token}
+func NewManagerWithDeps(cli *dockerclient.Client, token TokenSource, defaultNetwork string) *Manager {
+	if defaultNetwork == "" {
+		defaultNetwork = "bridge"
+	}
+	return &Manager{cli: cli, token: token, defaultNetwork: defaultNetwork}
 }
 
 // Ping checks the local Docker daemon is reachable.
@@ -78,10 +87,12 @@ func (m *Manager) Ping(ctx context.Context) error {
 type RunAgentRequest struct {
 	Image         string
 	Name          string
-	HostPort      int
+	HostPort      int      // 0 = no host port mapping (only the container is exposed via the docker network)
 	ContainerPort int
 	MemoryBytes   int64
 	NanoCPUs      int64
+	Network       string   // overrides the manager's default network when non-empty
+	Env           []string // additional environment variables (e.g. "PORT=9090")
 }
 
 // RunAgent pulls the image (with VM-SA-derived auth) and starts a new
@@ -106,26 +117,36 @@ func (m *Manager) RunAgent(ctx context.Context, req RunAgentRequest) (string, er
 		nanoCPU = 500_000_000
 	}
 
+	netMode := req.Network
+	if netMode == "" {
+		netMode = m.defaultNetwork
+	}
+
+	hostConfig := &container.HostConfig{
+		NetworkMode: container.NetworkMode(netMode),
+		Resources: container.Resources{
+			Memory:   memory,
+			NanoCPUs: nanoCPU,
+		},
+	}
+	if req.HostPort > 0 {
+		hostConfig.PortBindings = network.PortMap{
+			portProto: []network.PortBinding{
+				{HostPort: strconv.Itoa(req.HostPort)},
+			},
+		}
+	}
+
 	resp, err := m.cli.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: req.Image,
+			Env:   req.Env,
 			ExposedPorts: network.PortSet{
 				portProto: struct{}{},
 			},
 		},
-		HostConfig: &container.HostConfig{
-			PortBindings: network.PortMap{
-				portProto: []network.PortBinding{
-					{HostPort: strconv.Itoa(req.HostPort)},
-				},
-			},
-			NetworkMode: "bridge",
-			Resources: container.Resources{
-				Memory:   memory,
-				NanoCPUs: nanoCPU,
-			},
-		},
-		Name: req.Name,
+		HostConfig: hostConfig,
+		Name:       req.Name,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create container %q: %w", req.Name, err)

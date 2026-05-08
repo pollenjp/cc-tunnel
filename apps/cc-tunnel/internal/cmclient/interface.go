@@ -6,13 +6,27 @@ package cmclient
 
 import "context"
 
+// RunAgentRequest mirrors container-manager's POST /v1/agents body. HostPort=0
+// means no host port mapping. Network and Env fall back to the
+// container-manager's own defaults when zero-valued.
+type RunAgentRequest struct {
+	Image         string
+	Name          string
+	HostPort      int
+	ContainerPort int
+	Network       string
+	Env           []string
+}
+
 // ContainerManager abstracts cc-remote-agent container operations on a
 // remote VM, executed via the container-manager HTTP API.
 type ContainerManager interface {
-	// RunAgentContainer pulls the image and starts a new cc-remote-agent
-	// container on the VM. image is the container image URL, name is the
-	// container name, hostPort is the port exposed on the VM host, and
-	// containerPort is the port inside the container.
+	// RunAgent pulls the image and starts a new cc-remote-agent container
+	// on the VM.
+	RunAgent(ctx context.Context, req RunAgentRequest) error
+
+	// RunAgentContainer is a convenience wrapper around RunAgent for the
+	// production GCE path that only needs the four core parameters.
 	RunAgentContainer(ctx context.Context, image, name string, hostPort, containerPort int) error
 
 	// StopContainer stops a running container gracefully.
