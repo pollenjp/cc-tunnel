@@ -10,3 +10,10 @@ run = 'go test ./...'
 
 [tasks."container-manager:lint"]
 run = 'golangci-lint run ./...'
+
+[tasks."container-manager:gen"]
+description = "Regenerate the API code from api/openapi.yaml"
+run = '''
+cd api && \
+go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -config oapi-codegen.yaml openapi.yaml
+'''

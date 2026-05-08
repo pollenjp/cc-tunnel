@@ -43,11 +43,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	h := api.NewHandler(mgr)
+	srv := api.NewServer(mgr)
 
 	addr := ":" + getenv("PORT", "9090")
 	slog.Info("container-manager listening", "addr", addr)
-	if err := http.ListenAndServe(addr, loggingMiddleware(h.Routes())); err != nil {
+	if err := http.ListenAndServe(addr, loggingMiddleware(srv.Routes())); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
 	}

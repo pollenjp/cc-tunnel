@@ -1,0 +1,156 @@
+openapi: 3.0.3
+info:
+  title: container-manager
+  description: |
+    container-manager runs on each GCE VM and is the only client of the local
+    Docker daemon (Unix socket). cc-tunnel (Cloud Run) calls these endpoints
+    over the VPC; no registry credentials cross the cc-tunnel <-> VM boundary.
+  version: 0.1.0
+servers:
+  - url: http://localhost:9090
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness probe; also pings the Docker daemon.
+      responses:
+        '200':
+          description: Daemon reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Docker daemon unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/agents:
+    post:
+      operationId: createAgent
+      summary: Create and start an agent container.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentRequest'
+      responses:
+        '201':
+          description: Container created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAgentResponse'
+        '400':
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Docker error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/agents/{name}/stop:
+    post:
+      operationId: stopAgent
+      summary: Stop a running agent container.
+      parameters:
+        - $ref: '#/components/parameters/AgentName'
+      responses:
+        '204':
+          description: Stopped.
+        '404':
+          description: Container not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Docker error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/agents/{name}:
+    delete:
+      operationId: removeAgent
+      summary: Remove an agent container.
+      parameters:
+        - $ref: '#/components/parameters/AgentName'
+      responses:
+        '204':
+          description: Removed.
+        '404':
+          description: Container not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Docker error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  parameters:
+    AgentName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    CreateAgentRequest:
+      type: object
+      required: [image, name, container_port]
+      properties:
+        image:
+          type: string
+        name:
+          type: string
+        host_port:
+          type: integer
+          format: int32
+          description: Optional published host port. 0 leaves it unpublished.
+        container_port:
+          type: integer
+          format: int32
+        memory_mib:
+          type: integer
+          format: int64
+          description: Memory limit in MiB; 0 means unlimited.
+        nano_cpus:
+          type: integer
+          format: int64
+          description: CPU quota in 1e-9 CPUs; 0 means unlimited.
+        network:
+          type: string
+        env:
+          type: array
+          items:
+            type: string
+    CreateAgentResponse:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string

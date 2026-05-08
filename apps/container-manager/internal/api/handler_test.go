@@ -42,7 +42,7 @@ func (f *fakeManager) RemoveAgent(_ context.Context, name string) error {
 }
 
 func newServer(mgr AgentManager) *httptest.Server {
-	return httptest.NewServer(NewHandler(mgr).Routes())
+	return httptest.NewServer(NewServer(mgr).Routes())
 }
 
 func TestHealthz_OK(t *testing.T) {
@@ -76,9 +76,9 @@ func TestCreateAgent_Success(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
-	var got createAgentResponse
+	var got CreateAgentResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
-	assert.Equal(t, "abc123", got.ID)
+	assert.Equal(t, "abc123", got.Id)
 	assert.Equal(t, "img:tag", mgr.lastRun.Image)
 	assert.Equal(t, "sess-1", mgr.lastRun.Name)
 	assert.Equal(t, 9091, mgr.lastRun.HostPort)
