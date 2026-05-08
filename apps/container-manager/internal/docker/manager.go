@@ -95,12 +95,14 @@ type RunAgentRequest struct {
 	Env           []string // additional environment variables (e.g. "PORT=9090")
 }
 
-// RunAgent pulls the image (with VM-SA-derived auth) and starts a new
-// container. It is a no-op if the registry auth lookup fails for a non-AR
-// image (the daemon may already have it locally).
+// RunAgent pulls the image (with VM-SA-derived auth) only when it is not
+// already present locally, then starts a new container. Skipping the pull on
+// a cache hit means that in local docker-compose development the
+// pre-built cc-remote-agent image is used directly without a (failing)
+// registry lookup.
 func (m *Manager) RunAgent(ctx context.Context, req RunAgentRequest) (string, error) {
-	if err := m.pullImage(ctx, req.Image); err != nil {
-		return "", fmt.Errorf("pull image %q: %w", req.Image, err)
+	if err := m.ensureImage(ctx, req.Image); err != nil {
+		return "", fmt.Errorf("ensure image %q: %w", req.Image, err)
 	}
 
 	portProto, err := network.ParsePort(fmt.Sprintf("%d/tcp", req.ContainerPort))
@@ -173,6 +175,18 @@ func (m *Manager) RemoveAgent(ctx context.Context, name string) error {
 		return fmt.Errorf("remove container %q: %w", name, err)
 	}
 	return nil
+}
+
+// ensureImage skips the pull when the image already exists on the local
+// daemon. This is critical for local development (where cc-remote-agent is
+// built locally and has no upstream registry to pull from) and is a useful
+// optimisation in production (subsequent sessions on the same VM reuse the
+// cached image).
+func (m *Manager) ensureImage(ctx context.Context, image string) error {
+	if _, err := m.cli.ImageInspect(ctx, image); err == nil {
+		return nil
+	}
+	return m.pullImage(ctx, image)
 }
 
 // pullImage executes ImagePull with X-Registry-Auth derived from the VM's
