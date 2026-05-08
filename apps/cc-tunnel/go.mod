@@ -10,6 +10,7 @@ require (
 	github.com/moby/moby/client v0.4.1
 	github.com/oapi-codegen/runtime v1.3.1
 	github.com/pressly/goose/v3 v3.26.0
+	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.37.0
 	golang.org/x/sync v0.20.0
 )
@@ -91,7 +92,6 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/speakeasy-api/jsonpath v0.6.0 // indirect
 	github.com/speakeasy-api/openapi-overlay v0.10.2 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/testcontainers/testcontainers-go v0.37.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect

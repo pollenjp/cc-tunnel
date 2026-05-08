@@ -9,12 +9,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/cmclient/genclient"
 )
 
 func TestRunAgentContainer_Success(t *testing.T) {
 	var (
 		called bool
-		got    createAgentRequest
+		got    genclient.CreateAgentRequest
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
@@ -34,8 +36,9 @@ func TestRunAgentContainer_Success(t *testing.T) {
 	assert.True(t, called)
 	assert.Equal(t, "img:tag", got.Image)
 	assert.Equal(t, "sess-1", got.Name)
-	assert.Equal(t, 9091, got.HostPort)
-	assert.Equal(t, 9090, got.ContainerPort)
+	require.NotNil(t, got.HostPort)
+	assert.Equal(t, int32(9091), *got.HostPort)
+	assert.Equal(t, int32(9090), got.ContainerPort)
 }
 
 func TestRunAgentContainer_ServerError(t *testing.T) {

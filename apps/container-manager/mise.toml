@@ -10,3 +10,7 @@ run = 'go test ./...'
 
 [tasks."container-manager:lint"]
 run = 'golangci-lint run ./...'
+
+[tasks."container-manager:gen"]
+description = "Regenerate the API code from apps/openapi/container-manager.yaml"
+run = 'go generate ./internal/api/'
