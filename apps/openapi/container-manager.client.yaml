@@ -1,0 +1,10 @@
+# oapi-codegen config for cc-tunnel's container-manager client.
+# Used by apps/cc-tunnel/internal/cmclient/genclient/ via go:generate.
+# The generated `Client`/`NewClient` symbols live in a sub-package so they do
+# not collide with the user-facing cmclient.NewClient wrapper.
+package: genclient
+generate:
+  client: true
+  models: true
+output-options:
+  skip-prune: false

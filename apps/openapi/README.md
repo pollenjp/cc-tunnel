@@ -1,6 +1,6 @@
 # apps/openapi
 
-cc-tunnel の API 定義。OpenAPI 3.0 仕様で記述されている。
+cc-tunnel / container-manager の API 定義。OpenAPI 3.0 仕様で記述されている。
 
 ## ファイル
 
@@ -8,6 +8,9 @@ cc-tunnel の API 定義。OpenAPI 3.0 仕様で記述されている。
 |---------|------|
 | `openapi.yaml` | 外部 API 定義 (Server B: cc-tunnel) |
 | `oapi-codegen.yaml` | 外部 API サーバーコード生成設定 |
+| `container-manager.yaml` | container-manager の API 定義 |
+| `container-manager.server.yaml` | container-manager サーバーコード生成設定 |
+| `container-manager.client.yaml` | cc-tunnel 側のクライアントコード生成設定 |
 
 ## 外部 API エンドポイント (Server B)
 
@@ -33,13 +36,19 @@ cc-tunnel の API 定義。OpenAPI 3.0 仕様で記述されている。
 `oapi-codegen` を使って Go のサーバーインターフェース、モデル型、HTTP クライアントを生成する。
 
 ```bash
-# 外部 API サーバー
+# 外部 API サーバー (cc-tunnel)
 cd apps/cc-tunnel && go generate ./internal/api/
+
+# container-manager サーバー
+cd apps/container-manager && go generate ./internal/api/
+
+# cc-tunnel 側の container-manager クライアント
+cd apps/cc-tunnel && go generate ./internal/cmclient/
 ```
 
 ### API 定義の変更フロー
 
-1. `openapi.yaml` を編集
-2. `go generate` で対応する `gen.go` を再生成
-3. `handler.go` の実装を新しいインターフェースに合わせて更新
+1. `openapi.yaml` または `container-manager.yaml` を編集
+2. 対応する `go generate` で `gen.go` を再生成
+3. 実装側 (`handler.go` / `client.go`) を新しいインターフェースに合わせて更新
 4. `go build ./...` でビルド確認
