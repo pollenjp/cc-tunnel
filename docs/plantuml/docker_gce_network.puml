@@ -130,12 +130,13 @@ note as note_hardening #FF9999
     b) deny rule で 22 を完全閉鎖
 end note
 
-legend right
+note as note_legend #FFFFCC
   **凡例**
-  |<#FFD700>  | 本 PR で変更された要素 |
-  |<#ADD8E6>  | 補足情報 |
-  |<#FFB6C1>  | 却下した代替案 |
-  |<#FF9999>  | 既知のセキュリティ課題 |
-endlegend
+  ----
+  <back:#FFD700>      </back> 本 PR で変更された要素 (黄)
+  <back:#ADD8E6>      </back> 補足情報 (水色)
+  <back:#FFB6C1>      </back> 採用しなかった代替案 (桃)
+  <back:#FF9999>      </back> 既知のセキュリティ課題 (赤)
+end note
 
 @enduml
