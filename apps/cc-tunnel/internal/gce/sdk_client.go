@@ -126,7 +126,9 @@ func networkInterface(subnetwork string) *computepb.NetworkInterface {
 	accessConfigs := []*computepb.AccessConfig{
 		{
 			Name: proto.String("External NAT"),
-			Type: proto.String("ONE_TO_ONE_NAT"),
+			// computepb.AccessConfig.Type は protobuf 上 *string なので
+			// enum 定数の .String() を使って typo を防ぐ。
+			Type: proto.String(computepb.AccessConfig_ONE_TO_ONE_NAT.String()),
 		},
 	}
 	if subnetwork != "" {
