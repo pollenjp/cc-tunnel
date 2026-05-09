@@ -15,6 +15,13 @@
 
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
 
+' C4 Deployment skin defaults to white legend text on a transparent
+' background, which becomes invisible against the white canvas. Force
+' a cream background + black text so the legend stays readable.
+skinparam legendBackgroundColor #FFFFCC
+skinparam legendBorderColor #181818
+skinparam legendFontColor #000000
+
 title Docker on GCE — Network Architecture (egress / ingress paths)
 
 ' --------------------------------------------------------------------------
@@ -130,13 +137,12 @@ note as note_hardening #FF9999
     b) deny rule で 22 を完全閉鎖
 end note
 
-note as note_legend #FFFFCC
+legend right
   **凡例**
-  ----
-  <back:#FFD700>      </back> 本 PR で変更された要素 (黄)
-  <back:#ADD8E6>      </back> 補足情報 (水色)
-  <back:#FFB6C1>      </back> 採用しなかった代替案 (桃)
-  <back:#FF9999>      </back> 既知のセキュリティ課題 (赤)
-end note
+  |<#FFD700>      | 本 PR で変更された要素 |
+  |<#ADD8E6>      | 補足情報 |
+  |<#FFB6C1>      | 採用しなかった代替案 |
+  |<#FF9999>      | 既知のセキュリティ課題 |
+endlegend
 
 @enduml
