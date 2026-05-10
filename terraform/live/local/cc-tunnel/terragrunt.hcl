@@ -31,8 +31,11 @@ inputs = {
   frontend_image_name     = "frontend"
   frontend_container_port = 8080
 
-  enable_public_access          = true # LB 経由のみだが allUsers invoker 必須（ingress=INTERNAL_LOAD_BALANCER で .run.app 直接アクセスはブロック済）
-  frontend_enable_public_access = true # LB 経由のみだが allUsers invoker 必須（ingress=INTERNAL_LOAD_BALANCER で .run.app 直接アクセスはブロック済）
+  # IAP P4SA に roles/run.invoker を bind 済み (modules/cc-tunnel/iap.tf) なので allUsers 撤去。
+  # ingress=INTERNAL_LOAD_BALANCER と合わせて defense-in-depth で .run.app への直接アクセスを封じる。
+  # 前提: iap_enabled = true で運用すること (false のままだと LB → Cloud Run の invoker 権限が無くなり 403)。
+  enable_public_access          = false
+  frontend_enable_public_access = false
 
   lb_fqdn = "cctunnel.pollenjp.com"
 
