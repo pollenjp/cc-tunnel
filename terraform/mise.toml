@@ -8,6 +8,11 @@ uv = "0.11.7"
 # For 'op run' command
 ENV_TEMPLATE_PATH = "{{ config_root }}/.env.template"
 
+[tasks."tf:save_cost"]
+description = "Save cost for local development"
+dir = "./live/local/cc-tunnel/"
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt run -- destroy -target=google_sql_database_instance.cs_instance'
+
 [tasks."tf:init:all"]
 description = "Run terragrunt init on all units"
 dir = "{{ cwd }}"
