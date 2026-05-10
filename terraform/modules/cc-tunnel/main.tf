@@ -182,7 +182,7 @@ resource "google_cloud_run_v2_service" "cloud_run" {
     vpc_access {
       egress = "PRIVATE_RANGES_ONLY"
       network_interfaces {
-        network    = var.network_name
+        network    = google_compute_network.cc_tunnel.id
         subnetwork = google_compute_subnetwork.cc_tunnel_egress.name
       }
     }

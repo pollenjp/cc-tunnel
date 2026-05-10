@@ -123,9 +123,9 @@ variable "gce_max_containers" {
 }
 
 variable "network_name" {
-  description = "VPC network name for GCE instances"
+  description = "Custom VPC network name (created by this module; auto_create_subnetworks=false)"
   type        = string
-  default     = "default"
+  default     = "cc-tunnel"
 }
 
 variable "vpc_connector_subnet_cidr" {

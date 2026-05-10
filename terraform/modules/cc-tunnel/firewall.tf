@@ -1,6 +1,6 @@
 resource "google_compute_firewall" "cc_tunnel_container_manager" {
   name    = "cc-tunnel-container-manager"
-  network = var.network_name
+  network = google_compute_network.cc_tunnel.id
 
   allow {
     protocol = "tcp"
