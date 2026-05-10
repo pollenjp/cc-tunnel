@@ -8,10 +8,12 @@
 ' 関連 ADR:
 '   - 2026-05-06_container_manager_on_vm.md (container-manager 導入)
 '   - 2026-05-09_gce_vm_egress_via_external_ip.md (ephemeral external IP 採用)
+'   - 2026-05-10_iap_oauth_admin_api_shutdown.md (LB 前段 IAP + IAP P4SA)
 '
-' 関連 PR:
+' 関連 PR / Issue:
 '   - #58 attach a dedicated SA to cc-tunnel-managed VMs (vm_runtime_sa)
-'   - #57 fix-remote-agent-container-GJjvW (本図の対象。external IP + PGA subnet)
+'   - #57 fix-remote-agent-container-GJjvW (external IP + PGA subnet)
+'   - #62 (issue) defense-in-depth: drop allUsers Cloud Run invoker after IAP rollout
 
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
 
@@ -28,9 +30,10 @@ title Docker on GCE — Network Architecture (egress / ingress paths)
 ' Public internet / external endpoints
 ' --------------------------------------------------------------------------
 Deployment_Node(internet, "Public Internet", "0.0.0.0/0") {
+  Container_Ext(browser, "End-user browser", "https://cctunnel.pollenjp.com", "ユーザ ingress エントリ\n(Phase 3: IAP で Google ログイン強制)")
   Deployment_Node(google_apis, "Google APIs (public)", "*.googleapis.com / *.pkg.dev") {
     Container_Ext(ar, "Artifact Registry", "us-central1-docker.pkg.dev", "cc-remote-agent / container-manager image\n(VM SA: roles/artifactregistry.reader)")
-    Container_Ext(metadata_pub, "OAuth / IAM endpoints", "oauth2.googleapis.com 等", "")
+    Container_Ext(metadata_pub, "OAuth / IAM endpoints", "oauth2.googleapis.com 等", "Google OAuth (IAP のユーザ認証)\nConsole 作成済み OAuth client が consent を返す")
   }
   Container_Ext(anthropic, "Anthropic API", "api.anthropic.com", "Claude LLM 呼び出し\n(cc-remote-agent から HTTPS)")
   Container_Ext(github_etc, "GitHub / npm / pypi / apt 等", "任意の外部ホスト", "cc-remote-agent コンテナ実行時の依存解決\n(git clone / pip install など)")
@@ -41,9 +44,25 @@ Deployment_Node(internet, "Public Internet", "0.0.0.0/0") {
 ' --------------------------------------------------------------------------
 Deployment_Node(gcp_project, "GCP Project (cc-tunnel-local)", "Google Cloud") {
 
+  ' ----- External Global HTTPS LB + IAP -----
+  Deployment_Node(lb, "External Global HTTPS LB", "google_compute_global_forwarding_rule\nDNS: cctunnel.pollenjp.com (Cloudflare DNS-only)") {
+    Container(target_proxy, "target HTTPS proxy + URL map", "/api/* → cct-backend\n/* → fe-backend", "managed SSL cert")
+    Container(be_cct, "backend_service: cct-backend", "serverless NEG → cc-tunnel\niap { enabled = var.iap_enabled }", "IAP enable 時:\n- iap_oauth_client_id/secret (Console 作成)\n- roles/iap.httpsResourceAccessor で\n  iap_allowed_members を許可")
+    Container(be_fe, "backend_service: fe-backend", "serverless NEG → frontend\niap { enabled = var.iap_enabled }", "同上")
+  }
+
+  ' ----- IAP service agent (P4SA) -----
+  Deployment_Node(iap_p4sa, "IAP service agent", "google_project_service_identity\nservice-<PROJECT_NUMBER>@gcp-sa-iap.iam.gserviceaccount.com") {
+    Container(iap_sa, "IAP P4SA", "Google managed", "LB → Cloud Run の invoke 時の identity\nroles/run.invoker を付与済み")
+  }
+
   ' ----- Cloud Run boundary -----
-  Deployment_Node(cloud_run, "Cloud Run service: cc-tunnel", "Direct VPC Egress 有効\nrun_sa: cc-runtime-sa (iam.serviceAccountUser on vm_runtime_sa)") {
+  Deployment_Node(cloud_run, "Cloud Run service: cc-tunnel", "ingress = INTERNAL_LOAD_BALANCER\nDirect VPC Egress 有効\nrun_sa: cc-runtime-sa (iam.serviceAccountUser on vm_runtime_sa)\ninvoker: allUsers (現状) + IAP P4SA\n→ allUsers 撤去は Issue #62") {
     Container(cctunnel, "cc-tunnel", "Go (Cloud Run)", "DockerGCEProvider 経由で VM lifecycle / cc-remote-agent 呼び出し\nGCE_VM_SUBNETWORK = projects/.../subnetworks/cc-remote-agent-vm\nGCE_VM_SERVICE_ACCOUNT = vm_runtime_sa")
+  }
+
+  Deployment_Node(cloud_run_fe, "Cloud Run service: frontend", "ingress = INTERNAL_LOAD_BALANCER\nnginx (envsubst) で /api/* → cc-tunnel.uri") {
+    Container(fe, "frontend (SPA + nginx)", "Static + reverse proxy", "BACKEND_URL=/api\nAPI_UPSTREAM=<cc-tunnel.uri>")
   }
 
   ' ----- VPC default network -----
@@ -81,6 +100,16 @@ Deployment_Node(gcp_project, "GCP Project (cc-tunnel-local)", "Google Cloud") {
 ' Egress / ingress relations
 ' --------------------------------------------------------------------------
 
+' Browser ingress → IAP-fronted LB → Cloud Run
+Rel(browser, target_proxy, "HTTPS\ncctunnel.pollenjp.com", "TCP 443")
+Rel(target_proxy, be_cct, "/api/* (path matcher)", "")
+Rel(target_proxy, be_fe, "/ (default service)", "")
+Rel(be_cct, metadata_pub, "IAP enable 時: ユーザを Google OAuth に redirect\n(Console 作成済み OAuth client で consent)", "HTTPS")
+Rel(be_cct, cctunnel, "X-Serverless-Authorization 付きで invoke\n(IAP P4SA 経由)", "HTTPS internal")
+Rel(be_fe, fe, "同上", "HTTPS internal")
+Rel(iap_sa, cctunnel, "roles/run.invoker", "IAM")
+Rel(iap_sa, fe, "roles/run.invoker", "IAM")
+
 ' Cloud Run → VM internal IP (Direct VPC Egress)
 Rel(cctunnel, egress_nic, "Direct VPC Egress 経由で送信", "")
 Rel(egress_nic, cm, "container-manager API\n(http://<vm_internal_ip>:9090)", "TCP 内部")
@@ -108,6 +137,19 @@ note as note_external_ip #FFD700
   - 新規 subnet `cc-remote-agent-vm` を追加 (private_ip_google_access = true)
     → 外部 IP 廃止に切り替えても AR pull が通るように退路を確保
   - GCE_VM_SUBNETWORK env を Cloud Run に渡し、CreateInstance 時に subnet を指定
+end note
+
+note as note_iap #C8E6C9
+  **Phase 3: IAP (ADR 2026-05-10)**
+  - LB の両 backend service に `iap { enabled = true, oauth2_client_id, oauth2_client_secret }` を付与
+  - OAuth brand と OAuth client は Console 手動作成
+    (google_iap_brand / google_iap_client は API shutdown 済み)
+  - IAP P4SA (service-<PROJECT_NUMBER>@gcp-sa-iap...) を
+    `google_project_service_identity` でプロビジョニングし、
+    両 Cloud Run service に roles/run.invoker を付与
+  - 認可は backend service スコープの
+    roles/iap.httpsResourceAccessor (var.iap_allowed_members)
+  - allUsers invoker 撤去は Issue #62 で別追跡
 end note
 
 note as note_pga #ADD8E6
@@ -140,6 +182,7 @@ end note
 legend right
   **凡例**
   |<#FFD700>      | 本 PR で変更された要素 |
+  |<#C8E6C9>      | Phase 3 IAP 関連 (ADR 2026-05-10) |
   |<#ADD8E6>      | 補足情報 |
   |<#FFB6C1>      | 採用しなかった代替案 |
   |<#FF9999>      | 既知のセキュリティ課題 |

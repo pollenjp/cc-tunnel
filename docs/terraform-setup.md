@@ -144,6 +144,7 @@ DB パスワードは Secret Manager で管理され、Cloud Run には Cloud SQ
 |--------|------|
 | roles/cloudbuild.builds.editor | Cloud Build trigger 作成・更新 + run/describe |
 | roles/run.admin | Cloud Run サービスの作成・更新・削除 |
+| roles/iap.admin | IAP backend service の IAM policy 操作 (Phase 3 IAP) |
 
 これらのロールは `terraform/modules/prepare_terraform_sa/main.tf` で管理される。
 
@@ -339,7 +340,8 @@ Browser → DNS (cctunnel.pollenjp.com → LB IP) → Global HTTPS LB
 - serverless NEG 経由（Global LB）でも Cloud Run の IAM invoker チェックは有効。
   `ingress=INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` で `.run.app` 直接アクセスをブロックしつつ、
   `allUsers` に `roles/run.invoker` を付与して LB からのアクセスを許可すること（`enable_public_access=true`）。
-  Phase 3 で IAP を有効化する際は `allUsers` invoker を削除し、IAP サービスアカウントに invoker を付与する。
+  IAP 有効化後 (Phase 3) も現状は `allUsers` invoker を残しているが、
+  defense-in-depth として撤去 + IAP P4SA に invoker 付与する作業は GitHub Issue #62 で追跡。
 - cert が ACTIVE になるまでは HTTPS アクセス不可（ERR_SSL_PROTOCOL_ERROR）
 - ingress=INTERNAL_LOAD_BALANCING 切替後、Cloud Run の `.run.app` URL への直接アクセスは拒否される
 - ローカル開発（compose.yaml）は引き続き nginx の /api/ proxy_pass で動作（Cloud Run 側の変更は影響なし）
@@ -347,7 +349,110 @@ Browser → DNS (cctunnel.pollenjp.com → LB IP) → Global HTTPS LB
   リクエスト timeout は Cloud Run の `template.timeout` で制御する
   （cc-tunnel デフォルト 300s、変更が必要な場合は main.tf の timeout_seconds を調整）
 
-### Phase 3 IAP 移行時の差分
+## Phase 3: Identity-Aware Proxy (IAP) — LB backend service レベル
 
-- backend service に `iap { }` ブロックを追加するだけで IAP 有効化可能（LB 構成の変更最小）
-- AppAuth との責務整理（IAP 一本化 or 並走）は Phase 3 cmd で別途決定
+Phase 3 では LB の両 backend service (cc-tunnel / frontend) に IAP を被せ、
+Google アカウントログイン + 許可リスト方式で外部公開を絞る。
+AppAuth との責務分離: IAP は「アプリに到達する前段の認証ゲート」、AppAuth は
+アプリ内部の RBAC / セッション管理という二段構成で並走する。
+
+### アーキテクチャ
+
+```
+Browser ─▶ Global HTTPS LB
+            └── backend_service (cc-tunnel / frontend)
+                  └── iap { enabled = true, oauth2_client_id, oauth2_client_secret }
+                        ├── 認証 ─▶ Google OAuth (Console 作成済みの brand + client)
+                        └── 認可 ─▶ roles/iap.httpsResourceAccessor の IAM members
+                                   (var.iap_allowed_members)
+                  └── (LB → Cloud Run): IAP P4SA
+                        service-<PROJECT_NUMBER>@gcp-sa-iap.iam.gserviceaccount.com
+                        が roles/run.invoker で Cloud Run を呼び出す
+```
+
+### 重要: IAP 関連 API の deprecation
+
+- `google_iap_brand` / `google_iap_client` は **2025-01-22 deprecate**、
+  裏側の "IAP OAuth Admin APIs" は **2026-03-19 に shutdown 済み**。
+- Terraform からは brand / OAuth client を作れないため、両方とも **GCP Console で手動作成** する。
+- 本リポジトリの `cc-tunnel-iap` モジュールは「Console 作成済みの client_id / client_secret を
+  入力として受け取り、cc-tunnel モジュールに output として渡すだけの thin passthrough」になっている。
+
+### Console 手順 (一度だけ)
+
+1. **OAuth consent screen**: APIs & Services > OAuth consent screen
+   - 個人プロジェクト (組織なし) では User type=External を選択
+   - Application title / Support email を設定して作成
+   - Test users に IAP 経由でアクセスする Google アカウントを追加
+     (Publishing status=Testing のままなら必須)
+2. **OAuth client**: APIs & Services > Credentials > Create credentials > OAuth client ID
+   - Application type=Web application で作成
+   - 作成直後にダイアログで Client ID が表示されるので控えておく
+   - Authorized redirect URIs に以下を追記して保存:
+     `https://iap.googleapis.com/v1/oauth/clientIds/<CLIENT_ID>:handleRedirect`
+3. 控えた Client ID / Client secret を環境変数に export:
+   ```bash
+   export IAP_OAUTH_CLIENT_ID=<...>.apps.googleusercontent.com
+   export IAP_OAUTH_CLIENT_SECRET=<...>
+   ```
+
+### Terragrunt unit と変数
+
+`terraform/live/local/cc-tunnel-iap/` が独立 unit として存在し、
+`cc-tunnel` unit はそこに dependency する。
+
+| unit / 変数 | 値 | 説明 |
+|------|----|------|
+| `cc-tunnel-iap` / `oauth_client_id` | `IAP_OAUTH_CLIENT_ID` env var | Console 作成済みの OAuth client ID |
+| `cc-tunnel-iap` / `oauth_client_secret` | `IAP_OAUTH_CLIENT_SECRET` env var | OAuth client secret (sensitive) |
+| `cc-tunnel` / `iap_enabled` | `true` で IAP を有効化 | false 時は backend service の iap block も IAM binding も全部 noop |
+| `cc-tunnel` / `iap_allowed_members` | `["user:foo@example.com", ...]` | `roles/iap.httpsResourceAccessor` を付与する IAM principals |
+| `cc-tunnel` / `iap_oauth_client_id` | `dependency.cc_tunnel_iap.outputs.oauth_client_id` | dependency 経由で自動配線 |
+| `cc-tunnel` / `iap_oauth_client_secret` | `dependency.cc_tunnel_iap.outputs.oauth_client_secret` | 同上 |
+
+### Apply 順序と必要ロール
+
+1. `terraform/prepare/local/terraform_sa/` を再 apply (人間アカウントで)
+   - Runner SA に `roles/iap.admin` を付与する。これが無いと
+     `google_iap_web_backend_service_iam_member` が IAM policy 取得時に 403 になる。
+2. `terraform/live/local/cc-tunnel-iap/` を apply
+3. `terraform/live/local/cc-tunnel/` を apply
+   - `iap_enabled=true` の場合、以下が同時に作成される:
+     - backend service の `iap { ... }` block (lb.tf)
+     - `google_project_service_identity.iap` (IAP P4SA をプロビジョニング)
+     - `google_cloud_run_v2_service_iam_member` × 2 (P4SA に Cloud Run invoker)
+     - `google_iap_web_backend_service_iam_member` × N (許可ユーザに accessor)
+
+### 認証 / 認可の評価順 (AND)
+
+ブラウザがアクセスして以下の **すべて** を満たす必要がある:
+
+1. **OAuth Test users** (Publishing=Testing 時のみ): Console 側のリストに登録済み
+2. **IAM `roles/iap.httpsResourceAccessor`**: `iap_allowed_members` に `user:foo@example.com` 形式で含まれる
+3. **AppAuth** (アプリ層): IAP を抜けた後、cc-tunnel 内の RBAC で許可
+
+両者を別々に管理する必要がある点に注意:
+- OAuth Test users は生メール (`foo@gmail.com`)
+- `iap_allowed_members` は IAM principal (`user:foo@gmail.com`)
+
+### よくあるエラー
+
+| エラー | 原因 | 解決 |
+|------|------|------|
+| `"Error retrieving IAM policy ... 403"` (terraform plan/apply) | runner SA に `roles/iap.admin` が無い | `terraform/prepare/local/terraform_sa/` を再 apply |
+| `"The IAP service account is not provisioned"` (ブラウザログイン後) | IAP P4SA が project に未作成 / Cloud Run invoker 未付与 | `iap_enabled=true` で `cc-tunnel` を apply (本リポジトリでは `google_project_service_identity.iap` + invoker IAM が自動で入る) |
+| `"Access blocked: <app> has not completed the Google verification process"` (Google ログイン画面) | Publishing=Testing で Test users 未登録 | OAuth consent screen の Test users にアカウント追加 (or Publish) |
+| `"403"` を IAP が返す (consent 後) | `iap_allowed_members` 未設定 / アカウントが含まれない | `iap_allowed_members` に `user:<email>` を追加 |
+
+### follow-up: defense-in-depth (Issue #62)
+
+現状は IAP が backend service レベルで効いているが、Cloud Run service の invoker は
+`allUsers` のままで、`ingress=INTERNAL_LOAD_BALANCER` のおかげで外部直叩きが塞がっている、
+という構成。完全な defense-in-depth にするには:
+
+1. `google_cloud_run_v2_service_iam_member.public_access` (allUsers) を撤去
+2. IAP P4SA への `roles/run.invoker` のみを invoker として残す (本リポジトリでは既に付与済み)
+
+を行う。順序を逆にすると一瞬全リクエスト 403 になるので、
+1 PR で両方変更し terraform に dependency 解決を任せる方が安全。
+
