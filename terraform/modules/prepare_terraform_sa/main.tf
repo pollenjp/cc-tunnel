@@ -59,6 +59,9 @@ resource "google_project_iam_member" "sa_roles" {
 
     # Eventarc trigger の作成・更新 (cc-tunnel auto-redeploy)
     "roles/eventarc.admin",
+
+    # Cloud Scheduler job の作成・更新 (vm_image_cleaner module)
+    "roles/cloudscheduler.admin",
   ])
 
   project = var.project_id
