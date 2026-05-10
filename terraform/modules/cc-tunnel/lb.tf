@@ -42,8 +42,8 @@ resource "google_compute_backend_service" "cc_tunnel_backend" {
     for_each = var.iap_enabled ? [1] : []
     content {
       enabled              = true
-      oauth2_client_id     = google_iap_client.client[0].client_id
-      oauth2_client_secret = google_iap_client.client[0].secret
+      oauth2_client_id     = var.iap_oauth_client_id
+      oauth2_client_secret = var.iap_oauth_client_secret
     }
   }
 }
@@ -62,8 +62,8 @@ resource "google_compute_backend_service" "frontend_backend" {
     for_each = var.iap_enabled ? [1] : []
     content {
       enabled              = true
-      oauth2_client_id     = google_iap_client.client[0].client_id
-      oauth2_client_secret = google_iap_client.client[0].secret
+      oauth2_client_id     = var.iap_oauth_client_id
+      oauth2_client_secret = var.iap_oauth_client_secret
     }
   }
 }

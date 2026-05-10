@@ -7,6 +7,17 @@ dependency "artifact_registry" {
   config_path = "./../artifact_registry/"
 }
 
+dependency "cc_tunnel_iap" {
+  config_path = "./../cc-tunnel-iap/"
+
+  mock_outputs = {
+    oauth_client_id     = ""
+    oauth_client_secret = ""
+    brand_name          = ""
+  }
+  mock_outputs_allowed_terraform_commands = ["validate", "init", "plan"]
+}
+
 terraform {
   source = "./../../../modules//cc-tunnel"
 }
@@ -33,4 +44,11 @@ inputs = {
   # 既定値 "" は terragrunt hcl validate (環境変数なし) を通すため。
   # 実値必須は modules/cc-tunnel/variables.tf cloudflare_zone_id の validation で plan/apply 時に強制する。
   cloudflare_zone_id = get_env("CLOUDFLARE_ZONE_ID", "")
+
+  # IAP: 有効化するには iap_enabled=true にして iap_allowed_members を埋める。
+  # OAuth client_id/secret は cc-tunnel-iap unit から自動で渡る。
+  iap_enabled             = false
+  iap_oauth_client_id     = "${dependency.cc_tunnel_iap.outputs.oauth_client_id}"
+  iap_oauth_client_secret = "${dependency.cc_tunnel_iap.outputs.oauth_client_secret}"
+  iap_allowed_members     = []
 }

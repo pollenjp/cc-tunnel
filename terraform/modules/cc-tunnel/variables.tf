@@ -170,40 +170,27 @@ variable "cloudflare_dns_comment" {
 # ---------------------------------------------------------------------------
 # IAP (Identity-Aware Proxy)
 # ---------------------------------------------------------------------------
+# OAuth brand / client は cc-tunnel-iap module 側で管理される。本モジュールは
+# その outputs を terragrunt dependency 経由で受け取り、LB backend service の
+# iap ブロックと IAM binding に使う。
 
 variable "iap_enabled" {
   type        = bool
-  description = "Enable IAP on the External HTTPS LB backend services. Requires iap.googleapis.com API enabled and an OAuth brand."
+  description = "Enable IAP on the External HTTPS LB backend services. Requires iap.googleapis.com API enabled and the cc-tunnel-iap unit applied first."
   default     = false
 }
 
-variable "iap_application_title" {
+variable "iap_oauth_client_id" {
   type        = string
-  description = "OAuth consent screen application title (used only when iap_create_brand=true)"
-  default     = "cc-tunnel"
-}
-
-variable "iap_support_email" {
-  type        = string
-  description = "OAuth consent screen support email. Group address (e.g. team@example.com) recommended. Required when iap_create_brand=true."
+  description = "IAP OAuth client ID (provided by the cc-tunnel-iap module). Required when iap_enabled=true."
   default     = ""
 }
 
-variable "iap_create_brand" {
-  type        = bool
-  description = "If true, manage the OAuth brand via terraform. Each project can have only one brand; set false and use iap_existing_brand_name when one already exists."
-  default     = false
-}
-
-variable "iap_existing_brand_name" {
+variable "iap_oauth_client_secret" {
   type        = string
-  description = "Existing IAP brand resource name (format: projects/<project_number>/brands/<brand_id>). Used when iap_create_brand=false."
+  description = "IAP OAuth client secret (provided by the cc-tunnel-iap module). Required when iap_enabled=true."
   default     = ""
-
-  validation {
-    condition     = var.iap_existing_brand_name == "" || can(regex("^projects/[0-9]+/brands/[0-9]+$", var.iap_existing_brand_name))
-    error_message = "iap_existing_brand_name must be of the form projects/<project_number>/brands/<brand_id>."
-  }
+  sensitive   = true
 }
 
 variable "iap_allowed_members" {
