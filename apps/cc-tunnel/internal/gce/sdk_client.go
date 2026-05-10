@@ -91,9 +91,7 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 				},
 			},
 			NetworkInterfaces: []*computepb.NetworkInterface{
-				{
-					Name: proto.String("global/networks/default"),
-				},
+				networkInterface(req.Subnetwork),
 			},
 			Metadata: &computepb.Metadata{
 				Items: metadata,
@@ -110,6 +108,39 @@ func (c *SDKGCEClient) CreateInstance(ctx context.Context, req *CreateInstanceRe
 	}
 
 	return c.GetInstance(ctx, req.Project, req.Zone, req.Name)
+}
+
+// networkInterface builds a NetworkInterface for VM creation.
+//
+// An ephemeral external IP is always attached via AccessConfigs so the VM can
+// reach arbitrary external services (GitHub, npm, pypi, apt repos, ...) that
+// cc-remote-agent containers may need. PGA on the subnet still helps for
+// Google APIs (`*.googleapis.com`, `*.pkg.dev`) when present, but is no longer
+// required for Artifact Registry pull.
+//
+// Ingress is independently controlled by VPC firewall rules — only the
+// container-manager rule (source = VPC connector subnet) and project-default
+// rules apply. Review default-allow-ssh / default-allow-rdp on the `default`
+// network if exposing port 22/3389 to the internet is undesirable.
+func networkInterface(subnetwork string) *computepb.NetworkInterface {
+	accessConfigs := []*computepb.AccessConfig{
+		{
+			Name: proto.String("External NAT"),
+			// computepb.AccessConfig.Type は protobuf 上 *string なので
+			// enum 定数の .String() を使って typo を防ぐ。
+			Type: proto.String(computepb.AccessConfig_ONE_TO_ONE_NAT.String()),
+		},
+	}
+	if subnetwork != "" {
+		return &computepb.NetworkInterface{
+			Subnetwork:    proto.String(subnetwork),
+			AccessConfigs: accessConfigs,
+		}
+	}
+	return &computepb.NetworkInterface{
+		Network:       proto.String("global/networks/default"),
+		AccessConfigs: accessConfigs,
+	}
 }
 
 // GetInstance は VM インスタンスの情報を取得する

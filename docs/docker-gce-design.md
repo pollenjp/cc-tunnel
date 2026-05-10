@@ -223,7 +223,8 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 | マシンタイプ | `e2-standard-2` (2 vCPU, 8GB RAM) | claude CLI 1プロセス ≈ 200-500MB。10並行セッションに対応可 |
 | OS イメージ | カスタムイメージ `cc-agent-base-v{N}` | cc-remote-agent イメージプリプル済みで起動を高速化 |
 | ディスク | 50GB SSD、`autoDelete: true` | VM削除時にディスクも自動削除 |
-| 外部IP | なし（Internal IP のみ） | セキュリティ: 外部からの直接アクセスを遮断 |
+| 外部IP | ephemeral external IP（`AccessConfig: ONE_TO_ONE_NAT`） | cc-remote-agent コンテナの実行時依存（GitHub / npm / pypi / apt 等）に到達するため。Cloud NAT は採用せず ephemeral 直付け。詳細は ADR `2026-05-09T11:50:55+09:00_01_gce_vm_egress_via_external_ip.md` |
+| サブネット | `cc-remote-agent-vm` (`var.cc_remote_agent_subnet_cidr`、Private Google Access 有効) | 将来 NAT 構成へ切り替えた際に外部 IP なしで Artifact Registry に到達できる退路を確保 |
 | ネットワークタグ | `cc-tunnel-agent` | ファイアウォールルールのターゲット指定に使用 |
 
 **startup-script**（VM 起動時に実行）:
@@ -472,8 +473,10 @@ POST https://compute.googleapis.com/compute/v1/projects/{PROJECT}/zones/{ZONE}/i
     }
   }],
   "networkInterfaces": [{
-    "subnetwork": "projects/{PROJECT}/regions/{REGION}/subnetworks/{SUBNET}",
-    "accessConfigs": []
+    "subnetwork": "projects/{PROJECT}/regions/{REGION}/subnetworks/cc-remote-agent-vm",
+    "accessConfigs": [
+      { "name": "External NAT", "type": "ONE_TO_ONE_NAT" }
+    ]
   }],
   "metadata": {
     "items": [{
@@ -813,6 +816,9 @@ case "docker_gce":
 | `GCE_ZONE` | `us-central1-a` | GCE ゾーン |
 | `GCE_MACHINE_TYPE` | `e2-medium` | VM マシンタイプ |
 | `GCE_AGENT_IMAGE` | 必須 | cc-remote-agent の Artifact Registry URL |
+| `GCE_VM_IMAGE` | 必須 | Packer で焼いた VM イメージの URL |
+| `GCE_VM_SERVICE_ACCOUNT` | 必須 | VM にアタッチする SA email（`vm_runtime_sa`）。未指定だと metadata server からトークンを取れず container-manager が AR pull に失敗する |
+| `GCE_VM_SUBNETWORK` | 必須 | VM をぶら下げる subnet の URL（`cc-remote-agent-vm`、Private Google Access 有効）。詳細は ADR `2026-05-09T11:50:55+09:00_01_gce_vm_egress_via_external_ip.md` |
 | `GCE_MAX_CONTAINERS` | `10` | 1 VM あたりの最大コンテナ数 |
 
 **影響度**: **小**（`newProviderFromEnv` の docker_gce ケース修正のみ）

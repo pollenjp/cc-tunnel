@@ -43,9 +43,14 @@ type DockerGCEConfig struct {
 	MachineType      string // デフォルト: "e2-medium"
 	VMImage          string // GCE source image (Packer で焼いた Docker 入り Ubuntu)
 	VMServiceAccount string // VM にアタッチする SA のメールアドレス（空なら GCE default compute SA）
-	AgentImage       string // Artifact Registry の cc-remote-agent イメージ URL
-	AgentPort        int    // cc-remote-agent の listen ポート（デフォルト: 9091）
-	IdleTimeout      time.Duration
+	// VMSubnetwork は VM をぶら下げる subnet (Private Google Access 有効を想定)。
+	// 形式は "projects/<proj>/regions/<region>/subnetworks/<name>" など。
+	// 空なら network 既定 subnet が使われる（外部 IP 無し VM は Artifact
+	// Registry に到達できないため本番では明示必須）。
+	VMSubnetwork  string
+	AgentImage    string // Artifact Registry の cc-remote-agent イメージ URL
+	AgentPort     int    // cc-remote-agent の listen ポート（デフォルト: 9091）
+	IdleTimeout   time.Duration
 	MaxContainers int // デフォルト: 10
 
 	// IdleCheckInterval は IdleChecker / VMScaler が CleanupOrphans を呼ぶ間隔（0 = 無効）
@@ -348,6 +353,7 @@ func (p *DockerGCEProvider) createGCEVM(ctx context.Context) (*db.VMInstance, er
 		MachineType:         p.config.MachineType,
 		SourceImage:         p.config.VMImage,
 		ServiceAccountEmail: p.config.VMServiceAccount,
+		Subnetwork:          p.config.VMSubnetwork,
 		StartupScript:       p.buildStartupScript(),
 		Labels:              map[string]string{"managed-by": "cc-tunnel"},
 		Tags:                []string{"cc-tunnel-agent"},

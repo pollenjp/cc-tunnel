@@ -29,6 +29,12 @@ type CreateInstanceRequest struct {
 	// ServiceAccountEmail は VM にアタッチする SA のメールアドレス。
 	// 空文字の場合 GCE のデフォルト挙動 (default compute SA) になる。
 	ServiceAccountEmail string
+	// Subnetwork は VM をぶら下げる subnet の URL/path。
+	// 空の場合は network 既定 subnet を GCE 側で自動選択するが、Private Google
+	// Access が無効だと外部 IP 無しの VM は Artifact Registry に到達できないため、
+	// 本番では PGA 有効な subnet を明示する必要がある。
+	// 形式は "projects/<proj>/regions/<region>/subnetworks/<name>" など。
+	Subnetwork string
 }
 
 // Instance は GCE VM インスタンスの情報

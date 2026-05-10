@@ -1,0 +1,148 @@
+@startuml docker_gce_network
+' 【役割】GCE VM 周辺のネットワーク構成図
+'   docker_gce_architecture.puml がアプリ層 (Container) の関係を、
+'   docker_gce_multi_container.puml が pool 管理シーケンスを示すのに対し、
+'   本図は VPC / subnet / firewall / external IP / Private Google Access / metadata server
+'   など「GCE VM の egress と ingress がどう通っているか」を示す。
+'
+' 関連 ADR:
+'   - 2026-05-06_container_manager_on_vm.md (container-manager 導入)
+'   - 2026-05-09_gce_vm_egress_via_external_ip.md (ephemeral external IP 採用)
+'
+' 関連 PR:
+'   - #58 attach a dedicated SA to cc-tunnel-managed VMs (vm_runtime_sa)
+'   - #57 fix-remote-agent-container-GJjvW (本図の対象。external IP + PGA subnet)
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+
+' C4 Deployment skin defaults to white legend text on a transparent
+' background, which becomes invisible against the white canvas. Force
+' a cream background + black text so the legend stays readable.
+skinparam legendBackgroundColor #FFFFCC
+skinparam legendBorderColor #181818
+skinparam legendFontColor #000000
+
+title Docker on GCE — Network Architecture (egress / ingress paths)
+
+' --------------------------------------------------------------------------
+' Public internet / external endpoints
+' --------------------------------------------------------------------------
+Deployment_Node(internet, "Public Internet", "0.0.0.0/0") {
+  Deployment_Node(google_apis, "Google APIs (public)", "*.googleapis.com / *.pkg.dev") {
+    Container_Ext(ar, "Artifact Registry", "us-central1-docker.pkg.dev", "cc-remote-agent / container-manager image\n(VM SA: roles/artifactregistry.reader)")
+    Container_Ext(metadata_pub, "OAuth / IAM endpoints", "oauth2.googleapis.com 等", "")
+  }
+  Container_Ext(anthropic, "Anthropic API", "api.anthropic.com", "Claude LLM 呼び出し\n(cc-remote-agent から HTTPS)")
+  Container_Ext(github_etc, "GitHub / npm / pypi / apt 等", "任意の外部ホスト", "cc-remote-agent コンテナ実行時の依存解決\n(git clone / pip install など)")
+}
+
+' --------------------------------------------------------------------------
+' GCP Project
+' --------------------------------------------------------------------------
+Deployment_Node(gcp_project, "GCP Project (cc-tunnel-local)", "Google Cloud") {
+
+  ' ----- Cloud Run boundary -----
+  Deployment_Node(cloud_run, "Cloud Run service: cc-tunnel", "Direct VPC Egress 有効\nrun_sa: cc-runtime-sa (iam.serviceAccountUser on vm_runtime_sa)") {
+    Container(cctunnel, "cc-tunnel", "Go (Cloud Run)", "DockerGCEProvider 経由で VM lifecycle / cc-remote-agent 呼び出し\nGCE_VM_SUBNETWORK = projects/.../subnetworks/cc-remote-agent-vm\nGCE_VM_SERVICE_ACCOUNT = vm_runtime_sa")
+  }
+
+  ' ----- VPC default network -----
+  Deployment_Node(vpc, "VPC: default (auto-mode)", "google_compute_network = default") {
+
+    Deployment_Node(subnet_egress, "subnet: cc-tunnel-egress", "10.8.0.0/26 (us-central1)\nDirect VPC Egress 専用") {
+      Container(egress_nic, "Cloud Run egress NIC", "Direct VPC Egress", "cc-tunnel → VM internal IP の発信元\nvar.vpc_connector_subnet_cidr")
+    }
+
+    Deployment_Node(subnet_vm, "subnet: cc-remote-agent-vm", "10.16.0.0/20 (us-central1)\nprivate_ip_google_access = true\nvar.cc_remote_agent_subnet_cidr") {
+
+      Deployment_Node(gce_vm, "GCE VM (cc-tunnel-<uuid>)", "Compute Engine\nlabels: managed-by=cc-tunnel\ntags: [cc-tunnel-agent]\nSA: vm_runtime_sa") {
+
+        Container(nic, "NIC nic0", "AccessConfigs: ONE_TO_ONE_NAT\n→ ephemeral external IP", "**外部 IP 自動付与** (本 PR で追加)\n内部 IP: subnet 10.16.0.0/20 内\n外部 IP: 起動毎に変動")
+
+        Container(metadata_int, "Metadata server", "169.254.169.254", "VM SA token を bridge ネット\nワーク内のコンテナにも提供")
+
+        Deployment_Node(docker, "Docker daemon", "Unix socket: /var/run/docker.sock\n(TCP 2375 は廃止済み — ADR 2026-05-06)") {
+          Container(cm, "container-manager", "Go / 9090/tcp", "X-Registry-Auth に metadata 経由の\nSA token を載せて AR pull\ncc-tunnel から HTTP API で操作")
+          Container(agent_n, "cc-remote-agent (× N)", "Go / 9091..909N/tcp", "1 VM 内で複数 conversation を多重化\ncc-tunnel ↔ HTTP / Anthropic API ↔ HTTPS")
+        }
+      }
+    }
+  }
+
+  ' ----- Firewall rules (network 全体に適用) -----
+  Deployment_Node(fw, "VPC firewall rules (default network)", "google_compute_firewall") {
+    Container(fw_cm, "cc-tunnel-container-manager (allow)", "ingress / TCP 9090", "source_ranges = vpc_connector_subnet_cidr\ntarget_tags = [cc-tunnel-agent]")
+    Container(fw_ssh, "default-allow-ssh (allow, GCP デフォルト)", "ingress / TCP 22", "source_ranges = 0.0.0.0/0\n**外部 IP 付与により世界に開いている**\n→ ハードニング検討中 (ADR 2026-05-09)")
+    Container(fw_icmp, "default-allow-icmp / -rdp (allow, GCP デフォルト)", "ingress / ICMP, TCP 3389", "source_ranges = 0.0.0.0/0")
+  }
+}
+
+' --------------------------------------------------------------------------
+' Egress / ingress relations
+' --------------------------------------------------------------------------
+
+' Cloud Run → VM internal IP (Direct VPC Egress)
+Rel(cctunnel, egress_nic, "Direct VPC Egress 経由で送信", "")
+Rel(egress_nic, cm, "container-manager API\n(http://<vm_internal_ip>:9090)", "TCP 内部")
+Rel(egress_nic, agent_n, "cc-remote-agent 呼び出し\n(http://<vm_internal_ip>:9091..)", "TCP 内部")
+Rel(fw_cm, cm, "ingress を許可", "")
+
+' VM external egress
+Rel(nic, ar, "container-manager の image pull\n(SA token を X-Registry-Auth に載せる)", "HTTPS / external IP")
+Rel(nic, anthropic, "cc-remote-agent → LLM 呼び出し", "HTTPS / external IP")
+Rel(nic, github_etc, "実行時依存解決 (git/npm/pip/apt …)", "HTTPS / external IP")
+
+' Metadata server (SA token)
+Rel(cm, metadata_int, "GET /computeMetadata/v1/...\n(SA access token 取得)", "HTTP")
+
+' Public ingress hazard
+Rel(internet, fw_ssh, "外部 IP 経由で SSH/22 が到達可能", "TCP")
+
+' --------------------------------------------------------------------------
+' Notes
+' --------------------------------------------------------------------------
+note as note_external_ip #FFD700
+  **本 PR (#57) の変更点**
+  - VM の NetworkInterface に AccessConfigs (ONE_TO_ONE_NAT) を付与
+    → ephemeral external IP が VM 起動時に自動付与される
+  - 新規 subnet `cc-remote-agent-vm` を追加 (private_ip_google_access = true)
+    → 外部 IP 廃止に切り替えても AR pull が通るように退路を確保
+  - GCE_VM_SUBNETWORK env を Cloud Run に渡し、CreateInstance 時に subnet を指定
+end note
+
+note as note_pga #ADD8E6
+  **PGA (Private Google Access) と external IP の関係**
+  外部 IP がある状態では `*.pkg.dev` 等のトラフィックは
+  public 経路で解決される。subnet の PGA フラグは
+  事実上効いていないが、将来 Cloud NAT 採用などで
+  external IP を外す際の選択肢として残している。
+end note
+
+note as note_nat_rejected #FFB6C1
+  **Cloud NAT を採用しなかった理由**
+  - NAT Gateway の固定費 + 1 GB 当たりのデータ処理料金が
+    PoC 段階の VM 数では割に合わない
+  - 外部 IP 許可リスト (static IP) の要件もまだない
+  - 必要になれば cc-remote-agent-vm subnet をそのまま流用して
+    NAT 構成へ切り替え可能
+end note
+
+note as note_hardening #FF9999
+  **要フォローアップ: default-allow-ssh**
+  default network の `default-allow-ssh` は
+  source_ranges = 0.0.0.0/0 で全 VM に開いている。
+  外部 IP 付き VM では SSH/22 が world-readable 状態。
+  以下のいずれかを別 PR で検討:
+    a) tag scope で cc-tunnel-agent VM を除外
+    b) deny rule で 22 を完全閉鎖
+end note
+
+legend right
+  **凡例**
+  |<#FFD700>      | 本 PR で変更された要素 |
+  |<#ADD8E6>      | 補足情報 |
+  |<#FFB6C1>      | 採用しなかった代替案 |
+  |<#FF9999>      | 既知のセキュリティ課題 |
+endlegend
+
+@enduml

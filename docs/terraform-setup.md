@@ -253,6 +253,9 @@ Artifact Registry push を管理する。
 | `GCE_PROJECT_ID` | `var.project_id` | VM 作成先プロジェクト |
 | `GCE_ZONE` | `var.gce_zone` (default: `us-central1-a`) | VM 作成ゾーン |
 | `GCE_MACHINE_TYPE` | `var.gce_machine_type` (default: `e2-medium`) | VM マシンタイプ |
+| `GCE_VM_IMAGE` | `local.vm_image_url` | Packer で焼いた VM イメージの URL |
+| `GCE_VM_SERVICE_ACCOUNT` | `google_service_account.vm_runtime_sa.email` | VM にアタッチする SA。AR reader / logging / monitoring の最小権限 |
+| `GCE_VM_SUBNETWORK` | `google_compute_subnetwork.cc_remote_agent_vm.id` | VM をぶら下げる subnet（`cc-remote-agent-vm`、Private Google Access 有効）。VM は ephemeral external IP も同時付与される。詳細は ADR `2026-05-09T11:50:55+09:00_01_gce_vm_egress_via_external_ip.md` |
 | `CC_REMOTE_AGENT_IMAGE` | `local.cra_fqim` | AR 上の cc-remote-agent イメージ URL |
 
 ### outputs

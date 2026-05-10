@@ -201,18 +201,19 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 			return nil, fmt.Errorf("GCE_VM_IMAGE environment variable is required for docker_gce provider")
 		}
 		cfg := dockergce.DockerGCEConfig{
-			ProjectID:           gceProjectID,
-			Zone:                getEnvOrDefault("GCE_ZONE", "us-central1-a"),
-			MachineType:         getEnvOrDefault("GCE_MACHINE_TYPE", "e2-medium"),
-			VMImage:             vmImage,
-			VMServiceAccount:    os.Getenv("GCE_VM_SERVICE_ACCOUNT"),
-			AgentImage:          agentImage,
-			AgentPort:           9091,
-			IdleTimeout:         15 * time.Minute,
-			MaxContainers:       getEnvIntOrDefault("GCE_MAX_CONTAINERS", 10),
-			IdleCheckInterval:   time.Duration(getEnvIntOrDefault("GCE_IDLE_CHECK_INTERVAL_SECONDS", 300)) * time.Second,
+			ProjectID:            gceProjectID,
+			Zone:                 getEnvOrDefault("GCE_ZONE", "us-central1-a"),
+			MachineType:          getEnvOrDefault("GCE_MACHINE_TYPE", "e2-medium"),
+			VMImage:              vmImage,
+			VMServiceAccount:     os.Getenv("GCE_VM_SERVICE_ACCOUNT"),
+			VMSubnetwork:         os.Getenv("GCE_VM_SUBNETWORK"),
+			AgentImage:           agentImage,
+			AgentPort:            9091,
+			IdleTimeout:          15 * time.Minute,
+			MaxContainers:        getEnvIntOrDefault("GCE_MAX_CONTAINERS", 10),
+			IdleCheckInterval:    time.Duration(getEnvIntOrDefault("GCE_IDLE_CHECK_INTERVAL_SECONDS", 300)) * time.Second,
 			ContainerManagerPort: getEnvIntOrDefault("GCE_CONTAINER_MANAGER_PORT", 9090),
-			ContainerNamePrefix: getEnvOrDefault("GCE_CONTAINER_NAME_PREFIX", "cc-remote-agent"),
+			ContainerNamePrefix:  getEnvOrDefault("GCE_CONTAINER_NAME_PREFIX", "cc-remote-agent"),
 		}
 		return dockergce.NewDockerGCEProvider(cfg, gceClient, repo), nil
 	default:
