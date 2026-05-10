@@ -46,8 +46,8 @@ inputs = {
 
   # IAP: 有効化するには iap_enabled=true にして iap_allowed_members を埋める。
   # OAuth client_id/secret は cc-tunnel-iap unit から自動で渡る。
-  iap_enabled             = false
+  iap_enabled             = true
   iap_oauth_client_id     = "${dependency.cc_tunnel_iap.outputs.oauth_client_id}"
   iap_oauth_client_secret = "${dependency.cc_tunnel_iap.outputs.oauth_client_secret}"
-  iap_allowed_members     = []
+  iap_allowed_members     = ["user:polleninjp@gmail.com"]
 }
