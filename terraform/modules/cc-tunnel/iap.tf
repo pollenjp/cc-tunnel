@@ -9,11 +9,49 @@
 # 構成方針:
 #   - var.iap_enabled = true で LB の両 backend service (cc-tunnel / frontend) に
 #     IAP を有効化する (lb.tf の dynamic "iap" ブロック)。
-#   - Cloud Run service の invoker は変更しない (allUsers のまま) — ingress が
-#     INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER なので .run.app への直接アクセスは
-#     ブロックされ、LB 経由のみ通る。LB 前段の IAP がユーザ認証を担う。
+#   - LB 経由で IAP が Cloud Run を呼び出すために IAP service agent
+#     (service-<PROJECT_NUMBER>@gcp-sa-iap.iam.gserviceaccount.com) を
+#     プロビジョニングし、両 Cloud Run service に roles/run.invoker を付与する。
+#     これが無いとブラウザログイン後に
+#       "The IAP service account is not provisioned"
+#     のエラーになる。
+#   - Cloud Run service の invoker は allUsers のまま残している
+#     (ingress が INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER なので .run.app への
+#     直接アクセスはブロックされる。defense-in-depth で allUsers を撤去する作業は
+#     Issue #62 で追跡)。
 #   - 許可ユーザは var.iap_allowed_members に IAM 形式で列挙
 #     (例: ["user:foo@example.com", "group:team@example.com"])。
+
+# IAP service agent (P4SA) を project に作成する。冪等。
+# `gcloud beta services identity create --service=iap.googleapis.com` 相当。
+resource "google_project_service_identity" "iap" {
+  provider = google-beta
+  count    = var.iap_enabled ? 1 : 0
+
+  project = var.project_id
+  service = "iap.googleapis.com"
+}
+
+# IAP P4SA に Cloud Run invoker を付与し、LB 経由の IAP からの呼び出しを許可する。
+resource "google_cloud_run_v2_service_iam_member" "cc_tunnel_iap_invoker" {
+  count = var.iap_enabled ? 1 : 0
+
+  project  = google_cloud_run_v2_service.cloud_run.project
+  location = google_cloud_run_v2_service.cloud_run.location
+  name     = google_cloud_run_v2_service.cloud_run.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_project_service_identity.iap[0].email}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "frontend_iap_invoker" {
+  count = var.iap_enabled ? 1 : 0
+
+  project  = google_cloud_run_v2_service.fe_cloud_run.project
+  location = google_cloud_run_v2_service.fe_cloud_run.location
+  name     = google_cloud_run_v2_service.fe_cloud_run.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_project_service_identity.iap[0].email}"
+}
 
 resource "google_iap_web_backend_service_iam_member" "cc_tunnel_iap_users" {
   for_each = var.iap_enabled ? toset(var.iap_allowed_members) : toset([])
