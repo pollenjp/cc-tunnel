@@ -53,3 +53,4 @@ output "cloudflare_dns_record_hostname" {
   value       = cloudflare_dns_record.lb.name
   description = "Cloudflare DNS record hostname (FQDN)"
 }
+

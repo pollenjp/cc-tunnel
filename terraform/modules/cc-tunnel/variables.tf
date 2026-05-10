@@ -166,3 +166,35 @@ variable "cloudflare_dns_comment" {
   description = "Cloudflare DNS record の comment"
   default     = "cc-tunnel LB (managed by terraform)"
 }
+
+# ---------------------------------------------------------------------------
+# IAP (Identity-Aware Proxy)
+# ---------------------------------------------------------------------------
+# OAuth brand / client は cc-tunnel-iap module 側で管理される。本モジュールは
+# その outputs を terragrunt dependency 経由で受け取り、LB backend service の
+# iap ブロックと IAM binding に使う。
+
+variable "iap_enabled" {
+  type        = bool
+  description = "Enable IAP on the External HTTPS LB backend services. Requires iap.googleapis.com API enabled and the cc-tunnel-iap unit applied first."
+  default     = false
+}
+
+variable "iap_oauth_client_id" {
+  type        = string
+  description = "IAP OAuth client ID (provided by the cc-tunnel-iap module). Required when iap_enabled=true."
+  default     = ""
+}
+
+variable "iap_oauth_client_secret" {
+  type        = string
+  description = "IAP OAuth client secret (provided by the cc-tunnel-iap module). Required when iap_enabled=true."
+  default     = ""
+  sensitive   = true
+}
+
+variable "iap_allowed_members" {
+  type        = list(string)
+  description = "IAM members granted roles/iap.httpsResourceAccessor on both backend services. Format: 'user:foo@example.com' / 'group:team@example.com' / 'domain:example.com'."
+  default     = []
+}

@@ -11,6 +11,7 @@ locals {
     "eventarc.googleapis.com",      # Eventarc (cc-tunnel auto-redeploy)
     "workflows.googleapis.com",     # Workflows (cc-tunnel auto-redeploy)
     "logging.googleapis.com",       # Audit logs / workflow call logs
+    "iap.googleapis.com",           # Identity-Aware Proxy (cc-tunnel module)
   ]
 }
 

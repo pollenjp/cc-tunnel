@@ -30,8 +30,10 @@ resource "google_project_iam_member" "sa_roles" {
     "roles/cloudbuild.builds.editor",        # Cloud Build trigger 作成・更新 + run/describe (cc-tunnel module)
     "roles/artifactregistry.admin",          # Artifact Registry リポジトリの管理
 
+    # IAP backend service への IAM binding (roles/iap.httpsResourceAccessor) を
+    # terraform で管理するために必要。
     # https://docs.cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run#terraform
-    # "roles/iap.admin",
+    "roles/iap.admin",
 
     # Google Cloud API 有効化に必要
     # https://github.com/terraform-google-modules/terraform-google-project-factory/tree/main/modules/project_services#prerequisites
@@ -57,6 +59,9 @@ resource "google_project_iam_member" "sa_roles" {
 
     # Eventarc trigger の作成・更新 (cc-tunnel auto-redeploy)
     "roles/eventarc.admin",
+
+    # Cloud Scheduler job の作成・更新 (vm_image_cleaner module)
+    "roles/cloudscheduler.admin",
   ])
 
   project = var.project_id
