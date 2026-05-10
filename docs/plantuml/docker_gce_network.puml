@@ -2,8 +2,8 @@
 ' 【役割】GCE VM 周辺のネットワーク構成図
 '   docker_gce_architecture.puml がアプリ層 (Container) の関係を、
 '   docker_gce_multi_container.puml が pool 管理シーケンスを示すのに対し、
-'   本図は VPC / subnet / firewall / external IP / Private Google Access / metadata server
-'   など「GCE VM の egress と ingress がどう通っているか」を示す。
+'   本図は VPC / subnet / firewall / external IP / metadata server など
+'   「GCE VM の egress と ingress がどう通っているか」を示す。
 '
 ' 関連 ADR:
 '   - 2026-05-06_container_manager_on_vm.md (container-manager 導入)
@@ -13,7 +13,7 @@
 ' 関連 PR / Issue:
 '   - #60 switch from default VPC to a custom VPC (google_compute_network.cc_tunnel)
 '   - #58 attach a dedicated SA to cc-tunnel-managed VMs (vm_runtime_sa)
-'   - #57 fix-remote-agent-container-GJjvW (external IP + PGA subnet)
+'   - #57 fix-remote-agent-container-GJjvW (ephemeral external IP)
 '   - #62 (issue) defense-in-depth: drop allUsers Cloud Run invoker after IAP rollout
 
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
@@ -73,7 +73,7 @@ Deployment_Node(gcp_project, "GCP Project (cc-tunnel-local)", "Google Cloud") {
       Container(egress_nic, "Cloud Run egress NIC", "Direct VPC Egress", "cc-tunnel → VM internal IP の発信元\nvar.vpc_connector_subnet_cidr")
     }
 
-    Deployment_Node(subnet_vm, "subnet: cc-remote-agent-vm", "10.16.0.0/20 (us-central1)\nprivate_ip_google_access = true\nvar.cc_remote_agent_subnet_cidr") {
+    Deployment_Node(subnet_vm, "subnet: cc-remote-agent-vm", "10.16.0.0/20 (us-central1)\nvar.cc_remote_agent_subnet_cidr") {
 
       Deployment_Node(gce_vm, "GCE VM (cc-tunnel-<uuid>)", "Compute Engine\nlabels: managed-by=cc-tunnel\ntags: [cc-tunnel-agent]\nSA: vm_runtime_sa") {
 
@@ -135,8 +135,7 @@ note as note_external_ip #FFD700
   **本 PR (#57) の変更点**
   - VM の NetworkInterface に AccessConfigs (ONE_TO_ONE_NAT) を付与
     → ephemeral external IP が VM 起動時に自動付与される
-  - 新規 subnet `cc-remote-agent-vm` を追加 (private_ip_google_access = true)
-    → 外部 IP 廃止に切り替えても AR pull が通るように退路を確保
+  - 新規 subnet `cc-remote-agent-vm` を追加
   - GCE_VM_SUBNETWORK env を Cloud Run に渡し、CreateInstance 時に subnet を指定
 end note
 
@@ -153,21 +152,15 @@ note as note_iap #C8E6C9
   - allUsers invoker 撤去は Issue #62 で別追跡
 end note
 
-note as note_pga #ADD8E6
-  **PGA (Private Google Access) と external IP の関係**
-  外部 IP がある状態では `*.pkg.dev` 等のトラフィックは
-  public 経路で解決される。subnet の PGA フラグは
-  事実上効いていないが、将来 Cloud NAT 採用などで
-  external IP を外す際の選択肢として残している。
-end note
-
 note as note_nat_rejected #FFB6C1
-  **Cloud NAT を採用しなかった理由**
-  - NAT Gateway の固定費 + 1 GB 当たりのデータ処理料金が
-    PoC 段階の VM 数では割に合わない
-  - 外部 IP 許可リスト (static IP) の要件もまだない
-  - 必要になれば cc-remote-agent-vm subnet をそのまま流用して
-    NAT 構成へ切り替え可能
+  **Cloud NAT / PGA を採用しなかった理由**
+  - VM は AccessConfigs で ephemeral external IP を持つので、
+    Artifact Registry も外部依存解決もすべて public 経路で済む
+  - NAT Gateway の固定費 + データ処理料金は PoC 段階の VM 数では割に合わない
+  - PGA (private_ip_google_access) は外部 IP がある現構成では
+    実質的に効かないため、subnet 設定からは取り除いた
+  - 将来 external IP を外す方針に転ずる場合は、subnet に PGA を再付与するか
+    Cloud NAT を被せる構成へ切り替えれば良い
 end note
 
 note as note_hardening #90EE90
@@ -185,7 +178,6 @@ legend right
   **凡例**
   |<#FFD700>      | 本 PR で変更された要素 |
   |<#C8E6C9>      | Phase 3 IAP 関連 (ADR 2026-05-10) |
-  |<#ADD8E6>      | 補足情報 |
   |<#FFB6C1>      | 採用しなかった代替案 |
   |<#90EE90>      | 解消済みの過去課題 |
 endlegend

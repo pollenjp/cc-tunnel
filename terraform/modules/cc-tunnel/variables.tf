@@ -134,7 +134,7 @@ variable "vpc_connector_subnet_cidr" {
 }
 
 variable "cc_remote_agent_subnet_cidr" {
-  description = "CIDR for the cc-remote-agent VM subnet. The subnet has Private Google Access enabled so VMs without external IPs can pull cc-remote-agent images from Artifact Registry."
+  description = "CIDR for the cc-remote-agent VM subnet. VMs reach Artifact Registry / the public internet via the ephemeral external IP attached to each instance."
   type        = string
   default     = "10.16.0.0/20"
 }
