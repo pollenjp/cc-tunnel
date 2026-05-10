@@ -166,3 +166,48 @@ variable "cloudflare_dns_comment" {
   description = "Cloudflare DNS record の comment"
   default     = "cc-tunnel LB (managed by terraform)"
 }
+
+# ---------------------------------------------------------------------------
+# IAP (Identity-Aware Proxy)
+# ---------------------------------------------------------------------------
+
+variable "iap_enabled" {
+  type        = bool
+  description = "Enable IAP on the External HTTPS LB backend services. Requires iap.googleapis.com API enabled and an OAuth brand."
+  default     = false
+}
+
+variable "iap_application_title" {
+  type        = string
+  description = "OAuth consent screen application title (used only when iap_create_brand=true)"
+  default     = "cc-tunnel"
+}
+
+variable "iap_support_email" {
+  type        = string
+  description = "OAuth consent screen support email. Group address (e.g. team@example.com) recommended. Required when iap_create_brand=true."
+  default     = ""
+}
+
+variable "iap_create_brand" {
+  type        = bool
+  description = "If true, manage the OAuth brand via terraform. Each project can have only one brand; set false and use iap_existing_brand_name when one already exists."
+  default     = false
+}
+
+variable "iap_existing_brand_name" {
+  type        = string
+  description = "Existing IAP brand resource name (format: projects/<project_number>/brands/<brand_id>). Used when iap_create_brand=false."
+  default     = ""
+
+  validation {
+    condition     = var.iap_existing_brand_name == "" || can(regex("^projects/[0-9]+/brands/[0-9]+$", var.iap_existing_brand_name))
+    error_message = "iap_existing_brand_name must be of the form projects/<project_number>/brands/<brand_id>."
+  }
+}
+
+variable "iap_allowed_members" {
+  type        = list(string)
+  description = "IAM members granted roles/iap.httpsResourceAccessor on both backend services. Format: 'user:foo@example.com' / 'group:team@example.com' / 'domain:example.com'."
+  default     = []
+}

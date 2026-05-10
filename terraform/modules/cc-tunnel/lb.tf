@@ -37,6 +37,15 @@ resource "google_compute_backend_service" "cc_tunnel_backend" {
     group = google_compute_region_network_endpoint_group.cc_tunnel_neg.id
   }
   log_config { enable = true }
+
+  dynamic "iap" {
+    for_each = var.iap_enabled ? [1] : []
+    content {
+      enabled              = true
+      oauth2_client_id     = google_iap_client.client[0].client_id
+      oauth2_client_secret = google_iap_client.client[0].secret
+    }
+  }
 }
 
 # Backend service: frontend
@@ -48,6 +57,15 @@ resource "google_compute_backend_service" "frontend_backend" {
     group = google_compute_region_network_endpoint_group.frontend_neg.id
   }
   log_config { enable = true }
+
+  dynamic "iap" {
+    for_each = var.iap_enabled ? [1] : []
+    content {
+      enabled              = true
+      oauth2_client_id     = google_iap_client.client[0].client_id
+      oauth2_client_secret = google_iap_client.client[0].secret
+    }
+  }
 }
 
 # URL map: /api/* → cc-tunnel（url_rewrite で /api strip）、default → frontend

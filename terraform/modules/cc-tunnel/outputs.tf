@@ -53,3 +53,13 @@ output "cloudflare_dns_record_hostname" {
   value       = cloudflare_dns_record.lb.name
   description = "Cloudflare DNS record hostname (FQDN)"
 }
+
+output "iap_oauth_client_id" {
+  value       = var.iap_enabled ? google_iap_client.client[0].client_id : null
+  description = "OAuth client ID used by IAP (null when iap_enabled=false)"
+}
+
+output "iap_brand_name" {
+  value       = var.iap_enabled ? (var.iap_create_brand ? google_iap_brand.brand[0].name : var.iap_existing_brand_name) : null
+  description = "OAuth brand resource name used by IAP (null when iap_enabled=false)"
+}
