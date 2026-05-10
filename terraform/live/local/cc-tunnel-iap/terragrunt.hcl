@@ -23,9 +23,9 @@ inputs = {
   # 作成後、Client ID / Client secret を以下の環境変数に設定して apply する:
   #   IAP_OAUTH_CLIENT_ID=<...>.apps.googleusercontent.com
   #   IAP_OAUTH_CLIENT_SECRET=<...>
-  # 既定値 "" は terragrunt hcl validate (環境変数なし) を通すため。
-  # 実値必須は modules/cc-tunnel-iap/variables.tf の validation で plan/apply
-  # 時に強制する (ただし client_secret は空チェックなしで cc-tunnel 側に渡る)。
+  # この unit は plan / apply / hcl validate のいずれでも両 env var が必須。
+  # 未設定だと modules/cc-tunnel-iap/variables.tf の validation で
+  # 即時エラーになる (空文字禁止 + 形式チェック)。
   oauth_client_id     = get_env("IAP_OAUTH_CLIENT_ID", "")
   oauth_client_secret = get_env("IAP_OAUTH_CLIENT_SECRET", "")
 }
