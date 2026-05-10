@@ -77,6 +77,10 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "~> 5"
     }
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
   }
 
   %{if local.tfstate_bucket_name != null~}
