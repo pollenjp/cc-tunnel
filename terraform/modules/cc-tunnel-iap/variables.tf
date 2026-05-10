@@ -1,24 +1,15 @@
-variable "project_id" {
-  type = string
-}
-
-variable "deploy_env" {
-  description = "Deployment environment name (used as a prefix for the OAuth client display name)"
+variable "oauth_client_id" {
   type        = string
-}
-
-variable "terraform_runner_sa_email" {
-  type        = string
-  description = "Service account email to impersonate when running gcloud (matches the google provider's impersonate_service_account)."
-  default     = ""
-}
-
-variable "brand_name" {
-  type        = string
-  description = "Existing IAP OAuth brand resource name in the form 'projects/<project_number>/brands/<brand_id>'. The brand must be created via GCP Console (APIs & Services > OAuth consent screen) since google_iap_brand is deprecated and the underlying API has been shut down. Empty string is accepted by validation only to allow terragrunt hcl validate without IAP_BRAND_NAME set; the data.external lookup at apply time still requires a real value."
+  description = "OAuth 2.0 client ID created manually in GCP Console (APIs & Services > Credentials). Required because google_iap_client is deprecated and its underlying API has been shut down."
 
   validation {
-    condition     = var.brand_name == "" || can(regex("^projects/[0-9]+/brands/[0-9]+$", var.brand_name))
-    error_message = "brand_name must be of the form projects/<project_number>/brands/<brand_id>."
+    condition     = var.oauth_client_id == "" || can(regex("^[0-9]+-[0-9a-z]+\\.apps\\.googleusercontent\\.com$", var.oauth_client_id))
+    error_message = "oauth_client_id must look like '<project_number>-<hash>.apps.googleusercontent.com' (or empty for hcl validate)."
   }
+}
+
+variable "oauth_client_secret" {
+  type        = string
+  description = "OAuth 2.0 client secret paired with oauth_client_id."
+  sensitive   = true
 }

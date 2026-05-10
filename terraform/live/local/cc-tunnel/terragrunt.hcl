@@ -13,7 +13,6 @@ dependency "cc_tunnel_iap" {
   mock_outputs = {
     oauth_client_id     = ""
     oauth_client_secret = ""
-    brand_name          = ""
   }
   mock_outputs_allowed_terraform_commands = ["validate", "init", "plan"]
 }
