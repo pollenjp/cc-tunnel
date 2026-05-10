@@ -10,6 +10,16 @@ output "oauth_client_secret" {
 }
 
 output "brand_name" {
-  value       = var.create_brand ? google_iap_brand.brand[0].name : var.existing_brand_name
-  description = "OAuth brand resource name in use"
+  value       = data.external.iap_brand.result.name
+  description = "OAuth brand resource name verified to exist in the project"
+}
+
+output "brand_application_title" {
+  value       = data.external.iap_brand.result.application_title
+  description = "OAuth consent screen application title"
+}
+
+output "brand_support_email" {
+  value       = data.external.iap_brand.result.support_email
+  description = "OAuth consent screen support email"
 }

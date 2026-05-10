@@ -7,31 +7,18 @@ variable "deploy_env" {
   type        = string
 }
 
-variable "create_brand" {
-  type        = bool
-  description = "If true, manage the OAuth brand via terraform. Each project can have only one brand; set false and use existing_brand_name when one already exists."
-  default     = false
+variable "terraform_runner_sa_email" {
+  type        = string
+  description = "Service account email to impersonate when running gcloud (matches the google provider's impersonate_service_account)."
+  default     = ""
 }
 
-variable "existing_brand_name" {
+variable "brand_name" {
   type        = string
-  description = "Existing IAP brand resource name (format: projects/<project_number>/brands/<brand_id>). Used when create_brand=false."
-  default     = ""
+  description = "Existing IAP OAuth brand resource name in the form 'projects/<project_number>/brands/<brand_id>'. The brand must be created via GCP Console (APIs & Services > OAuth consent screen) since google_iap_brand is deprecated and the underlying API has been shut down. Empty string is accepted by validation only to allow terragrunt hcl validate without IAP_BRAND_NAME set; the data.external lookup at apply time still requires a real value."
 
   validation {
-    condition     = var.existing_brand_name == "" || can(regex("^projects/[0-9]+/brands/[0-9]+$", var.existing_brand_name))
-    error_message = "existing_brand_name must be of the form projects/<project_number>/brands/<brand_id>."
+    condition     = var.brand_name == "" || can(regex("^projects/[0-9]+/brands/[0-9]+$", var.brand_name))
+    error_message = "brand_name must be of the form projects/<project_number>/brands/<brand_id>."
   }
-}
-
-variable "application_title" {
-  type        = string
-  description = "OAuth consent screen application title (used only when create_brand=true)"
-  default     = "cc-tunnel"
-}
-
-variable "support_email" {
-  type        = string
-  description = "OAuth consent screen support email. Group address (e.g. team@example.com) recommended. Required when create_brand=true."
-  default     = ""
 }
