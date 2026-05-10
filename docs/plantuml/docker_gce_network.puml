@@ -11,6 +11,7 @@
 '   - 2026-05-10_iap_oauth_admin_api_shutdown.md (LB 前段 IAP + IAP P4SA)
 '
 ' 関連 PR / Issue:
+'   - #60 switch from default VPC to a custom VPC (google_compute_network.cc_tunnel)
 '   - #58 attach a dedicated SA to cc-tunnel-managed VMs (vm_runtime_sa)
 '   - #57 fix-remote-agent-container-GJjvW (external IP + PGA subnet)
 '   - #62 (issue) defense-in-depth: drop allUsers Cloud Run invoker after IAP rollout
@@ -65,8 +66,8 @@ Deployment_Node(gcp_project, "GCP Project (cc-tunnel-local)", "Google Cloud") {
     Container(fe, "frontend (SPA + nginx)", "Static + reverse proxy", "BACKEND_URL=/api\nAPI_UPSTREAM=<cc-tunnel.uri>")
   }
 
-  ' ----- VPC default network -----
-  Deployment_Node(vpc, "VPC: default (auto-mode)", "google_compute_network = default") {
+  ' ----- Custom VPC -----
+  Deployment_Node(vpc, "VPC: cc-tunnel (custom mode)", "google_compute_network.cc_tunnel\nauto_create_subnetworks = false") {
 
     Deployment_Node(subnet_egress, "subnet: cc-tunnel-egress", "10.8.0.0/26 (us-central1)\nDirect VPC Egress 専用") {
       Container(egress_nic, "Cloud Run egress NIC", "Direct VPC Egress", "cc-tunnel → VM internal IP の発信元\nvar.vpc_connector_subnet_cidr")
@@ -89,10 +90,9 @@ Deployment_Node(gcp_project, "GCP Project (cc-tunnel-local)", "Google Cloud") {
   }
 
   ' ----- Firewall rules (network 全体に適用) -----
-  Deployment_Node(fw, "VPC firewall rules (default network)", "google_compute_firewall") {
+  Deployment_Node(fw, "VPC firewall rules (cc-tunnel network)", "google_compute_firewall") {
     Container(fw_cm, "cc-tunnel-container-manager (allow)", "ingress / TCP 9090", "source_ranges = vpc_connector_subnet_cidr\ntarget_tags = [cc-tunnel-agent]")
-    Container(fw_ssh, "default-allow-ssh (allow, GCP デフォルト)", "ingress / TCP 22", "source_ranges = 0.0.0.0/0\n**外部 IP 付与により世界に開いている**\n→ ハードニング検討中 (ADR 2026-05-09)")
-    Container(fw_icmp, "default-allow-icmp / -rdp (allow, GCP デフォルト)", "ingress / ICMP, TCP 3389", "source_ranges = 0.0.0.0/0")
+    Container(fw_implicit_deny, "implicit deny-all ingress", "ingress / *", "カスタム VPC では default-allow-* が\n自動作成されないため、明示許可した\nrule のみが ingress を通す")
   }
 }
 
@@ -124,8 +124,9 @@ Rel(nic, github_etc, "実行時依存解決 (git/npm/pip/apt …)", "HTTPS / ext
 ' Metadata server (SA token)
 Rel(cm, metadata_int, "GET /computeMetadata/v1/...\n(SA access token 取得)", "HTTP")
 
-' Public ingress hazard
-Rel(internet, fw_ssh, "外部 IP 経由で SSH/22 が到達可能", "TCP")
+' Public ingress: カスタム VPC では明示 allow rule のみ。
+' 外部 IP があっても 22/3389/ICMP は default-allow-* が無いので閉じている。
+Rel(internet, fw_implicit_deny, "明示許可されないポートは到達不可", "TCP/UDP/ICMP")
 
 ' --------------------------------------------------------------------------
 ' Notes
@@ -169,14 +170,15 @@ note as note_nat_rejected #FFB6C1
     NAT 構成へ切り替え可能
 end note
 
-note as note_hardening #FF9999
-  **要フォローアップ: default-allow-ssh**
-  default network の `default-allow-ssh` は
-  source_ranges = 0.0.0.0/0 で全 VM に開いている。
-  外部 IP 付き VM では SSH/22 が world-readable 状態。
-  以下のいずれかを別 PR で検討:
-    a) tag scope で cc-tunnel-agent VM を除外
-    b) deny rule で 22 を完全閉鎖
+note as note_hardening #90EE90
+  **解消: default-allow-ssh の世界公開**
+  カスタム VPC (`google_compute_network.cc_tunnel`,
+  auto_create_subnetworks = false) に切り替えたため、
+  GCP が default network に自動作成する
+  `default-allow-ssh` / `-icmp` / `-rdp` は存在しない。
+  外部 IP 付き VM でも、明示的に許可された
+  `cc-tunnel-container-manager` (TCP 9090, source =
+  vpc_connector_subnet_cidr) 以外の ingress は閉じている。
 end note
 
 legend right
@@ -185,7 +187,7 @@ legend right
   |<#C8E6C9>      | Phase 3 IAP 関連 (ADR 2026-05-10) |
   |<#ADD8E6>      | 補足情報 |
   |<#FFB6C1>      | 採用しなかった代替案 |
-  |<#FF9999>      | 既知のセキュリティ課題 |
+  |<#90EE90>      | 解消済みの過去課題 |
 endlegend
 
 @enduml
