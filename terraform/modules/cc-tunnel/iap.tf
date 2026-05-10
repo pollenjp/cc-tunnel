@@ -15,10 +15,9 @@
 #     これが無いとブラウザログイン後に
 #       "The IAP service account is not provisioned"
 #     のエラーになる。
-#   - Cloud Run service の invoker は allUsers のまま残している
-#     (ingress が INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER なので .run.app への
-#     直接アクセスはブロックされる。defense-in-depth で allUsers を撤去する作業は
-#     Issue #62 で追跡)。
+#   - Cloud Run service の invoker は IAP P4SA のみ (allUsers は撤去済み, Issue #62)。
+#     ingress = INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER と合わせ defense-in-depth で
+#     .run.app への直接アクセス / LB 経由の未認証アクセス双方を遮断する。
 #   - 許可ユーザは var.iap_allowed_members に IAM 形式で列挙
 #     (例: ["user:foo@example.com", "group:team@example.com"])。
 
