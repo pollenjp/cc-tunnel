@@ -78,3 +78,16 @@ resource "google_secret_manager_secret_iam_member" "cs_runtime_database_url_acce
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runtime_sa.email}"
 }
+
+# Aggregator that lets dependents (e.g. Cloud Run) express a single dependency
+# on the whole "DB stack" (db, user, secret version). Destroying the stack
+# while Cloud Run still owns DB objects causes `DROP ROLE` to fail with
+# "role cannot be dropped because some objects depend on it", so consumers
+# must be torn down before any of these resources.
+resource "terraform_data" "cs_db_block" {
+  triggers_replace = [
+    google_sql_database.cs_db.id,
+    google_sql_user.cs_user.id,
+    google_secret_manager_secret_version.cs_database_url_secret_version.id,
+  ]
+}
