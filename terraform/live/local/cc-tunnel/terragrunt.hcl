@@ -60,4 +60,7 @@ inputs = {
   iap_oauth_client_id     = "${dependency.cc_tunnel_iap.outputs.oauth_client_id}"
   iap_oauth_client_secret = "${dependency.cc_tunnel_iap.outputs.oauth_client_secret}"
   iap_allowed_members     = ["user:polleninjp@gmail.com"]
+
+  # TODO: remove
+  enable_ssh_debug = true
 }
