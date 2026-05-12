@@ -24,7 +24,7 @@ variable "github_repo_name" {
 }
 
 variable "github_branch_name" {
-  description = "Branch whose pushes trigger image builds. Matched as `^${github_branch_name}$` in each Cloud Build trigger's push filter."
+  description = "Branch whose pushes trigger image builds. Matched as `^$${github_branch_name}$$` in each Cloud Build trigger's push filter."
   type        = string
   default     = "main"
 }
