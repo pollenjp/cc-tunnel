@@ -28,6 +28,13 @@ inputs = {
   terraform_runner_sa_email             = "${include.root.locals.terraform_runner_sa_email}"
   deploy_env                            = "${include.root.locals.env}"
 
+  # GitHub source for every Cloud Build trigger in modules/cc-tunnel
+  # (cc-tunnel / frontend / cc-remote-agent / container-manager / vm-image).
+  github_owner             = "pollenjp"
+  github_repo_name         = "cc-tunnel"
+  github_branch_name       = "main"
+  cc_tunnel_dockerfile_dir = "apps/cc-tunnel"
+
   frontend_image_name     = "frontend"
   frontend_container_port = 8080
 

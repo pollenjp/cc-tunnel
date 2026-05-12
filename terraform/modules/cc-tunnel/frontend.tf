@@ -44,10 +44,10 @@ resource "google_cloudbuild_trigger" "fe_trigger" {
   service_account = google_service_account.fe_builder_sa.id
 
   github {
-    owner = local.github_owner
-    name  = local.github_repo_name
+    owner = var.github_owner
+    name  = var.github_repo_name
     push {
-      branch = "^${local.github_branch_name}$"
+      branch = "^${var.github_branch_name}$"
     }
   }
 
@@ -92,7 +92,7 @@ resource "terraform_data" "fe_run_trigger_once" {
           "$project_flag" \
           builds triggers run "${google_cloudbuild_trigger.fe_trigger.name}" \
             --region="${google_cloudbuild_trigger.fe_trigger.location}" \
-            --branch="${local.github_branch_name}" \
+            --branch="${var.github_branch_name}" \
             --format="value(metadata.build.id)"
       )
 

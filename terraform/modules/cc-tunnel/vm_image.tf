@@ -61,9 +61,9 @@ resource "google_cloudbuild_trigger" "vm_image_trigger" {
   service_account = google_service_account.vm_image_builder_sa.id
 
   github {
-    owner = local.github_owner
-    name  = local.github_repo_name
-    push { branch = "^${local.github_branch_name}$" }
+    owner = var.github_owner
+    name  = var.github_repo_name
+    push { branch = "^${var.github_branch_name}$" }
   }
   # Rebuild the VM image when container-manager (baked into the image) changes.
   included_files = ["${local.vm_image_dir}/**", "${local.cm_dockerfile_dir}/**"]
@@ -98,7 +98,7 @@ resource "terraform_data" "vm_image_run_trigger_once" {
       BUILD_ID=$(gcloud $impersonate_flag $project_flag \
         builds triggers run "${google_cloudbuild_trigger.vm_image_trigger.name}" \
         --region="${google_cloudbuild_trigger.vm_image_trigger.location}" \
-        --branch="${local.github_branch_name}" \
+        --branch="${var.github_branch_name}" \
         --format="value(metadata.build.id)")
       while true; do
         STATUS=$(gcloud $impersonate_flag $project_flag \
