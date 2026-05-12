@@ -198,3 +198,12 @@ variable "iap_allowed_members" {
   description = "IAM members granted roles/iap.httpsResourceAccessor on both backend services. Format: 'user:foo@example.com' / 'group:team@example.com' / 'domain:example.com'."
   default     = []
 }
+
+# ---------------------------------------------------------------------------
+# SSH debug access
+# ---------------------------------------------------------------------------
+variable "enable_ssh_debug" {
+  type        = bool
+  description = "Open SSH (TCP/22) on cc-remote-agent VMs from the IAP TCP forwarding range (35.235.240.0/20) only. Intended for ad-hoc debugging via the GCP console 'SSH in browser' button or `gcloud compute ssh --tunnel-through-iap`. The caller still needs roles/iap.tunnelResourceAccessor on the project (or instance) and an SSH credential (OS Login or metadata key)."
+  default     = false
+}
