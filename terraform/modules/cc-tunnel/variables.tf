@@ -111,6 +111,12 @@ variable "container_manager_port" {
   default     = 9090
 }
 
+variable "cc_remote_agent_host_port_start" {
+  description = "First host port published on each VM for cc-remote-agent containers. cc-tunnel assigns ports starting from this value up to (cc_remote_agent_host_port_start + gce_max_containers - 1). Must match the `PortRangeStart` constant in apps/cc-tunnel/internal/provider/dockergce/provider.go."
+  type        = number
+  default     = 9091
+}
+
 variable "lb_fqdn" {
   type        = string
   description = "FQDN for HTTPS LB (Google-managed SSL cert はこのドメインで発行)"

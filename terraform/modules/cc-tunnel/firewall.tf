@@ -4,16 +4,25 @@ resource "google_compute_firewall" "cc_tunnel_container_manager" {
 
   allow {
     protocol = "tcp"
-    ports    = [tostring(var.container_manager_port)]
+    ports = [
+      # container-manager HTTP API (lifecycle endpoints).
+      tostring(var.container_manager_port),
+      # cc-remote-agent host port range (one published port per agent
+      # container, assigned sequentially by cc-tunnel from PortRangeStart).
+      # cc-tunnel polls these directly for the agent's /auth/status, so
+      # the VPC firewall must permit the whole range.
+      "${var.cc_remote_agent_host_port_start}-${var.cc_remote_agent_host_port_start + var.gce_max_containers - 1}",
+    ]
   }
 
   # Allow only from the VPC Connector subnet (cc-tunnel Cloud Run egress)
-  # to the container-manager API on each VM. dockerd itself is bound to
-  # the Unix socket and is not network-reachable.
+  # to the container-manager API and to each cc-remote-agent container's
+  # published host port. dockerd itself is bound to the Unix socket and is
+  # not network-reachable.
   source_ranges = [var.vpc_connector_subnet_cidr]
   target_tags   = ["cc-tunnel-agent"]
 
-  description = "Allow container-manager TCP from cc-tunnel VPC Connector only"
+  description = "Allow container-manager and cc-remote-agent TCP from cc-tunnel VPC Connector only"
 }
 
 # Optional SSH access to cc-remote-agent VMs via IAP TCP forwarding only.

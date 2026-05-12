@@ -67,12 +67,19 @@ func (c *Client) RunAgent(ctx context.Context, req RunAgentRequest) error {
 }
 
 // RunAgentContainer is the production GCE path's convenience wrapper.
+//
+// cc-remote-agent reads the `PORT` env var and falls back to 9090 when unset
+// (apps/cc-remote-agent/cmd/cc-remote-agent/main.go), but container-manager
+// publishes the host-side port to `containerPort` inside the container. To
+// keep the listener and the published port in sync we inject PORT here; the
+// agent then binds to the same port container-manager exposes.
 func (c *Client) RunAgentContainer(ctx context.Context, image, name string, hostPort, containerPort int) error {
 	return c.RunAgent(ctx, RunAgentRequest{
 		Image:         image,
 		Name:          name,
 		HostPort:      hostPort,
 		ContainerPort: containerPort,
+		Env:           []string{fmt.Sprintf("PORT=%d", containerPort)},
 	})
 }
 
