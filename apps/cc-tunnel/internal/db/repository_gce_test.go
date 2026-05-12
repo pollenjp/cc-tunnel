@@ -145,6 +145,68 @@ func TestCreateSessionEndpoint_GetByConversationID(t *testing.T) {
 	}
 }
 
+// TestGetSmallestAvailablePortOnVM verifies the port allocation query:
+// returns the start of the range on a fresh VM, fills gaps left by removed
+// endpoints (so released ports get reused first), and returns 0 when every
+// port in the range is taken.
+func TestGetSmallestAvailablePortOnVM(t *testing.T) {
+	repo, cleanup := setupRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	convID := createTestConversation(t, repo)
+	defer func() { _ = repo.DeleteConversation(ctx, convID) }()
+
+	name := uid(t, "vm")
+	vm, err := repo.CreateVMInstance(ctx, name, "asia-northeast1-b", "10.128.0.5")
+	if err != nil {
+		t.Fatalf("CreateVMInstance: %v", err)
+	}
+	defer func() { _ = repo.DeleteVMInstance(ctx, vm.ID) }()
+
+	// Fresh VM → smallest free = start of the range.
+	got, err := repo.GetSmallestAvailablePortOnVM(ctx, vm.ID, 61000, 61002)
+	if err != nil {
+		t.Fatalf("GetSmallestAvailablePortOnVM(empty): %v", err)
+	}
+	if got != 61000 {
+		t.Errorf("empty range: got %d, want %d", got, 61000)
+	}
+
+	// Reserve 61000 and 61002, leaving 61001 as the smallest free.
+	convB := createTestConversation(t, repo)
+	defer func() { _ = repo.DeleteConversation(ctx, convB) }()
+	if _, err := repo.CreateSessionEndpoint(ctx, convID, vm.ID, "session-a", 61000); err != nil {
+		t.Fatalf("CreateSessionEndpoint(61000): %v", err)
+	}
+	if _, err := repo.CreateSessionEndpoint(ctx, convB, vm.ID, "session-b", 61002); err != nil {
+		t.Fatalf("CreateSessionEndpoint(61002): %v", err)
+	}
+
+	got, err = repo.GetSmallestAvailablePortOnVM(ctx, vm.ID, 61000, 61002)
+	if err != nil {
+		t.Fatalf("GetSmallestAvailablePortOnVM(gap): %v", err)
+	}
+	if got != 61001 {
+		t.Errorf("with gap: got %d, want %d (gap should be reused)", got, 61001)
+	}
+
+	// Fill 61001 too → range exhausted → 0.
+	convC := createTestConversation(t, repo)
+	defer func() { _ = repo.DeleteConversation(ctx, convC) }()
+	if _, err := repo.CreateSessionEndpoint(ctx, convC, vm.ID, "session-c", 61001); err != nil {
+		t.Fatalf("CreateSessionEndpoint(61001): %v", err)
+	}
+
+	got, err = repo.GetSmallestAvailablePortOnVM(ctx, vm.ID, 61000, 61002)
+	if err != nil {
+		t.Fatalf("GetSmallestAvailablePortOnVM(full): %v", err)
+	}
+	if got != 0 {
+		t.Errorf("full range: got %d, want 0", got)
+	}
+}
+
 // TestDeleteVMInstance_CascadeDeletesSessionEndpoints verifies that deleting a
 // VM instance also removes its associated session endpoints via ON DELETE CASCADE
 // on the conversation FK chain: conversation delete cascades to session_endpoints.

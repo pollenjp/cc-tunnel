@@ -32,8 +32,10 @@ type dbRepository interface {
 	DeleteSessionEndpoint(ctx context.Context, id string) error
 	ListIdleVMInstances(ctx context.Context, idleThreshold time.Duration) ([]*db.VMInstance, error)
 	DeleteVMInstance(ctx context.Context, id string) error
-	// GetMaxPortOnVM returns the maximum host port in use on the given VM (0 if none).
-	GetMaxPortOnVM(ctx context.Context, vmID string) (int, error)
+	// GetSmallestAvailablePortOnVM returns the smallest port in [start, end]
+	// that is not currently bound to a running session endpoint on the given
+	// VM, or 0 if every port in the range is taken.
+	GetSmallestAvailablePortOnVM(ctx context.Context, vmID string, start, end int) (int, error)
 }
 
 // DockerGCEConfig は DockerGCEProvider の設定
@@ -68,7 +70,14 @@ type DockerGCEConfig struct {
 
 	// Multi-container settings
 	ContainerNamePrefix string // default "session"
-	PortRangeStart      int    // default 9091
+	// PortRangeStart / PortRangeEnd bound the host port range published
+	// on each VM for cc-remote-agent containers. The default range is a
+	// slice of IANA Dynamic/Private (49152-65535) sitting above Linux's
+	// ephemeral pool (32768-60999) so neither registered services nor
+	// the kernel collides with allocations. Must match the corresponding
+	// terraform variables in terraform/modules/cc-tunnel/variables.tf.
+	PortRangeStart int // default 61000
+	PortRangeEnd   int // default 61999
 	// ContainerManagerPort is the host port that the container-manager service
 	// listens on inside each VM. Default 9090. cc-tunnel reaches it as
 	// http://<vm_internal_ip>:<port>; the channel is unauthenticated and
@@ -136,7 +145,10 @@ func NewDockerGCEProviderWithClientFactory(cfg DockerGCEConfig, gceClient gce.GC
 		cfg.ContainerNamePrefix = "session"
 	}
 	if cfg.PortRangeStart == 0 {
-		cfg.PortRangeStart = 9091
+		cfg.PortRangeStart = 61000
+	}
+	if cfg.PortRangeEnd == 0 {
+		cfg.PortRangeEnd = 61999
 	}
 	if cfg.ContainerManagerPort == 0 {
 		cfg.ContainerManagerPort = 9090
@@ -240,14 +252,15 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 		// Retry loop for port collision (UNIQUE constraint on vm_instance_id + port).
 		var ep *db.SessionEndpoint
 		for attempt := 0; attempt < 3; attempt++ {
-			// Re-query max port each attempt so collisions resolved by other goroutines are visible.
-			maxPort, err := p.db.GetMaxPortOnVM(ctx, vm.ID)
+			// Re-query each attempt so a port freed (or taken) by another goroutine
+			// is visible. Returns the smallest free port so gaps left by removed
+			// agents get reused before we grow toward the upper bound.
+			hostPort, err := p.db.GetSmallestAvailablePortOnVM(ctx, vm.ID, p.config.PortRangeStart, p.config.PortRangeEnd)
 			if err != nil {
-				return nil, fmt.Errorf("get max port on VM: %w", err)
+				return nil, fmt.Errorf("get smallest available port on VM: %w", err)
 			}
-			hostPort := maxPort + 1
-			if hostPort < p.config.PortRangeStart {
-				hostPort = p.config.PortRangeStart
+			if hostPort == 0 {
+				return nil, fmt.Errorf("VM %s: no free host port in [%d, %d]", vm.ID, p.config.PortRangeStart, p.config.PortRangeEnd)
 			}
 
 			dcm, err := p.newDockerClient(cmURL)

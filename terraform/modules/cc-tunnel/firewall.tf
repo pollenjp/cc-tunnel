@@ -8,10 +8,10 @@ resource "google_compute_firewall" "cc_tunnel_container_manager" {
       # container-manager HTTP API (lifecycle endpoints).
       tostring(var.container_manager_port),
       # cc-remote-agent host port range (one published port per agent
-      # container, assigned sequentially by cc-tunnel from PortRangeStart).
-      # cc-tunnel polls these directly for the agent's /auth/status, so
-      # the VPC firewall must permit the whole range.
-      "${var.cc_remote_agent_host_port_start}-${var.cc_remote_agent_host_port_start + var.gce_max_containers - 1}",
+      # container, allocated from this range by cc-tunnel). cc-tunnel
+      # polls these directly for the agent's /auth/status, so the VPC
+      # firewall must permit the whole range.
+      "${var.cc_remote_agent_host_port_start}-${var.cc_remote_agent_host_port_end}",
     ]
   }
 
