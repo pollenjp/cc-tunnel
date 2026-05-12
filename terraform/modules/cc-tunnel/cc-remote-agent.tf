@@ -63,7 +63,16 @@ resource "terraform_data" "cra_run_trigger_once" {
     google_artifact_registry_repository_iam_member.cra_registry_writer,
     google_project_iam_member.cra_builder_sa_roles,
   ]
-  triggers_replace = [google_cloudbuild_trigger.cra_trigger.id]
+  # Re-run on any value interpolated into `command` below. See run_trigger_once
+  # in main.tf for the rationale.
+  triggers_replace = [
+    google_cloudbuild_trigger.cra_trigger.id,
+    google_cloudbuild_trigger.cra_trigger.name,
+    google_cloudbuild_trigger.cra_trigger.location,
+    var.terraform_runner_sa_email,
+    var.project_id,
+    var.github_branch_name,
+  ]
   provisioner "local-exec" {
     interpreter = ["bash", "-euo", "pipefail", "-c"]
     command     = <<-EOT

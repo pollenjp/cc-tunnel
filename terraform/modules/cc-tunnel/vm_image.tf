@@ -88,7 +88,16 @@ resource "terraform_data" "vm_image_run_trigger_once" {
     terraform_data.cm_run_trigger_once,
     google_artifact_registry_repository_iam_member.cm_packer_builder_reader,
   ]
-  triggers_replace = [google_cloudbuild_trigger.vm_image_trigger.id]
+  # Re-run on any value interpolated into `command` below. See run_trigger_once
+  # in main.tf for the rationale.
+  triggers_replace = [
+    google_cloudbuild_trigger.vm_image_trigger.id,
+    google_cloudbuild_trigger.vm_image_trigger.name,
+    google_cloudbuild_trigger.vm_image_trigger.location,
+    var.terraform_runner_sa_email,
+    var.project_id,
+    var.github_branch_name,
+  ]
 
   provisioner "local-exec" {
     interpreter = ["bash", "-euo", "pipefail", "-c"]

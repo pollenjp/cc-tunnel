@@ -80,7 +80,19 @@ resource "terraform_data" "run_trigger_once" {
     google_project_iam_member.cloudbuild_builder_sa_roles,
   ]
 
-  triggers_replace = [google_cloudbuild_trigger.trigger.id]
+  # Re-run the provisioner whenever any value interpolated into `command` below
+  # changes, not just when the trigger itself is replaced. The provisioner only
+  # fires on create, so changing only the trigger's `push.branch` (which does
+  # not regenerate `.id`) would otherwise leave the existing image in place.
+  triggers_replace = [
+    google_cloudbuild_trigger.trigger.id,
+    google_cloudbuild_trigger.trigger.name,
+    google_cloudbuild_trigger.trigger.location,
+    var.terraform_runner_sa_email,
+    var.project_id,
+    var.github_branch_name,
+    local.fqim,
+  ]
 
   provisioner "local-exec" {
     interpreter = ["bash", "-euo", "pipefail", "-c"]

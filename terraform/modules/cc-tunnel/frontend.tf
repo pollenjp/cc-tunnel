@@ -77,7 +77,17 @@ resource "terraform_data" "fe_run_trigger_once" {
     google_project_iam_member.fe_builder_sa_roles,
   ]
 
-  triggers_replace = [google_cloudbuild_trigger.fe_trigger.id]
+  # Re-run on any value interpolated into `command` below. See run_trigger_once
+  # in main.tf for the rationale.
+  triggers_replace = [
+    google_cloudbuild_trigger.fe_trigger.id,
+    google_cloudbuild_trigger.fe_trigger.name,
+    google_cloudbuild_trigger.fe_trigger.location,
+    var.terraform_runner_sa_email,
+    var.project_id,
+    var.github_branch_name,
+    local.fe_fqim,
+  ]
 
   provisioner "local-exec" {
     interpreter = ["bash", "-euo", "pipefail", "-c"]
