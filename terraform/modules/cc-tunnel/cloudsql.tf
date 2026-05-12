@@ -47,6 +47,12 @@ resource "google_sql_database" "cs_db" {
   # Terraform call the Cloud SQL Admin API here otherwise races with
   # Cloud Run connection drain and fails with
   # `database "cctunnel" is being accessed by other users`.
+  #
+  # On the orphan risk: this resource is only ever destroyed together
+  # with cs_instance (it has no independent lifecycle), and the database
+  # is exclusive to that instance, so the "abandoned" object is reclaimed
+  # within seconds when the instance itself is deleted. There is no path
+  # by which a stale cctunnel database survives past cs_instance.
   deletion_policy = "ABANDON"
 }
 
@@ -58,6 +64,10 @@ resource "google_sql_user" "cs_user" {
   # Skip DROP ROLE on destroy. PostgreSQL refuses to drop cctunnel
   # while it still owns objects in the cctunnel database, and the
   # parent instance teardown removes the role anyway.
+  #
+  # Same orphan-risk reasoning as cs_db above: the role is scoped to
+  # cs_instance and disappears with it, so ABANDON only delays cleanup
+  # by the few seconds it takes to destroy the instance.
   deletion_policy = "ABANDON"
 }
 
