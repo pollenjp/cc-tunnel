@@ -41,12 +41,24 @@ resource "google_sql_database_instance" "cs_instance" {
 resource "google_sql_database" "cs_db" {
   name     = local.cs_db_name
   instance = google_sql_database_instance.cs_instance.name
+
+  # Skip DROP DATABASE on destroy. `tf:save_cost` tears down the parent
+  # cs_instance wholesale, which removes the database with it. Letting
+  # Terraform call the Cloud SQL Admin API here otherwise races with
+  # Cloud Run connection drain and fails with
+  # `database "cctunnel" is being accessed by other users`.
+  deletion_policy = "ABANDON"
 }
 
 resource "google_sql_user" "cs_user" {
   name     = local.cs_user_name
   instance = google_sql_database_instance.cs_instance.name
   password = random_password.cs_password.result
+
+  # Skip DROP ROLE on destroy. PostgreSQL refuses to drop cctunnel
+  # while it still owns objects in the cctunnel database, and the
+  # parent instance teardown removes the role anyway.
+  deletion_policy = "ABANDON"
 }
 
 resource "google_secret_manager_secret" "cs_database_url_secret" {
@@ -77,17 +89,4 @@ resource "google_secret_manager_secret_iam_member" "cs_runtime_database_url_acce
   secret_id = google_secret_manager_secret.cs_database_url_secret.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runtime_sa.email}"
-}
-
-# Aggregator that lets dependents (e.g. Cloud Run) express a single dependency
-# on the whole "DB stack" (db, user, secret version). Destroying the stack
-# while Cloud Run still owns DB objects causes `DROP ROLE` to fail with
-# "role cannot be dropped because some objects depend on it", so consumers
-# must be torn down before any of these resources.
-resource "terraform_data" "cs_db_block" {
-  triggers_replace = [
-    google_sql_database.cs_db.id,
-    google_sql_user.cs_user.id,
-    google_secret_manager_secret_version.cs_database_url_secret_version.id,
-  ]
 }
