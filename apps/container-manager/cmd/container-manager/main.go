@@ -8,6 +8,7 @@ import (
 
 	"github.com/pollenjp/cc-tunnel/apps/container-manager/internal/api"
 	dockerops "github.com/pollenjp/cc-tunnel/apps/container-manager/internal/docker"
+	"github.com/pollenjp/cc-tunnel/apps/container-manager/internal/logging"
 )
 
 type responseWriter struct {
@@ -35,7 +36,8 @@ func loggingMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	logHandler := logging.NewCloudLoggingHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	slog.SetDefault(slog.New(logHandler).With("component", "container-manager"))
 
 	mgr, err := dockerops.NewManager(os.Getenv("DEFAULT_NETWORK"))
 	if err != nil {

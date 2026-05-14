@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -93,6 +94,11 @@ type RunAgentRequest struct {
 	NanoCPUs      int64
 	Network       string   // overrides the manager's default network when non-empty
 	Env           []string // additional environment variables (e.g. "PORT=9090")
+	// Labels are applied to the container and propagated to Cloud Logging via
+	// the gcplogs log driver (--log-opt labels=<csv>). Caller is responsible
+	// for restricting the key set (e.g. conversation_id, vm_instance_id,
+	// component) — values land in Cloud Logging unredacted.
+	Labels map[string]string
 }
 
 // RunAgent pulls the image (with VM-SA-derived auth) only when it is not
@@ -138,11 +144,15 @@ func (m *Manager) RunAgent(ctx context.Context, req RunAgentRequest) (string, er
 			},
 		}
 	}
+	if len(req.Labels) > 0 {
+		hostConfig.LogConfig = gcplogsLogConfig(req.Labels)
+	}
 
 	resp, err := m.cli.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
 		Config: &container.Config{
-			Image: req.Image,
-			Env:   req.Env,
+			Image:  req.Image,
+			Env:    req.Env,
+			Labels: req.Labels,
 			ExposedPorts: network.PortSet{
 				portProto: struct{}{},
 			},
@@ -243,6 +253,26 @@ func registryHost(image string) string {
 		}
 	}
 	return "docker.io"
+}
+
+// gcplogsLogConfig builds a LogConfig that ships the container's stdout/stderr
+// to Cloud Logging via the gcplogs driver, surfacing the given label keys
+// (e.g. conversation_id, vm_instance_id) as Cloud Logging entry labels. The
+// container-manager-level Docker daemon default driver may already be gcplogs
+// (see Packer image); setting it explicitly here keeps per-session containers
+// correct even when callers override the daemon default.
+func gcplogsLogConfig(labels map[string]string) container.LogConfig {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return container.LogConfig{
+		Type: "gcplogs",
+		Config: map[string]string{
+			"labels": strings.Join(keys, ","),
+		},
+	}
 }
 
 // needsGoogleAuth reports whether the image is hosted on Artifact Registry

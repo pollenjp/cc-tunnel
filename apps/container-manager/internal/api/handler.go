@@ -75,6 +75,7 @@ func (h *Server) CreateAgent(ctx context.Context, request CreateAgentRequestObje
 		NanoCPUs:      deref(req.NanoCpus),
 		Network:       deref(req.Network),
 		Env:           derefSlice(req.Env),
+		Labels:        derefMap(req.Labels),
 	})
 	if err != nil {
 		slog.Error("RunAgent failed", "err", err, "name", req.Name)
@@ -124,6 +125,13 @@ func deref[T any](p *T) T {
 }
 
 func derefSlice[T any](p *[]T) []T {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func derefMap[K comparable, V any](p *map[K]V) map[K]V {
 	if p == nil {
 		return nil
 	}

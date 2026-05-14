@@ -25,6 +25,14 @@ type CreateAgentRequest struct {
 	HostPort *int32 `json:"host_port,omitempty"`
 	Image    string `json:"image"`
 
+	// Labels Docker container labels applied to the created container. The same
+	// keys are forwarded to the `gcplogs` log driver via
+	// `--log-opt labels=<csv>`, so any labels included here will appear
+	// as Cloud Logging entry labels (e.g. `conversation_id`,
+	// `vm_instance_id`, `component`). Callers must not pass user-tainted
+	// values — keys/values land in Cloud Logging unredacted.
+	Labels *map[string]string `json:"labels,omitempty"`
+
 	// MemoryMib Memory limit in MiB; 0 means unlimited.
 	MemoryMib *int64 `json:"memory_mib,omitempty"`
 	Name      string `json:"name"`
