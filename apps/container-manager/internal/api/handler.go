@@ -75,7 +75,7 @@ func (h *Server) CreateAgent(ctx context.Context, request CreateAgentRequestObje
 		NanoCPUs:      deref(req.NanoCpus),
 		Network:       deref(req.Network),
 		Env:           derefSlice(req.Env),
-		Labels:        derefMap(req.Labels),
+		Labels:        filterLabels(derefMap(req.Labels)),
 	})
 	if err != nil {
 		slog.Error("RunAgent failed", "err", err, "name", req.Name)
@@ -136,4 +136,38 @@ func derefMap[K comparable, V any](p *map[K]V) map[K]V {
 		return nil
 	}
 	return *p
+}
+
+// allowedLabelKeys is the set of label keys the caller is permitted to attach
+// to created containers. Anything outside this set is dropped — both to bound
+// the surface area of what lands in Cloud Logging (Docker labels are forwarded
+// verbatim by the gcplogs driver) and to prevent accidental ingestion failures
+// from arbitrary keys that exceed Cloud Logging's label constraints.
+var allowedLabelKeys = map[string]struct{}{
+	"conversation_id": {},
+	"vm_instance_id":  {},
+	"component":       {},
+}
+
+// filterLabels returns a copy of labels containing only keys in
+// allowedLabelKeys with values that meet basic charset/length limits. Values
+// are bounded at 256 bytes to stay well under Cloud Logging's per-label limit.
+func filterLabels(labels map[string]string) map[string]string {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		if _, ok := allowedLabelKeys[k]; !ok {
+			continue
+		}
+		if len(v) > 256 {
+			v = v[:256]
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

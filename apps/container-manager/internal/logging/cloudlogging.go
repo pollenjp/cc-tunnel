@@ -1,8 +1,9 @@
 // Package logging configures slog for Cloud Logging structured ingestion.
 //
-// Mirrors apps/cc-tunnel/internal/logging/cloudlogging.go intentionally;
-// duplicated rather than shared via a Go module so the two apps can be built
-// independently.
+// Mirrors apps/cc-tunnel/internal/logging — including the ErrorStackHandler
+// wrapper that attaches a compact stack trace to records with an error
+// attribute. Duplicated rather than shared via a Go module so the two apps
+// can be built independently.
 package logging
 
 import (
@@ -39,5 +40,5 @@ func NewCloudLoggingHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler
 		}
 		return a
 	}
-	return slog.NewJSONHandler(w, &base)
+	return &ErrorStackHandler{Next: slog.NewJSONHandler(w, &base)}
 }
