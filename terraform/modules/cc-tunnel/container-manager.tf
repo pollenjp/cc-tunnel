@@ -37,9 +37,9 @@ resource "google_cloudbuild_trigger" "cm_trigger" {
   service_account = google_service_account.cm_builder_sa.id
 
   github {
-    owner = local.github_owner
-    name  = local.github_repo_name
-    push { branch = "^${local.github_branch_name}$" }
+    owner = var.github_owner
+    name  = var.github_repo_name
+    push { branch = "^${var.github_branch_name}$" }
   }
   included_files = ["${local.cm_dockerfile_dir}/**"]
   build {
@@ -63,7 +63,16 @@ resource "terraform_data" "cm_run_trigger_once" {
     google_artifact_registry_repository_iam_member.cm_registry_writer,
     google_project_iam_member.cm_builder_sa_roles,
   ]
-  triggers_replace = [google_cloudbuild_trigger.cm_trigger.id]
+  # Re-run on any value interpolated into `command` below. See run_trigger_once
+  # in main.tf for the rationale.
+  triggers_replace = [
+    google_cloudbuild_trigger.cm_trigger.id,
+    google_cloudbuild_trigger.cm_trigger.name,
+    google_cloudbuild_trigger.cm_trigger.location,
+    var.terraform_runner_sa_email,
+    var.project_id,
+    var.github_branch_name,
+  ]
   provisioner "local-exec" {
     interpreter = ["bash", "-euo", "pipefail", "-c"]
     command     = <<-EOT
@@ -72,7 +81,7 @@ resource "terraform_data" "cm_run_trigger_once" {
       BUILD_ID=$(gcloud $impersonate_flag $project_flag \
         builds triggers run "${google_cloudbuild_trigger.cm_trigger.name}" \
         --region="${google_cloudbuild_trigger.cm_trigger.location}" \
-        --branch="${local.github_branch_name}" \
+        --branch="${var.github_branch_name}" \
         --format="value(metadata.build.id)")
       while true; do
         STATUS=$(gcloud $impersonate_flag $project_flag \

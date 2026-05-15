@@ -7,6 +7,34 @@ variable "deploy_env" {
   type        = string
 }
 
+# ---------------------------------------------------------------------------
+# GitHub source — referenced by every google_cloudbuild_trigger in this module
+# (cc-tunnel / frontend / cc-remote-agent / container-manager / vm-image).
+# ---------------------------------------------------------------------------
+variable "github_owner" {
+  description = "GitHub owner/org that hosts the cc-tunnel repository (used as the `owner` of every Cloud Build trigger in this module)."
+  type        = string
+  default     = "pollenjp"
+}
+
+variable "github_repo_name" {
+  description = "GitHub repository name (used as the `name` of every Cloud Build trigger in this module)."
+  type        = string
+  default     = "cc-tunnel"
+}
+
+variable "github_branch_name" {
+  description = "Branch whose pushes trigger image builds. Matched as `^$${github_branch_name}$$` in each Cloud Build trigger's push filter."
+  type        = string
+  default     = "main"
+}
+
+variable "cc_tunnel_dockerfile_dir" {
+  description = "Path within the repository of the cc-tunnel Dockerfile directory. Used as both the Cloud Build trigger's `included_files` glob and the per-step `dir`."
+  type        = string
+  default     = "apps/cc-tunnel"
+}
+
 variable "artifact_registry_repository_location" {
   type = string
 }
