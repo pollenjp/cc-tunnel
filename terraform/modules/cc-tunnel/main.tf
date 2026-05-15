@@ -9,11 +9,6 @@ locals {
   # https://docs.cloud.google.com/build/docs/api/reference/rest/v1/projects.triggers
   trigger_suffix = "-${random_string.unique_id.result}-trigger"
   trigger_name   = "${substr("${var.image_name}", 0, 64 - length(local.trigger_suffix))}${local.trigger_suffix}"
-
-  github_owner       = "pollenjp"
-  github_repo_name   = "cc-tunnel"
-  github_branch_name = "main"
-  dockerfile_dir     = "apps/cc-tunnel"
 }
 
 resource "random_string" "unique_id" {
@@ -52,14 +47,14 @@ resource "google_cloudbuild_trigger" "trigger" {
   service_account = google_service_account.cloudbuild_builder_sa.id
 
   github {
-    owner = local.github_owner
-    name  = local.github_repo_name
+    owner = var.github_owner
+    name  = var.github_repo_name
     push {
-      branch = "^${local.github_branch_name}$"
+      branch = "^${var.github_branch_name}$"
     }
   }
 
-  included_files = ["${local.dockerfile_dir}/**"]
+  included_files = ["${var.cc_tunnel_dockerfile_dir}/**"]
 
   build {
     options {
@@ -67,12 +62,12 @@ resource "google_cloudbuild_trigger" "trigger" {
     }
     step {
       name = "gcr.io/cloud-builders/docker"
-      dir  = local.dockerfile_dir
+      dir  = var.cc_tunnel_dockerfile_dir
       args = ["build", "-t", "${local.fqim}", "-f", "Dockerfile", "."]
     }
     step {
       name = "gcr.io/cloud-builders/docker"
-      dir  = local.dockerfile_dir
+      dir  = var.cc_tunnel_dockerfile_dir
       args = ["push", "${local.fqim}"]
     }
   }
@@ -85,7 +80,19 @@ resource "terraform_data" "run_trigger_once" {
     google_project_iam_member.cloudbuild_builder_sa_roles,
   ]
 
-  triggers_replace = [google_cloudbuild_trigger.trigger.id]
+  # Re-run the provisioner whenever any value interpolated into `command` below
+  # changes, not just when the trigger itself is replaced. The provisioner only
+  # fires on create, so changing only the trigger's `push.branch` (which does
+  # not regenerate `.id`) would otherwise leave the existing image in place.
+  triggers_replace = [
+    google_cloudbuild_trigger.trigger.id,
+    google_cloudbuild_trigger.trigger.name,
+    google_cloudbuild_trigger.trigger.location,
+    var.terraform_runner_sa_email,
+    var.project_id,
+    var.github_branch_name,
+    local.fqim,
+  ]
 
   provisioner "local-exec" {
     interpreter = ["bash", "-euo", "pipefail", "-c"]
@@ -100,7 +107,7 @@ resource "terraform_data" "run_trigger_once" {
           "$project_flag" \
           builds triggers run "${google_cloudbuild_trigger.trigger.name}" \
             --region="${google_cloudbuild_trigger.trigger.location}" \
-            --branch="${local.github_branch_name}" \
+            --branch="${var.github_branch_name}" \
             --format="value(metadata.build.id)"
       )
 
