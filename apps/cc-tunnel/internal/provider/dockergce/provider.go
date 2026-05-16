@@ -259,6 +259,11 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 				Name:          containerName,
 				HostPort:      hostPort,
 				ContainerPort: p.config.AgentPort,
+				// cc-remote-agent reads PORT from env and defaults to 9090
+				// when unset (apps/cc-remote-agent/cmd/cc-remote-agent/main.go),
+				// so without this the container would listen on 9090 while
+				// container-manager binds host:p.config.AgentPort -> container:p.config.AgentPort.
+				Env: []string{fmt.Sprintf("PORT=%d", p.config.AgentPort)},
 				Labels: map[string]string{
 					"component":       "cc-remote-agent",
 					"conversation_id": conversationID,

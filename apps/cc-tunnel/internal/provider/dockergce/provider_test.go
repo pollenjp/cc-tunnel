@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -1227,6 +1228,75 @@ func TestGetOrCreateEndpoint_ForwardsLabels(t *testing.T) {
 	}
 	if got := capturedReq.Labels["component"]; got != "cc-remote-agent" {
 		t.Errorf("labels.component = %q, want %q", got, "cc-remote-agent")
+	}
+}
+
+// TestGetOrCreateEndpoint_ForwardsPortEnv pins the contract that the provider
+// passes PORT=<AgentPort> when asking container-manager to start a
+// cc-remote-agent container. Without this, cc-remote-agent falls back to its
+// default 9090 listener (apps/cc-remote-agent/cmd/cc-remote-agent/main.go),
+// container-manager's hostPort -> containerPort=AgentPort mapping points at a
+// non-existent listener, and cc-tunnel surfaces `wait for agent ready:
+// context deadline exceeded`. See #69 (Bug 2).
+func TestGetOrCreateEndpoint_ForwardsPortEnv(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-port", Result: "success"},
+	})
+	defer srv.Close()
+
+	var capturedReq cmclient.RunAgentRequest
+	var capturedMu sync.Mutex
+
+	repo := newMockDBRepo()
+	repo.availableVMErr = errors.New("no VM")
+	repo.maxPortOnVM = 0
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.PortRangeStart = 9091
+	cfg.ContainerManagerFactory = func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+			RunAgentFunc: func(_ context.Context, r cmclient.RunAgentRequest) error {
+				capturedMu.Lock()
+				capturedReq = r
+				capturedMu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "127.0.0.1"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "127.0.0.1"}, nil
+		},
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	_, err := p.Execute(context.Background(), remoteclient.Request{ConversationID: "conv-port-1", Prompt: "hi"}, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	capturedMu.Lock()
+	defer capturedMu.Unlock()
+
+	want := fmt.Sprintf("PORT=%d", cfg.AgentPort)
+	found := false
+	for _, e := range capturedReq.Env {
+		if e == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Env = %v, want to contain %q", capturedReq.Env, want)
 	}
 }
 
