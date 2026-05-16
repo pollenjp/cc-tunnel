@@ -1184,6 +1184,71 @@ func TestCreateGCEVM_NetworkTag(t *testing.T) {
 	}
 }
 
+// TestGetOrCreateEndpoint_ForwardsLabels verifies that the provider attaches
+// the cross-layer log-correlation labels (conversation_id / vm_instance_id /
+// component) when asking container-manager to start a session container.
+// This locks in the Cloud Logging label propagation contract documented in
+// adr/2026-05/.../gce_logging_strategy.md.
+func TestGetOrCreateEndpoint_ForwardsLabels(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-labels", Result: "success"},
+	})
+	defer srv.Close()
+
+	var capturedReq cmclient.RunAgentRequest
+	var capturedMu sync.Mutex
+
+	repo := newMockDBRepo()
+	repo.availableVMErr = errors.New("no VM") // force VM creation so we exercise the full path
+	repo.maxPortOnVM = 0
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.PortRangeStart = 9091
+	cfg.ContainerManagerFactory = func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+			RunAgentFunc: func(_ context.Context, r cmclient.RunAgentRequest) error {
+				capturedMu.Lock()
+				capturedReq = r
+				capturedMu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "127.0.0.1"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "127.0.0.1"}, nil
+		},
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	_, err := p.Execute(context.Background(), remoteclient.Request{ConversationID: "conv-labels-1", Prompt: "hi"}, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	capturedMu.Lock()
+	defer capturedMu.Unlock()
+
+	if got := capturedReq.Labels["conversation_id"]; got != "conv-labels-1" {
+		t.Errorf("labels.conversation_id = %q, want %q", got, "conv-labels-1")
+	}
+	if capturedReq.Labels["vm_instance_id"] == "" {
+		t.Errorf("labels.vm_instance_id is empty; want a non-empty VM id")
+	}
+	if got := capturedReq.Labels["component"]; got != "cc-remote-agent" {
+		t.Errorf("labels.component = %q, want %q", got, "cc-remote-agent")
+	}
+}
+
 // --- custom mocks for specific test behavior ---
 
 type customMockGCEClient struct {

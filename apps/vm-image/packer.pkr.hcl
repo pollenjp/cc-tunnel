@@ -80,7 +80,10 @@ build {
 
   # 1. Install Docker (no TCP listener; Unix socket only — only the
   #    container-manager container talks to dockerd via the bind-mounted
-  #    socket).
+  #    socket). Configure dockerd to use the gcplogs log driver so every
+  #    container's stdout/stderr is shipped to Cloud Logging directly. Also
+  #    install the Google Cloud Ops Agent for systemd/kernel/journald logs.
+  #    See the GCE logging strategy ADR under adr/2026-05/ for details.
   provisioner "shell" {
     execute_command = "sudo -E bash '{{ .Path }}'"
     inline_shebang  = "/bin/bash -euo pipefail"
@@ -94,7 +97,16 @@ build {
       "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable' > /etc/apt/sources.list.d/docker.list",
       "for i in 1 2 3 4 5; do apt-get update && break || sleep 5; done",
       "apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io",
+      "mkdir -p /etc/docker",
+      "cat > /etc/docker/daemon.json <<'EOF'",
+      "{",
+      "  \"log-driver\": \"gcplogs\"",
+      "}",
+      "EOF",
       "systemctl enable docker",
+      "curl -fsSLO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh",
+      "bash add-google-cloud-ops-agent-repo.sh --also-install",
+      "rm -f add-google-cloud-ops-agent-repo.sh",
     ]
   }
 
@@ -132,7 +144,7 @@ build {
       "Restart=always",
       "RestartSec=5",
       "ExecStartPre=-/usr/bin/docker rm -f container-manager",
-      "ExecStart=/usr/bin/docker run --rm --name container-manager --network=bridge -p ${var.container_manager_port}:9090 -v /var/run/docker.sock:/var/run/docker.sock ${var.container_manager_image}",
+      "ExecStart=/usr/bin/docker run --rm --name container-manager --network=bridge -p ${var.container_manager_port}:9090 -v /var/run/docker.sock:/var/run/docker.sock --log-driver=gcplogs --log-opt labels=component --label component=container-manager ${var.container_manager_image}",
       "ExecStop=/usr/bin/docker stop container-manager",
       "",
       "[Install]",

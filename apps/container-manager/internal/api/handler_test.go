@@ -149,6 +149,39 @@ func TestRemoveAgent(t *testing.T) {
 	assert.Equal(t, "sess-1", mgr.lastRm)
 }
 
+func TestCreateAgent_LabelsAllowlist(t *testing.T) {
+	mgr := &fakeManager{runID: "abc"}
+	srv := newServer(mgr)
+	defer srv.Close()
+
+	body := `{
+		"image":"img:tag","name":"sess-1","container_port":9090,
+		"labels":{
+			"conversation_id":"conv-1",
+			"vm_instance_id":"vm-1",
+			"component":"cc-remote-agent",
+			"api_key":"should-be-dropped",
+			"random":"also-dropped"
+		}
+	}`
+	resp, err := http.Post(srv.URL+"/v1/agents", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, map[string]string{
+		"conversation_id": "conv-1",
+		"vm_instance_id":  "vm-1",
+		"component":       "cc-remote-agent",
+	}, mgr.lastRun.Labels)
+}
+
+func TestFilterLabels_Truncates(t *testing.T) {
+	long := strings.Repeat("x", 512)
+	out := filterLabels(map[string]string{"conversation_id": long, "bogus": "y"})
+	assert.Len(t, out, 1)
+	assert.Equal(t, 256, len(out["conversation_id"]))
+}
+
 func TestRemoveAgent_NotFound(t *testing.T) {
 	mgr := &fakeManager{removeErr: fmt.Errorf("remove container: No such container: sess-x")}
 	srv := newServer(mgr)

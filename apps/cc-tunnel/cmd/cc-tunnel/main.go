@@ -36,9 +36,8 @@ func main() {
 	dbURL := flag.String("db-url", "", "PostgreSQL connection URL")
 	flag.Parse()
 
-	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-	stackHandler := &logging.ErrorStackHandler{Next: jsonHandler}
-	slog.SetDefault(slog.New(stackHandler))
+	logHandler := logging.NewCloudLoggingHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	slog.SetDefault(slog.New(logHandler).With("component", "cc-tunnel"))
 
 	if *dbURL == "" {
 		if v := os.Getenv("DATABASE_URL"); v != "" {

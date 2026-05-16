@@ -148,6 +148,21 @@ components:
           type: array
           items:
             type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Docker container labels applied to the created container. The same
+            keys are forwarded to the `gcplogs` log driver via
+            `--log-opt labels=<csv>` and surface as Cloud Logging entry
+            labels.
+
+            The server enforces an allowlist of keys: `conversation_id`,
+            `vm_instance_id`, `component`. Any other keys in the request are
+            silently dropped. Values longer than 256 bytes are truncated.
+            This bounds what reaches Cloud Logging since label values are not
+            redacted; callers should still avoid putting sensitive data here.
     CreateAgentResult:
       type: object
       required: [id]

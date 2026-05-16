@@ -54,6 +54,13 @@ func (c *Client) RunAgent(ctx context.Context, req RunAgentRequest) error {
 		env := append([]string(nil), req.Env...)
 		body.Env = &env
 	}
+	if len(req.Labels) > 0 {
+		labels := make(map[string]string, len(req.Labels))
+		for k, v := range req.Labels {
+			labels[k] = v
+		}
+		body.Labels = &labels
+	}
 
 	resp, err := c.gen.CreateAgent(ctx, body)
 	if err != nil {
