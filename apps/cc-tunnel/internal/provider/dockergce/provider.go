@@ -67,7 +67,16 @@ type DockerGCEConfig struct {
 	ZeroAgentsTimeout time.Duration
 
 	// VMReconcileInterval は container-manager に問い合わせて zero_agents_since
-	// を更新する周期。0 のときは IdleCheckInterval にフォールバックする。
+	// を更新する周期。
+	//
+	// **Cloud Run 上ではこれを 0 のままにしておくこと**。Cloud Run は
+	// リクエストが無い間 instance を停止し、リクエスト処理間も CPU を
+	// throttle するため、in-process な ticker は信頼できない。
+	// 本番では `POST /internal/reconcile-vms` を Cloud Scheduler から呼ぶ
+	// 経路に加え、各 VM 上の container-manager が self-reaper として
+	// 10 分周期で自己削除する経路を使う（docs/docker-gce-design.md §5.2 参照）。
+	// 0 のときは goroutine を起動しない（デフォルト）。
+	// 値を設定すると `ReconcileVMs` をその間隔で呼ぶ — local 開発・テスト用途。
 	VMReconcileInterval time.Duration
 
 	// ContainerManagerProbeTimeout は VM reconcile 時に container-manager
@@ -160,9 +169,11 @@ func NewDockerGCEProviderWithClientFactory(cfg DockerGCEConfig, gceClient gce.GC
 	if cfg.ZeroAgentsTimeout == 0 {
 		cfg.ZeroAgentsTimeout = 10 * time.Minute
 	}
-	if cfg.VMReconcileInterval == 0 {
-		cfg.VMReconcileInterval = cfg.IdleCheckInterval
-	}
+	// VMReconcileInterval defaults to 0 (disabled). See the field doc — the
+	// Cloud Run runtime cannot host a reliable ticker, so production drives
+	// ReconcileVMs through `POST /internal/reconcile-vms` (Cloud Scheduler)
+	// and the per-VM container-manager self-reaper. Tests / local dev opt
+	// in by setting a non-zero value explicitly.
 	if cfg.ContainerManagerProbeTimeout == 0 {
 		cfg.ContainerManagerProbeTimeout = 5 * time.Second
 	}

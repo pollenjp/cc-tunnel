@@ -216,11 +216,20 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 			PortRangeStart:       getEnvIntOrDefault("GCE_AGENT_PORT_RANGE_START", 61000),
 			PortRangeEnd:         getEnvIntOrDefault("GCE_AGENT_PORT_RANGE_END", 61999),
 			// VM reaper: delete a VM after its container-manager reports zero
-			// cc-remote-agent containers for this long. The reaper polls every
-			// VMReconcileInterval; default 60s gives ~10 ticks within the 10
-			// minute window so a delete fires within a tick of the threshold.
+			// cc-remote-agent containers for this long.
+			//
+			// In production on Cloud Run the reaper is NOT driven by an
+			// in-process ticker (Cloud Run scales the instance to zero and
+			// throttles CPU between requests, so the goroutine is unreliable).
+			// Instead, the same logic is invoked via
+			// `POST /internal/reconcile-vms` from Cloud Scheduler at a coarse
+			// cadence (e.g. every 6h, as a safety net) and primarily by the
+			// per-VM container-manager self-reaper at a finer cadence
+			// (10 min). VMReconcileInterval therefore defaults to 0
+			// (disabled). Set GCE_VM_RECONCILE_INTERVAL_SECONDS only for
+			// local docker_gce dev / tests.
 			ZeroAgentsTimeout:            time.Duration(getEnvIntOrDefault("GCE_VM_ZERO_AGENTS_TIMEOUT_SECONDS", 600)) * time.Second,
-			VMReconcileInterval:          time.Duration(getEnvIntOrDefault("GCE_VM_RECONCILE_INTERVAL_SECONDS", 60)) * time.Second,
+			VMReconcileInterval:          time.Duration(getEnvIntOrDefault("GCE_VM_RECONCILE_INTERVAL_SECONDS", 0)) * time.Second,
 			ContainerManagerProbeTimeout: time.Duration(getEnvIntOrDefault("GCE_CONTAINER_MANAGER_PROBE_TIMEOUT_SECONDS", 5)) * time.Second,
 		}
 		return dockergce.NewDockerGCEProvider(cfg, gceClient, repo), nil

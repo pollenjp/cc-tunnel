@@ -1096,6 +1096,7 @@ func TestVMScaler_Started(t *testing.T) {
 		Zone:                    "us-central1-a",
 		IdleTimeout:             time.Minute,
 		IdleCheckInterval:       20 * time.Millisecond, // very short for test
+		VMReconcileInterval:     20 * time.Millisecond, // explicit; default is now 0
 		ContainerManagerFactory: factory,
 	}
 
