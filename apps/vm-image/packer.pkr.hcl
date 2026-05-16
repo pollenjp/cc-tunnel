@@ -83,7 +83,7 @@ build {
   #    socket). Configure dockerd to use the gcplogs log driver so every
   #    container's stdout/stderr is shipped to Cloud Logging directly. Also
   #    install the Google Cloud Ops Agent for systemd/kernel/journald logs.
-  #    See: adr/2026-05/.../gce_logging_strategy.md
+  #    See the GCE logging strategy ADR under adr/2026-05/ for details.
   provisioner "shell" {
     execute_command = "sudo -E bash '{{ .Path }}'"
     inline_shebang  = "/bin/bash -euo pipefail"
