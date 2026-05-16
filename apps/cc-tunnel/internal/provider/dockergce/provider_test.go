@@ -1200,7 +1200,6 @@ func TestGetOrCreateEndpoint_ForwardsLabels(t *testing.T) {
 
 	repo := newMockDBRepo()
 	repo.availableVMErr = errors.New("no VM") // force VM creation so we exercise the full path
-	repo.maxPortOnVM = 0
 
 	cfg := shortTimeoutConfig()
 	cfg.AgentPort = 9091
