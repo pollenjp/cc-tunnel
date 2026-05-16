@@ -254,7 +254,17 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 			if err != nil {
 				return nil, fmt.Errorf("create container-manager client for %s: %w", cmURL, err)
 			}
-			if err := dcm.RunAgentContainer(ctx, p.config.AgentImage, containerName, hostPort, p.config.AgentPort); err != nil {
+			if err := dcm.RunAgent(ctx, cmclient.RunAgentRequest{
+				Image:         p.config.AgentImage,
+				Name:          containerName,
+				HostPort:      hostPort,
+				ContainerPort: p.config.AgentPort,
+				Labels: map[string]string{
+					"component":       "cc-remote-agent",
+					"conversation_id": conversationID,
+					"vm_instance_id":  vm.ID,
+				},
+			}); err != nil {
 				return nil, fmt.Errorf("run agent container on %s: %w", vm.InternalIP, err)
 			}
 

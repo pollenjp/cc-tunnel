@@ -31,6 +31,18 @@ type CreateAgentRequest struct {
 	HostPort *int32 `json:"host_port,omitempty"`
 	Image    string `json:"image"`
 
+	// Labels Docker container labels applied to the created container. The same
+	// keys are forwarded to the `gcplogs` log driver via
+	// `--log-opt labels=<csv>` and surface as Cloud Logging entry
+	// labels.
+	//
+	// The server enforces an allowlist of keys: `conversation_id`,
+	// `vm_instance_id`, `component`. Any other keys in the request are
+	// silently dropped. Values longer than 256 bytes are truncated.
+	// This bounds what reaches Cloud Logging since label values are not
+	// redacted; callers should still avoid putting sensitive data here.
+	Labels *map[string]string `json:"labels,omitempty"`
+
 	// MemoryMib Memory limit in MiB; 0 means unlimited.
 	MemoryMib *int64 `json:"memory_mib,omitempty"`
 	Name      string `json:"name"`
@@ -620,22 +632,27 @@ func (sh *strictHandler) StopAgent(w http.ResponseWriter, r *http.Request, name 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

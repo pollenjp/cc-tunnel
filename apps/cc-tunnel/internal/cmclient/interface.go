@@ -18,6 +18,11 @@ type RunAgentRequest struct {
 	ContainerPort int
 	Network       string
 	Env           []string
+	// Labels are forwarded to the container-manager and applied both to the
+	// Docker container metadata and the gcplogs log driver so the keys
+	// surface as Cloud Logging entry labels. Restrict to operational keys
+	// (conversation_id, vm_instance_id, component); values are not redacted.
+	Labels map[string]string
 }
 
 // ContainerManager abstracts cc-remote-agent container operations on a

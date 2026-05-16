@@ -66,3 +66,15 @@ func TestGoogleRegistryAuth_Encoding(t *testing.T) {
 	assert.Equal(t, "ya29.test", got.Password)
 	assert.Equal(t, "us-central1-docker.pkg.dev", got.ServerAddress)
 }
+
+func TestGcplogsLogConfig(t *testing.T) {
+	// Unsorted input must produce a stable, alphabetically-sorted CSV so
+	// container labels and the gcplogs label list don't drift between runs.
+	cfg := gcplogsLogConfig(map[string]string{
+		"vm_instance_id":  "vm-1",
+		"conversation_id": "conv-1",
+		"component":       "cc-remote-agent",
+	})
+	assert.Equal(t, "gcplogs", cfg.Type)
+	assert.Equal(t, "component,conversation_id,vm_instance_id", cfg.Config["labels"])
+}
