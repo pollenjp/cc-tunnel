@@ -27,10 +27,14 @@ type CreateAgentRequest struct {
 
 	// Labels Docker container labels applied to the created container. The same
 	// keys are forwarded to the `gcplogs` log driver via
-	// `--log-opt labels=<csv>`, so any labels included here will appear
-	// as Cloud Logging entry labels (e.g. `conversation_id`,
-	// `vm_instance_id`, `component`). Callers must not pass user-tainted
-	// values — keys/values land in Cloud Logging unredacted.
+	// `--log-opt labels=<csv>` and surface as Cloud Logging entry
+	// labels.
+	//
+	// The server enforces an allowlist of keys: `conversation_id`,
+	// `vm_instance_id`, `component`. Any other keys in the request are
+	// silently dropped. Values longer than 256 bytes are truncated.
+	// This bounds what reaches Cloud Logging since label values are not
+	// redacted; callers should still avoid putting sensitive data here.
 	Labels *map[string]string `json:"labels,omitempty"`
 
 	// MemoryMib Memory limit in MiB; 0 means unlimited.
