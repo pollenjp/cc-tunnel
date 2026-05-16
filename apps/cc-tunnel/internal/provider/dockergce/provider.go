@@ -272,6 +272,16 @@ func (p *DockerGCEProvider) getOrCreateEndpoint(ctx context.Context, conversatio
 				Name:          containerName,
 				HostPort:      hostPort,
 				ContainerPort: p.config.AgentPort,
+				// cc-remote-agent reads PORT from env and falls back to 9090
+				// when unset (apps/cc-remote-agent/cmd/cc-remote-agent/main.go),
+				// but container-manager publishes hostPort -> container:AgentPort.
+				// Without this the listener inside the container ends up on
+				// 9090 while the bound container port is AgentPort (9091), so
+				// cc-tunnel's poll hits an empty socket and waitForAgentReady
+				// times out. The cmclient.RunAgentContainer wrapper does the
+				// same injection for its callers; this call site bypasses the
+				// wrapper, so the env must be set here too.
+				Env: []string{fmt.Sprintf("PORT=%d", p.config.AgentPort)},
 				Labels: map[string]string{
 					"component":       "cc-remote-agent",
 					"conversation_id": conversationID,
