@@ -150,8 +150,10 @@ var allowedLabelKeys = map[string]struct{}{
 }
 
 // filterLabels returns a copy of labels containing only keys in
-// allowedLabelKeys with values that meet basic charset/length limits. Values
-// are bounded at 256 bytes to stay well under Cloud Logging's per-label limit.
+// allowedLabelKeys, with values capped at 256 bytes to stay well under
+// Cloud Logging's per-label limit. No charset validation is performed:
+// cc-tunnel is the only caller and the values it sends are UUIDs and known
+// constants, so any charset enforcement at this layer would be busywork.
 func filterLabels(labels map[string]string) map[string]string {
 	if len(labels) == 0 {
 		return nil
