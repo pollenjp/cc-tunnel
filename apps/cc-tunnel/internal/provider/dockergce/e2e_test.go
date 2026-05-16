@@ -69,6 +69,7 @@ func setupMultiContainerTestDB(t *testing.T) *pgxpool.Pool {
 			                    CHECK (status IN ('provisioning', 'running', 'terminated')),
 			active_containers   INTEGER     NOT NULL DEFAULT 0,
 			idle_since          TIMESTAMPTZ,
+			zero_agents_since   TIMESTAMPTZ,
 			created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 		CREATE TABLE session_endpoints (

@@ -22,6 +22,12 @@ import (
 	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
 )
 
+// AgentInfo defines model for AgentInfo.
+type AgentInfo struct {
+	// Name Docker container name (matches the `name` from createAgent).
+	Name string `json:"name"`
+}
+
 // CreateAgentRequest defines model for CreateAgentRequest.
 type CreateAgentRequest struct {
 	ContainerPort int32     `json:"container_port"`
@@ -67,6 +73,14 @@ type HealthStatus struct {
 	Status string `json:"status"`
 }
 
+// ListAgentsResult defines model for ListAgentsResult.
+type ListAgentsResult struct {
+	Agents []AgentInfo `json:"agents"`
+
+	// Count Number of running cc-remote-agent containers on this VM.
+	Count int32 `json:"count"`
+}
+
 // AgentName defines model for AgentName.
 type AgentName = string
 
@@ -78,6 +92,14 @@ type ServerInterface interface {
 	// Liveness probe; also pings the Docker daemon.
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
+	// List running cc-remote-agent containers on this VM.
+	//
+	// Filters containers by label `component=cc-remote-agent` so the count
+	// reflects only agent containers, regardless of what other workloads
+	// may run on the host. Intended for cc-tunnel's VM reaper to decide
+	// whether a VM has been idle long enough to be deleted.
+	// (GET /v1/agents)
+	ListAgents(w http.ResponseWriter, r *http.Request)
 	// Create and start an agent container.
 	// (POST /v1/agents)
 	CreateAgent(w http.ResponseWriter, r *http.Request)
@@ -103,6 +125,20 @@ func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealthz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAgents operation middleware
+func (siw *ServerInterfaceWrapper) ListAgents(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAgents(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -297,6 +333,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents", wrapper.ListAgents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents", wrapper.CreateAgent)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/agents/{name}", wrapper.RemoveAgent)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/{name}/stop", wrapper.StopAgent)
@@ -335,6 +372,41 @@ func (response GetHealthz503JSONResponse) VisitGetHealthzResponse(w http.Respons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAgentsRequestObject struct {
+}
+
+type ListAgentsResponseObject interface {
+	VisitListAgentsResponse(w http.ResponseWriter) error
+}
+
+type ListAgents200JSONResponse ListAgentsResult
+
+func (response ListAgents200JSONResponse) VisitListAgentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAgents500JSONResponse Error
+
+func (response ListAgents500JSONResponse) VisitListAgentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -482,6 +554,14 @@ type StrictServerInterface interface {
 	// Liveness probe; also pings the Docker daemon.
 	// (GET /healthz)
 	GetHealthz(ctx context.Context, request GetHealthzRequestObject) (GetHealthzResponseObject, error)
+	// List running cc-remote-agent containers on this VM.
+	//
+	// Filters containers by label `component=cc-remote-agent` so the count
+	// reflects only agent containers, regardless of what other workloads
+	// may run on the host. Intended for cc-tunnel's VM reaper to decide
+	// whether a VM has been idle long enough to be deleted.
+	// (GET /v1/agents)
+	ListAgents(ctx context.Context, request ListAgentsRequestObject) (ListAgentsResponseObject, error)
 	// Create and start an agent container.
 	// (POST /v1/agents)
 	CreateAgent(ctx context.Context, request CreateAgentRequestObject) (CreateAgentResponseObject, error)
@@ -539,6 +619,30 @@ func (sh *strictHandler) GetHealthz(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHealthzResponseObject); ok {
 		if err := validResponse.VisitGetHealthzResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAgents operation middleware
+func (sh *strictHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
+	var request ListAgentsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAgents(ctx, request.(ListAgentsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAgents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAgentsResponseObject); ok {
+		if err := validResponse.VisitListAgentsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -632,27 +736,31 @@ func (sh *strictHandler) StopAgent(w http.ResponseWriter, r *http.Request, name 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

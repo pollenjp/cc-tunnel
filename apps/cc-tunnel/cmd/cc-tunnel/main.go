@@ -215,6 +215,13 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 			ContainerNamePrefix:  getEnvOrDefault("GCE_CONTAINER_NAME_PREFIX", "cc-remote-agent"),
 			PortRangeStart:       getEnvIntOrDefault("GCE_AGENT_PORT_RANGE_START", 61000),
 			PortRangeEnd:         getEnvIntOrDefault("GCE_AGENT_PORT_RANGE_END", 61999),
+			// VM reaper: delete a VM after its container-manager reports zero
+			// cc-remote-agent containers for this long. The reaper polls every
+			// VMReconcileInterval; default 60s gives ~10 ticks within the 10
+			// minute window so a delete fires within a tick of the threshold.
+			ZeroAgentsTimeout:            time.Duration(getEnvIntOrDefault("GCE_VM_ZERO_AGENTS_TIMEOUT_SECONDS", 600)) * time.Second,
+			VMReconcileInterval:          time.Duration(getEnvIntOrDefault("GCE_VM_RECONCILE_INTERVAL_SECONDS", 60)) * time.Second,
+			ContainerManagerProbeTimeout: time.Duration(getEnvIntOrDefault("GCE_CONTAINER_MANAGER_PROBE_TIMEOUT_SECONDS", 5)) * time.Second,
 		}
 		return dockergce.NewDockerGCEProvider(cfg, gceClient, repo), nil
 	default:

@@ -16,6 +16,12 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// AgentInfo defines model for AgentInfo.
+type AgentInfo struct {
+	// Name Docker container name (matches the `name` from createAgent).
+	Name string `json:"name"`
+}
+
 // CreateAgentRequest defines model for CreateAgentRequest.
 type CreateAgentRequest struct {
 	ContainerPort int32     `json:"container_port"`
@@ -59,6 +65,14 @@ type Error struct {
 // HealthStatus defines model for HealthStatus.
 type HealthStatus struct {
 	Status string `json:"status"`
+}
+
+// ListAgentsResult defines model for ListAgentsResult.
+type ListAgentsResult struct {
+	Agents []AgentInfo `json:"agents"`
+
+	// Count Number of running cc-remote-agent containers on this VM.
+	Count int32 `json:"count"`
 }
 
 // AgentName defines model for AgentName.
@@ -143,6 +157,9 @@ type ClientInterface interface {
 	// GetHealthz request
 	GetHealthz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListAgents request
+	ListAgents(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateAgentWithBody request with any body
 	CreateAgentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -157,6 +174,18 @@ type ClientInterface interface {
 
 func (c *Client) GetHealthz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHealthzRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListAgents(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -225,6 +254,33 @@ func NewGetHealthzRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/healthz")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListAgentsRequest generates requests for ListAgents
+func NewListAgentsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -396,6 +452,9 @@ type ClientWithResponsesInterface interface {
 	// GetHealthzWithResponse request
 	GetHealthzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthzResponse, error)
 
+	// ListAgentsWithResponse request
+	ListAgentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentsResponse, error)
+
 	// CreateAgentWithBodyWithResponse request with any body
 	CreateAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAgentResponse, error)
 
@@ -425,6 +484,29 @@ func (r GetHealthzResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetHealthzResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListAgentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ListAgentsResult
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAgentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAgentsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -510,6 +592,15 @@ func (c *ClientWithResponses) GetHealthzWithResponse(ctx context.Context, reqEdi
 	return ParseGetHealthzResponse(rsp)
 }
 
+// ListAgentsWithResponse request returning *ListAgentsResponse
+func (c *ClientWithResponses) ListAgentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentsResponse, error) {
+	rsp, err := c.ListAgents(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAgentsResponse(rsp)
+}
+
 // CreateAgentWithBodyWithResponse request with arbitrary body returning *CreateAgentResponse
 func (c *ClientWithResponses) CreateAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAgentResponse, error) {
 	rsp, err := c.CreateAgentWithBody(ctx, contentType, body, reqEditors...)
@@ -572,6 +663,39 @@ func ParseGetHealthzResponse(rsp *http.Response) (*GetHealthzResponse, error) {
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListAgentsResponse parses an HTTP response from a ListAgentsWithResponse call
+func ParseListAgentsResponse(rsp *http.Response) (*ListAgentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAgentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListAgentsResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

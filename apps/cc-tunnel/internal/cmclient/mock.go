@@ -8,6 +8,7 @@ type MockContainerManager struct {
 	RunAgentContainerFunc func(ctx context.Context, image, name string, hostPort, containerPort int) error
 	StopContainerFunc     func(ctx context.Context, name string) error
 	RemoveContainerFunc   func(ctx context.Context, name string) error
+	ListAgentsFunc        func(ctx context.Context) ([]AgentInfo, error)
 	IsReadyFunc           func(ctx context.Context) bool
 }
 
@@ -41,6 +42,13 @@ func (m *MockContainerManager) RemoveContainer(ctx context.Context, name string)
 		return m.RemoveContainerFunc(ctx, name)
 	}
 	return nil
+}
+
+func (m *MockContainerManager) ListAgents(ctx context.Context) ([]AgentInfo, error) {
+	if m.ListAgentsFunc != nil {
+		return m.ListAgentsFunc(ctx)
+	}
+	return nil, nil
 }
 
 func (m *MockContainerManager) IsReady(ctx context.Context) bool {

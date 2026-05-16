@@ -88,7 +88,7 @@ func (m *Manager) Ping(ctx context.Context) error {
 type RunAgentRequest struct {
 	Image         string
 	Name          string
-	HostPort      int      // 0 = no host port mapping (only the container is exposed via the docker network)
+	HostPort      int // 0 = no host port mapping (only the container is exposed via the docker network)
 	ContainerPort int
 	MemoryBytes   int64
 	NanoCPUs      int64
@@ -168,6 +168,47 @@ func (m *Manager) RunAgent(ctx context.Context, req RunAgentRequest) (string, er
 		return "", fmt.Errorf("start container %q (id=%s): %w", req.Name, resp.ID, err)
 	}
 	return resp.ID, nil
+}
+
+// AgentSummary describes a running cc-remote-agent container observed on
+// the local Docker daemon. Only fields cc-tunnel needs to identify a
+// container are exposed.
+type AgentSummary struct {
+	Name string
+}
+
+// AgentComponentLabel is the value of the Docker label `component` that
+// identifies a container as a cc-remote-agent instance. DockerGCEProvider
+// applies this label when it asks container-manager to create the
+// container (see provider.go's getOrCreateEndpoint).
+const AgentComponentLabel = "cc-remote-agent"
+
+// ListAgents returns currently running containers labelled
+// `component=cc-remote-agent`. cc-tunnel's VM reaper uses the count of
+// returned containers as the authoritative signal that a VM is idle,
+// avoiding drift from the DB-tracked active_containers counter.
+func (m *Manager) ListAgents(ctx context.Context) ([]AgentSummary, error) {
+	filters := make(dockerclient.Filters).
+		Add("label", "component="+AgentComponentLabel).
+		Add("status", "running")
+	res, err := m.cli.ContainerList(ctx, dockerclient.ContainerListOptions{Filters: filters})
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	out := make([]AgentSummary, 0, len(res.Items))
+	for _, c := range res.Items {
+		out = append(out, AgentSummary{Name: primaryName(c.Names)})
+	}
+	return out, nil
+}
+
+// primaryName picks the first container name reported by Docker and
+// strips the leading slash the Engine API prefixes to each entry.
+func primaryName(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.TrimPrefix(names[0], "/")
 }
 
 // StopAgent stops a container with a 10-second graceful timeout.

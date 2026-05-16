@@ -27,6 +27,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
   /v1/agents:
+    get:
+      operationId: listAgents
+      summary: |
+        List running cc-remote-agent containers on this VM.
+
+        Filters containers by label `component=cc-remote-agent` so the count
+        reflects only agent containers, regardless of what other workloads
+        may run on the host. Intended for cc-tunnel's VM reaper to decide
+        whether a VM has been idle long enough to be deleted.
+      responses:
+        '200':
+          description: List of running agent containers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentsResult'
+        '500':
+          description: Docker error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     post:
       operationId: createAgent
       summary: Create and start an agent container.
@@ -169,3 +191,22 @@ components:
       properties:
         id:
           type: string
+    AgentInfo:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Docker container name (matches the `name` from createAgent).
+    ListAgentsResult:
+      type: object
+      required: [count, agents]
+      properties:
+        count:
+          type: integer
+          format: int32
+          description: Number of running cc-remote-agent containers on this VM.
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentInfo'

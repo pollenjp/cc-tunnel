@@ -31,6 +31,8 @@ type dbRepository interface {
 	ListIdleSessionEndpoints(ctx context.Context, idleThreshold time.Duration) ([]*db.SessionEndpoint, error)
 	DeleteSessionEndpoint(ctx context.Context, id string) error
 	ListIdleVMInstances(ctx context.Context, idleThreshold time.Duration) ([]*db.VMInstance, error)
+	ListRunningVMInstances(ctx context.Context) ([]*db.VMInstance, error)
+	SetVMZeroAgentsSince(ctx context.Context, id string, t *time.Time) error
 	DeleteVMInstance(ctx context.Context, id string) error
 	// GetSmallestAvailablePortOnVM returns the smallest port in [start, end]
 	// that is not currently bound to a running session endpoint on the given
@@ -57,6 +59,20 @@ type DockerGCEConfig struct {
 
 	// IdleCheckInterval は IdleChecker / VMScaler が CleanupOrphans を呼ぶ間隔（0 = 無効）
 	IdleCheckInterval time.Duration
+
+	// ZeroAgentsTimeout は container-manager で観測した cc-remote-agent
+	// コンテナ数がゼロのまま継続した場合に VM を削除するしきい値。
+	// デフォルト: 10 分。VM 単位の reap は DB の active_containers ではなく
+	// container-manager の実測値を基準にする。
+	ZeroAgentsTimeout time.Duration
+
+	// VMReconcileInterval は container-manager に問い合わせて zero_agents_since
+	// を更新する周期。0 のときは IdleCheckInterval にフォールバックする。
+	VMReconcileInterval time.Duration
+
+	// ContainerManagerProbeTimeout は VM reconcile 時に container-manager
+	// の ListAgents を呼ぶ際の単一 VM あたりタイムアウト。デフォルト: 5 秒。
+	ContainerManagerProbeTimeout time.Duration
 
 	// VM 起動待機のタイムアウト設定（0 はデフォルト値を使用）
 	VMReadyTimeout               time.Duration // デフォルト: 3分
@@ -141,6 +157,15 @@ func NewDockerGCEProviderWithClientFactory(cfg DockerGCEConfig, gceClient gce.GC
 	if cfg.DockerPingTimeout == 0 {
 		cfg.DockerPingTimeout = 3 * time.Second
 	}
+	if cfg.ZeroAgentsTimeout == 0 {
+		cfg.ZeroAgentsTimeout = 10 * time.Minute
+	}
+	if cfg.VMReconcileInterval == 0 {
+		cfg.VMReconcileInterval = cfg.IdleCheckInterval
+	}
+	if cfg.ContainerManagerProbeTimeout == 0 {
+		cfg.ContainerManagerProbeTimeout = 5 * time.Second
+	}
 	if cfg.ContainerNamePrefix == "" {
 		cfg.ContainerNamePrefix = "session"
 	}
@@ -173,8 +198,9 @@ func NewDockerGCEProviderWithClientFactory(cfg DockerGCEConfig, gceClient gce.GC
 		ic := NewIdleChecker(p, cfg.IdleCheckInterval)
 		ic.Start(context.Background())
 		p.idleChecker = ic
-
-		vs := NewVMScaler(p, cfg.IdleCheckInterval)
+	}
+	if cfg.VMReconcileInterval > 0 {
+		vs := NewVMScaler(p, cfg.VMReconcileInterval)
 		vs.Start(context.Background())
 		p.vmScaler = vs
 	}
@@ -558,6 +584,87 @@ func (p *DockerGCEProvider) CleanupOrphans(ctx context.Context) error {
 	}
 	for _, vm := range vms {
 		_ = p.gce.DeleteInstance(ctx, p.config.ProjectID, p.config.Zone, vm.GCEInstanceName)
+		if err := p.db.DeleteVMInstance(ctx, vm.ID); err != nil {
+			return fmt.Errorf("delete VM instance %s: %w", vm.ID, err)
+		}
+	}
+
+	return nil
+}
+
+// ReconcileVMs queries each running VM's container-manager for the count
+// of cc-remote-agent containers and reaps VMs whose count has stayed at
+// zero past ZeroAgentsTimeout.
+//
+// Compared with CleanupOrphans, the source of truth is the VM itself
+// (queried via container-manager) rather than the DB-tracked
+// active_containers counter. This protects against drift when a container
+// crashes or is removed outside cc-tunnel's control.
+//
+// Failure to reach container-manager is treated as fail-safe: the VM is
+// left alone and re-checked on the next interval. zero_agents_since is
+// not updated on probe failure, so an unreachable VM can never accumulate
+// time toward the timeout based on a missing measurement.
+func (p *DockerGCEProvider) ReconcileVMs(ctx context.Context) error {
+	vms, err := p.db.ListRunningVMInstances(ctx)
+	if err != nil {
+		return fmt.Errorf("list running VM instances: %w", err)
+	}
+
+	for _, vm := range vms {
+		if vm.InternalIP == "" {
+			continue
+		}
+		cmURL := fmt.Sprintf("http://%s:%d", vm.InternalIP, p.config.ContainerManagerPort)
+		dcm, err := p.newDockerClient(cmURL)
+		if err != nil {
+			slog.Warn("reconcile: build container-manager client failed; skipping VM",
+				"vm_id", vm.ID, "url", cmURL, "err", err)
+			continue
+		}
+
+		probeCtx, cancel := context.WithTimeout(ctx, p.config.ContainerManagerProbeTimeout)
+		agents, err := dcm.ListAgents(probeCtx)
+		cancel()
+		if err != nil {
+			slog.Warn("reconcile: container-manager ListAgents failed; leaving VM untouched",
+				"vm_id", vm.ID, "url", cmURL, "err", err)
+			continue
+		}
+
+		if len(agents) > 0 {
+			if vm.ZeroAgentsSince != nil {
+				if err := p.db.SetVMZeroAgentsSince(ctx, vm.ID, nil); err != nil {
+					slog.Warn("reconcile: clear zero_agents_since failed",
+						"vm_id", vm.ID, "err", err)
+				}
+			}
+			continue
+		}
+
+		// agents == 0
+		if vm.ZeroAgentsSince == nil {
+			now := time.Now()
+			if err := p.db.SetVMZeroAgentsSince(ctx, vm.ID, &now); err != nil {
+				slog.Warn("reconcile: set zero_agents_since failed",
+					"vm_id", vm.ID, "err", err)
+			}
+			continue
+		}
+
+		if time.Since(*vm.ZeroAgentsSince) < p.config.ZeroAgentsTimeout {
+			continue
+		}
+
+		slog.Info("reconcile: deleting VM after zero-agents timeout",
+			"vm_id", vm.ID, "gce_instance", vm.GCEInstanceName,
+			"zero_agents_since", vm.ZeroAgentsSince,
+			"timeout", p.config.ZeroAgentsTimeout)
+		if err := p.gce.DeleteInstance(ctx, p.config.ProjectID, p.config.Zone, vm.GCEInstanceName); err != nil {
+			slog.Warn("reconcile: GCE DeleteInstance failed; will retry next tick",
+				"vm_id", vm.ID, "gce_instance", vm.GCEInstanceName, "err", err)
+			continue
+		}
 		if err := p.db.DeleteVMInstance(ctx, vm.ID); err != nil {
 			return fmt.Errorf("delete VM instance %s: %w", vm.ID, err)
 		}

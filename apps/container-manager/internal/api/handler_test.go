@@ -22,6 +22,8 @@ type fakeManager struct {
 	runErr    error
 	stopErr   error
 	removeErr error
+	listOut   []dockerops.AgentSummary
+	listErr   error
 	lastRun   dockerops.RunAgentRequest
 	lastStop  string
 	lastRm    string
@@ -39,6 +41,9 @@ func (f *fakeManager) StopAgent(_ context.Context, name string) error {
 func (f *fakeManager) RemoveAgent(_ context.Context, name string) error {
 	f.lastRm = name
 	return f.removeErr
+}
+func (f *fakeManager) ListAgents(_ context.Context) ([]dockerops.AgentSummary, error) {
+	return f.listOut, f.listErr
 }
 
 func newServer(mgr AgentManager) *httptest.Server {
@@ -180,6 +185,54 @@ func TestFilterLabels_Truncates(t *testing.T) {
 	out := filterLabels(map[string]string{"conversation_id": long, "bogus": "y"})
 	assert.Len(t, out, 1)
 	assert.Equal(t, 256, len(out["conversation_id"]))
+}
+
+func TestListAgents_OK(t *testing.T) {
+	mgr := &fakeManager{listOut: []dockerops.AgentSummary{
+		{Name: "session-conv-1"},
+		{Name: "session-conv-2"},
+	}}
+	srv := newServer(mgr)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/agents")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got ListAgentsResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, int32(2), got.Count)
+	require.Len(t, got.Agents, 2)
+	assert.Equal(t, "session-conv-1", got.Agents[0].Name)
+	assert.Equal(t, "session-conv-2", got.Agents[1].Name)
+}
+
+func TestListAgents_Empty(t *testing.T) {
+	mgr := &fakeManager{listOut: nil}
+	srv := newServer(mgr)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/agents")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got ListAgentsResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, int32(0), got.Count)
+	assert.Empty(t, got.Agents)
+}
+
+func TestListAgents_Failure(t *testing.T) {
+	mgr := &fakeManager{listErr: errors.New("docker daemon unreachable")}
+	srv := newServer(mgr)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/agents")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
 func TestRemoveAgent_NotFound(t *testing.T) {

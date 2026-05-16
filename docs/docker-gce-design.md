@@ -494,41 +494,42 @@ POST https://compute.googleapis.com/compute/v1/projects/{PROJECT}/zones/{ZONE}/i
 - `status == "RUNNING"` かつ `networkInterfaces[0].networkIP` が設定されたことを確認
 - タイムアウト時はエラーを返し、VM の削除クリーンアップを実行
 
-### 5.2 VMScaler（全コンテナ削除後の VM 削除）
+### 5.2 VMScaler（実測ベースの VM 削除）
+
+VM の削除判定は **DB の `active_containers` ではなく、container-manager
+が報告する cc-remote-agent コンテナの実測値** を権威ソースとする。
+DB カウンタはセッション生成時のスケジューラ向けヒントとして残るが、
+クラッシュ・外部からの `docker rm`・cc-tunnel 自身の異常終了などにより
+DB と VM の状態がドリフトしてもこの経路では VM を不当に長く残さない
+（あるいは利用中の VM を誤って削除しない）ことを保証する。
 
 ```
-コンテナ削除イベント
+VMScaler（VMReconcileInterval 間隔、デフォルト 60 秒）
   ↓
-DecrementVMActiveContainers(vm_instance_id)
+SELECT * FROM vm_instances WHERE status='running'
   ↓
-active_containers == 0 → UPDATE vm_instances SET idle_since = NOW()
-  ↓
-VMScaler（5分間隔チェック）
-  ├── SELECT * FROM vm_instances WHERE status='running'
-  │     AND active_containers = 0
-  │     AND idle_since < NOW() - INTERVAL '5 minutes'
-  ↓
-  GCE API: instances.delete({vm_name})
-  ↓
-  UPDATE vm_instances SET status = 'terminated'
+各 VM について container-manager に GET /v1/agents
+  ├── count > 0  → UPDATE vm_instances SET zero_agents_since = NULL
+  ├── count == 0 かつ zero_agents_since IS NULL
+  │     → UPDATE vm_instances SET zero_agents_since = NOW()
+  ├── count == 0 かつ zero_agents_since < NOW() - ZeroAgentsTimeout
+  │     → GCE API: instances.delete({vm_name})
+  │     → DELETE FROM vm_instances WHERE id = ?
+  └── container-manager 到達不能（フェイルセーフ: 何もしない）
 ```
 
-**VMScaler goroutine**（`vmscaler.go`）:
+**設定（`DockerGCEConfig`）**:
 
-```go
-func (vs *VMScaler) Run(ctx context.Context) {
-    ticker := time.NewTicker(5 * time.Minute)
-    defer ticker.Stop()
-    for {
-        select {
-        case <-ctx.Done():
-            return
-        case <-ticker.C:
-            vs.scaleDown(ctx)
-        }
-    }
-}
-```
+| フィールド | 環境変数 | デフォルト | 説明 |
+|---|---|---|---|
+| `ZeroAgentsTimeout` | `GCE_VM_ZERO_AGENTS_TIMEOUT_SECONDS` | `600` (10 分) | cc-remote-agent 実測値ゼロが継続した場合に VM を削除するしきい値 |
+| `VMReconcileInterval` | `GCE_VM_RECONCILE_INTERVAL_SECONDS` | `60` | container-manager に問い合わせて `zero_agents_since` を更新する周期。0 のときは `IdleCheckInterval` にフォールバックする |
+| `ContainerManagerProbeTimeout` | `GCE_CONTAINER_MANAGER_PROBE_TIMEOUT_SECONDS` | `5` | VM ごとの `GET /v1/agents` タイムアウト |
+
+**VMScaler goroutine**（`vmscaler.go`）は `ReconcileVMs` を周期的に呼び出す。
+container-manager は label `component=cc-remote-agent` でフィルタした
+コンテナのみを返すため、VM 上に同居する他のワークロード（万一存在しても）
+は集計に影響しない。
 
 ### 5.3 VM 最大収容セッション数
 
