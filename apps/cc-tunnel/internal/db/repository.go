@@ -3,8 +3,10 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -431,20 +433,33 @@ func (r *Repository) DeleteSessionEndpoint(ctx context.Context, id string) error
 	return err
 }
 
-// GetMaxPortOnVM returns the maximum host port in use on the given VM among running session
-// endpoints, or 0 if no running endpoints exist. The caller computes the next port as
-// max(result, portRangeStart-1) + 1.
-func (r *Repository) GetMaxPortOnVM(ctx context.Context, vmID string) (int, error) {
+// GetSmallestAvailablePortOnVM returns the smallest port in [start, end] that
+// is not currently held by a running session endpoint on the given VM, or 0
+// when the range is fully occupied. Caller pairs the result with the UNIQUE
+// (vm_instance_id, port) constraint to handle races: if two goroutines pick
+// the same free port simultaneously, only one CreateSessionEndpoint succeeds
+// and the loser retries with this query.
+func (r *Repository) GetSmallestAvailablePortOnVM(ctx context.Context, vmID string, start, end int) (int, error) {
 	const q = `
-		SELECT COALESCE(MAX(port), 0)
-		FROM session_endpoints
-		WHERE vm_instance_id = $1 AND status = 'running'
+		SELECT p
+		FROM   generate_series($2::int, $3::int) AS p
+		WHERE  p NOT IN (
+		         SELECT port
+		         FROM   session_endpoints
+		         WHERE  vm_instance_id = $1 AND status = 'running'
+		       )
+		ORDER  BY p ASC
+		LIMIT  1
 	`
-	var maxPort int
-	if err := r.pool.QueryRow(ctx, q, vmID).Scan(&maxPort); err != nil {
+	var port int
+	err := r.pool.QueryRow(ctx, q, vmID, start, end).Scan(&port)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil
+		}
 		return 0, err
 	}
-	return maxPort, nil
+	return port, nil
 }
 
 type epScanner interface {

@@ -139,6 +139,18 @@ variable "container_manager_port" {
   default     = 9090
 }
 
+variable "cc_remote_agent_host_port_start" {
+  description = "First host port published on each VM for cc-remote-agent containers. The range [cc_remote_agent_host_port_start, cc_remote_agent_host_port_end] is opened in the VPC firewall, and cc-tunnel allocates the smallest free port inside it for each new agent. Defaults pick a slice of the IANA Dynamic/Private range (49152-65535) that also sits above Linux's default ephemeral pool (32768-60999), so neither IANA-registered services nor kernel-issued source ports collide. Must match the `PortRangeStart` constant in apps/cc-tunnel/internal/provider/dockergce/provider.go."
+  type        = number
+  default     = 61000
+}
+
+variable "cc_remote_agent_host_port_end" {
+  description = "Last host port (inclusive) of the cc-remote-agent host port range. See `cc_remote_agent_host_port_start` for the rationale behind the default range."
+  type        = number
+  default     = 61999
+}
+
 variable "lb_fqdn" {
   type        = string
   description = "FQDN for HTTPS LB (Google-managed SSL cert はこのドメインで発行)"

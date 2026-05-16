@@ -213,6 +213,8 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 			IdleCheckInterval:    time.Duration(getEnvIntOrDefault("GCE_IDLE_CHECK_INTERVAL_SECONDS", 300)) * time.Second,
 			ContainerManagerPort: getEnvIntOrDefault("GCE_CONTAINER_MANAGER_PORT", 9090),
 			ContainerNamePrefix:  getEnvOrDefault("GCE_CONTAINER_NAME_PREFIX", "cc-remote-agent"),
+			PortRangeStart:       getEnvIntOrDefault("GCE_AGENT_PORT_RANGE_START", 61000),
+			PortRangeEnd:         getEnvIntOrDefault("GCE_AGENT_PORT_RANGE_END", 61999),
 		}
 		return dockergce.NewDockerGCEProvider(cfg, gceClient, repo), nil
 	default:

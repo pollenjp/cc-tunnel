@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -30,11 +31,13 @@ type mockDBRepo struct {
 	createEndpointErr error
 	availableVMErr    error // nil = return first vm, non-nil = return error
 	createVMErr       error
-	maxPortOnVM       int // returned by GetMaxPortOnVM (0 = no containers)
+	// nextAvailablePort is the value returned by GetSmallestAvailablePortOnVM
+	// in the default case. 0 means "range full" per the production contract.
+	nextAvailablePort int
 
 	// Optional overrides for more granular test control (if non-nil, used instead of defaults).
-	createEndpointFn func(ctx context.Context, conversationID, vmInstanceID, containerName string, port int) (*db.SessionEndpoint, error)
-	maxPortOnVMFn    func(ctx context.Context, vmID string) (int, error)
+	createEndpointFn       func(ctx context.Context, conversationID, vmInstanceID, containerName string, port int) (*db.SessionEndpoint, error)
+	nextAvailablePortFn    func(ctx context.Context, vmID string, start, end int) (int, error)
 }
 
 func newMockDBRepo() *mockDBRepo {
@@ -207,13 +210,30 @@ func (m *mockDBRepo) DeleteVMInstance(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockDBRepo) GetMaxPortOnVM(ctx context.Context, vmID string) (int, error) {
+func (m *mockDBRepo) GetSmallestAvailablePortOnVM(ctx context.Context, vmID string, start, end int) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.maxPortOnVMFn != nil {
-		return m.maxPortOnVMFn(ctx, vmID)
+	if m.nextAvailablePortFn != nil {
+		return m.nextAvailablePortFn(ctx, vmID, start, end)
 	}
-	return m.maxPortOnVM, nil
+	if m.nextAvailablePort != 0 {
+		// Explicit override (used by tests that want to drive specific port values).
+		return m.nextAvailablePort, nil
+	}
+	// Default: derive the smallest free port from the stored endpoints, mirroring
+	// the production SQL query so tests don't need to wire up port state by hand.
+	used := make(map[int]bool)
+	for _, ep := range m.endpoints {
+		if ep.VMInstanceID == vmID && ep.Status == "running" {
+			used[ep.Port] = true
+		}
+	}
+	for p := start; p <= end; p++ {
+		if !used[p] {
+			return p, nil
+		}
+	}
+	return 0, nil
 }
 
 // --- helpers ---
@@ -560,7 +580,7 @@ func TestGetOrCreateEndpoint_NewVM(t *testing.T) {
 
 	repo := newMockDBRepo()
 	repo.availableVMErr = errors.New("no VM")
-	repo.maxPortOnVM = 0 // no containers yet → next port = portRangeStart (9091)
+	repo.nextAvailablePort = 9091 // no containers yet → smallest free = portRangeStart (9091)
 
 	cfg := shortTimeoutConfig()
 	cfg.AgentPort = 9091
@@ -636,7 +656,7 @@ func TestGetOrCreateEndpoint_ExistingVM(t *testing.T) {
 		ActiveContainers: 1,
 	}
 	repo.vms[existingVM.ID] = existingVM
-	repo.maxPortOnVM = 9091 // 1 container already on 9091 → next = 9092
+	repo.nextAvailablePort = 9092 // 1 container already on 9091 → smallest free = 9092
 
 	cfg := shortTimeoutConfig()
 	cfg.AgentPort = 9091
@@ -964,14 +984,14 @@ func TestGetOrCreateEndpoint_PortCollisionRetry(t *testing.T) {
 	repo := newMockDBRepo()
 	repo.availableVMErr = errors.New("no VM")
 
-	// GetMaxPortOnVM: first call returns 0 (port=9091), second call returns 9091 (port=9092)
-	var maxPortCallCount int32
-	repo.maxPortOnVMFn = func(_ context.Context, _ string) (int, error) {
-		n := int(atomic.AddInt32(&maxPortCallCount, 1))
+	// GetSmallestAvailablePortOnVM: first call returns 9091 (will collide), second 9092 (succeeds)
+	var portCallCount int32
+	repo.nextAvailablePortFn = func(_ context.Context, _ string, _, _ int) (int, error) {
+		n := int(atomic.AddInt32(&portCallCount, 1))
 		if n == 1 {
-			return 0, nil // → port 9091 (will collide)
+			return 9091, nil // → collides with concurrent allocation
 		}
-		return 9091, nil // → port 9092 (succeeds)
+		return 9092, nil // → succeeds on retry
 	}
 
 	// CreateSessionEndpoint: fail on first call (port collision), succeed on second
@@ -1113,7 +1133,7 @@ func (r *countingCleanupRepo) ListIdleVMInstances(_ context.Context, _ time.Dura
 	return nil, nil
 }
 func (r *countingCleanupRepo) DeleteVMInstance(_ context.Context, _ string) error { return nil }
-func (r *countingCleanupRepo) GetMaxPortOnVM(_ context.Context, _ string) (int, error) {
+func (r *countingCleanupRepo) GetSmallestAvailablePortOnVM(_ context.Context, _ string, _, _ int) (int, error) {
 	return 0, nil
 }
 
@@ -1181,7 +1201,6 @@ func TestGetOrCreateEndpoint_ForwardsLabels(t *testing.T) {
 
 	repo := newMockDBRepo()
 	repo.availableVMErr = errors.New("no VM") // force VM creation so we exercise the full path
-	repo.maxPortOnVM = 0
 
 	cfg := shortTimeoutConfig()
 	cfg.AgentPort = 9091
@@ -1227,6 +1246,76 @@ func TestGetOrCreateEndpoint_ForwardsLabels(t *testing.T) {
 	}
 	if got := capturedReq.Labels["component"]; got != "cc-remote-agent" {
 		t.Errorf("labels.component = %q, want %q", got, "cc-remote-agent")
+	}
+}
+
+// TestGetOrCreateEndpoint_ForwardsPortEnv pins the contract that the GCE
+// provider passes PORT=<AgentPort> when asking container-manager to start a
+// cc-remote-agent container. Without this, cc-remote-agent falls back to its
+// default 9090 listener (apps/cc-remote-agent/cmd/cc-remote-agent/main.go)
+// while container-manager binds host:hostPort -> container:AgentPort, so
+// cc-tunnel's poll hits an empty socket and waitForAgentReady times out.
+// The cmclient.RunAgentContainer wrapper handles env injection for its
+// callers; this call site bypasses the wrapper, hence the dedicated guard.
+func TestGetOrCreateEndpoint_ForwardsPortEnv(t *testing.T) {
+	srv := fakeAgentServer(t, []remoteclient.StreamEvent{
+		{Type: "result", SessionID: "sess-port", Result: "success"},
+	})
+	defer srv.Close()
+
+	var capturedReq cmclient.RunAgentRequest
+	var capturedMu sync.Mutex
+
+	repo := newMockDBRepo()
+	repo.availableVMErr = errors.New("no VM")
+
+	cfg := shortTimeoutConfig()
+	cfg.AgentPort = 9091
+	cfg.PortRangeStart = 9091
+	cfg.PortRangeEnd = 9100
+	cfg.ContainerManagerFactory = func(_ string) (cmclient.ContainerManager, error) {
+		return &cmclient.MockContainerManager{
+			IsReadyFunc: func(_ context.Context) bool { return true },
+			RunAgentFunc: func(_ context.Context, r cmclient.RunAgentRequest) error {
+				capturedMu.Lock()
+				capturedReq = r
+				capturedMu.Unlock()
+				return nil
+			},
+		}, nil
+	}
+
+	mockGCEClient := &customMockGCEClient{
+		createFn: func(_ context.Context, req *gce.CreateInstanceRequest) (*gce.Instance, error) {
+			return &gce.Instance{Name: req.Name, Status: "RUNNING", NetworkIP: "127.0.0.1"}, nil
+		},
+		getFn: func(_ context.Context, _, _, name string) (*gce.Instance, error) {
+			return &gce.Instance{Name: name, Status: "RUNNING", NetworkIP: "127.0.0.1"}, nil
+		},
+	}
+
+	p := dockergce.NewDockerGCEProviderWithClientFactory(cfg, mockGCEClient, repo, func(_ string) *remoteclient.Client {
+		return remoteclient.NewClient(srv.URL)
+	})
+
+	_, err := p.Execute(context.Background(), remoteclient.Request{ConversationID: "conv-port-1", Prompt: "hi"}, func(remoteclient.StreamEvent) {})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	capturedMu.Lock()
+	defer capturedMu.Unlock()
+
+	want := fmt.Sprintf("PORT=%d", cfg.AgentPort)
+	found := false
+	for _, e := range capturedReq.Env {
+		if e == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Env = %v, want to contain %q", capturedReq.Env, want)
 	}
 }
 
@@ -1310,6 +1399,6 @@ func (m *cleanupMockDBRepo) DeleteVMInstance(_ context.Context, id string) error
 	m.deletedVMs[id] = true
 	return nil
 }
-func (m *cleanupMockDBRepo) GetMaxPortOnVM(_ context.Context, _ string) (int, error) {
+func (m *cleanupMockDBRepo) GetSmallestAvailablePortOnVM(_ context.Context, _ string, _, _ int) (int, error) {
 	return 0, nil
 }

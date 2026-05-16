@@ -39,6 +39,10 @@ func TestRunAgentContainer_Success(t *testing.T) {
 	require.NotNil(t, got.HostPort)
 	assert.Equal(t, int32(9091), *got.HostPort)
 	assert.Equal(t, int32(9090), got.ContainerPort)
+	// PORT must match containerPort so cc-remote-agent listens on the
+	// port container-manager exposes.
+	require.NotNil(t, got.Env)
+	assert.Contains(t, *got.Env, "PORT=9090")
 }
 
 func TestRunAgentContainer_ServerError(t *testing.T) {
