@@ -11,9 +11,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/admin"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/cmclient"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/credential"
@@ -112,6 +114,24 @@ func main() {
 	mux := http.NewServeMux()
 	api.HandlerFromMux(handler, mux)
 
+	// Out-of-band reconcile endpoint hit by Cloud Scheduler (safety-net
+	// VM reap path, see adr/2026-05 vm_reap_dual_path.md). Registered
+	// only when the active provider supports VM reconciliation
+	// (currently docker_gce) and the audience + allowed SA emails are
+	// configured. The primary reap path is the per-VM container-manager
+	// self-reaper; this endpoint catches VMs whose self-reaper is dead.
+	if reconciler, ok := execProvider.(admin.VMReconciler); ok {
+		aud := os.Getenv("RECONCILE_VMS_OIDC_AUDIENCE")
+		emails := splitAndTrim(os.Getenv("RECONCILE_VMS_ALLOWED_EMAILS"), ",")
+		if aud != "" && len(emails) > 0 {
+			rh := admin.NewReconcileVMsHandler(reconciler, aud, emails)
+			mux.Handle("/internal/reconcile-vms", rh)
+			slog.Info("registered /internal/reconcile-vms", "audience", aud, "allowed_emails", len(emails))
+		} else {
+			slog.Info("/internal/reconcile-vms not registered: RECONCILE_VMS_OIDC_AUDIENCE or RECONCILE_VMS_ALLOWED_EMAILS unset")
+		}
+	}
+
 	slog.Info("cc-tunnel listening", "addr", *addr)
 	if err := http.ListenAndServe(*addr, api.LoggingMiddleware(mux)); err != nil {
 		slog.Error("server failed", "err", err)
@@ -124,6 +144,20 @@ func getEnvOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+func splitAndTrim(s, sep string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, sep)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func getEnvIntOrDefault(key string, defaultVal int) int {

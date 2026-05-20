@@ -261,6 +261,17 @@ resource "google_cloud_run_v2_service" "cloud_run" {
         name  = "GCE_VM_SUBNETWORK"
         value = google_compute_subnetwork.cc_remote_agent_vm.id
       }
+      # Cloud Scheduler -> POST /internal/reconcile-vms (safety-net VM
+      # reap path; see scheduler.tf and adr/2026-05 vm_reap_dual_path).
+      # cc-tunnel registers the handler only when both vars are set.
+      env {
+        name  = "RECONCILE_VMS_OIDC_AUDIENCE"
+        value = local.reconcile_vms_audience
+      }
+      env {
+        name  = "RECONCILE_VMS_ALLOWED_EMAILS"
+        value = google_service_account.scheduler_sa.email
+      }
     }
     volumes {
       name = "cloudsql"
