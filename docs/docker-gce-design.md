@@ -116,7 +116,7 @@ Browser → frontend (nginx) → cc-tunnel (Cloud Run)
 │  │ API Handler  │  │ DockerGCEProvider（実装済み）            │    │
 │  │ (handler.go) │  │  - ExecutionProvider interface 実装      │    │
 │  │              ├─▶│  - GCE VM ライフサイクル管理             │    │
-│  │ Auth Handler │  │  - IdleChecker / VMScaler               │    │
+│  │ Auth Handler │  │  - IdleChecker / ReconcileVMs (§5.2)    │    │
 │  │ (認証専用)  ─┼─▶│                                         │    │
 │  └──────────────┘  └───────────┬─────────────────────────────┘    │
 │                                │                                   │
@@ -182,7 +182,8 @@ apps/cc-tunnel/internal/
     ├── provider.go        # DockerGCEProvider 本体（実装済み）
     │                      #   Execute / getOrCreateEndpoint / waitForVMReady(2段階) / Close
     ├── idle_checker.go    # IdleChecker goroutine（IdleCheckInterval 間隔でコンテナ idle 検出）（実装済み: Phase 3）
-    └── vmscaler.go        # VMScaler goroutine（アイドル VM を 5分後に削除）（実装済み: Phase 3）
+    └── vmscaler.go        # VMScaler goroutine（旧）。default off。Cloud Run 上で信頼できないため
+                           # production reap は §5.2 の二経路（self-reaper + Cloud Scheduler）が担う
 ```
 
 #### インターフェース定義
@@ -906,7 +907,7 @@ case "docker_gce":
 | 状態 | コスト | 実現方法 |
 |------|--------|---------|
 | セッション稼働中 | $0.067/hr (1VM/10session) | 通常運用 |
-| 全セッション終了 → 5分後 | $0 | VMScaler が VM 削除 |
+| 全セッション終了 → 10分後 | $0 | container-manager self-reaper が VM 自身を削除（§5.2 主経路）。container-manager が落ちている場合でも 6h 以内に Cloud Scheduler 経由で掃除される |
 | Warm pool (e2-micro × 1台) | $5.76/月 | 設定で有効化 |
 
 ### 9.3 Warm Pool vs コスト最適化のトレードオフ

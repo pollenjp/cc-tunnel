@@ -618,7 +618,8 @@ EXECUTION_PROVIDER=local cc-tunnel
 - `internal/provider/cloudrunsandbox/mock.go`: cloud_run_sandbox mock provider（固定レスポンス）
 - `internal/provider/dockergce/provider.go`: DockerGCEProvider 本格実装（GCE VM ライフサイクル + startup-script + TCP 接続）
 - `internal/provider/dockergce/idle_checker.go`: IdleChecker goroutine（アイドルセッション検出・削除）
-- `internal/provider/dockergce/vmscaler.go`: VMScaler goroutine（アイドル VM の GCE API 削除）
+- `internal/provider/dockergce/vmscaler.go`: VMScaler goroutine（旧: in-process な周期 reap）。Cloud Run 上では信頼できないため default 無効。詳細は ADR `2026-05-20T20:46:00+09:00_01_vm_reap_dual_path.md`
+- `internal/provider/dockergce/provider.go::ReconcileVMs`: container-manager の実測値で `zero_agents_since` を更新し、しきい値超で GCE delete を呼ぶ権威ロジック。Cloud Scheduler 経由 HTTP (`POST /internal/reconcile-vms`) と VM 側 self-reaper の双方から呼ばれる想定（テスト: `reconcile_vms_test.go`）
 - `internal/provider/dockergce/mock.go`: docker_gce mock provider（フォールバック用スタブ）
 - `internal/gce/client.go`: GCEClient インターフェース定義
 - `internal/gce/sdk_client.go`: cloud.google.com/go/compute/apiv1 を使った本番実装

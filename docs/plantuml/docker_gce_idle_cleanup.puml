@@ -1,61 +1,100 @@
 @startuml docker_gce_idle_cleanup
-' Idle検知〜セッションエンドポイント削除〜GCE VM削除のシーケンス図
-title Docker on GCE — Idle検知〜セッション削除〜VM削除シーケンス\n\n[local との違い: local は DooD でコンテナのみ管理、docker_gce はセッションエンドポイント＋VMの2段階管理]
+' VM reap 二系統 + セッションエンドポイント idle 検出のシーケンス図
+'
+' 関連 ADR: adr/2026-05/2026-05-20T20:46:00+09:00_01_vm_reap_dual_path.md
+' 関連 docs: docs/docker-gce-design.md §5.2
+title Docker on GCE — Session idle 検出 + VM reap 二系統\n\n[VM reap は (主) container-manager 自己終了 / (保険) Cloud Scheduler の 2 経路。\nin-process VMScaler goroutine は Cloud Run 上で信頼できないため default 無効]
 
-participant "IdleChecker\n(設定間隔 goroutine)" as IdleChecker
-participant "VMScaler\n(別設定間隔 goroutine)" as VMScaler
-participant "DockerGCEProvider\nCleanupOrphans()" as Provider
+actor "Cloud Scheduler" as Scheduler
+participant "IdleChecker\n(cc-tunnel goroutine)" as IdleChecker
+participant "cc-tunnel\n/internal/reconcile-vms\nハンドラ" as ReapHandler
+participant "DockerGCEProvider\n.ReconcileVMs()" as Reconcile
+participant "container-manager\nself-reaper\n(VM 上 goroutine)" as SelfReaper
+participant "container-manager\nHTTP /v1/agents" as CM
+participant "Docker daemon\non VM" as Docker
 participant PostgreSQL as DB
-participant "GCE API" as GCEAPI
+participant "GCE API\ncompute.instances" as GCEAPI
 
-note over IdleChecker, GCEAPI
-  local provider との違い:
-  ・local: CleanupOrphans() で停止済みコンテナを削除 (DooD, docker.sock)
-           VM 管理なし (ホストの Docker daemon を直接操作)
-  ・docker_gce: アイドルセッションエンドポイント削除 +
-               アイドル GCE VM削除の2段階管理
-               (cc-remote-agent コンテナは VM 削除時に消滅)
+note over Scheduler, GCEAPI
+  権威ソースは VM 上の Docker daemon が報告する
+  cc-remote-agent コンテナの実測値（label=component=cc-remote-agent）。
+  DB の active_containers はスケジューラ向けヒントとしてのみ残り、
+  reap 判定の根拠には使わない。
 end note
 
-note over IdleChecker, VMScaler
-  IdleChecker と VMScaler は独立した goroutine として定義。
-  どちらも同じ CleanupOrphans() を呼び出す。
-  間隔はそれぞれ独自に設定可能（例: IdleChecker=60秒）。
-end note
+== セッションエンドポイント idle 検出（cc-tunnel 内、既存） ==
 
-loop 設定間隔ごと（IdleChecker または VMScaler のいずれかがトリガー）
-  alt IdleChecker がトリガー
-    IdleChecker -> Provider: CleanupOrphans(ctx)
-  else VMScaler がトリガー
-    VMScaler -> Provider: CleanupOrphans(ctx)
-  end
-
-  Provider -> DB: ListIdleSessionEndpoints(\n  idleThreshold: 15min)
-  note right: last_activity < NOW() - idleThreshold\nかつ status = 'running'
-
-  alt アイドルセッションエンドポイントあり
-    loop 各アイドルエンドポイント
-      Provider -> DB: DecrementVMActiveContainers(vmInstanceID)
-      Provider -> DB: DeleteSessionEndpoint(endpointID)
+loop IdleCheckInterval ごと（cc-tunnel が処理中の間のみ動作）
+  IdleChecker -> Reconcile: CleanupOrphans(ctx)
+  Reconcile -> DB: ListIdleSessionEndpoints(idleThreshold)
+  note right: last_activity < NOW() - idleThreshold\nかつ status='running'
+  alt アイドルエンドポイントあり
+    loop 各エンドポイント
+      Reconcile -> CM: DELETE container
+      Reconcile -> DB: DecrementVMActiveContainers / DeleteSessionEndpoint
     end
-  else なし
-    note over Provider: スキップ
   end
-
-  Provider -> DB: ListIdleVMInstances(\n  idleThreshold: 15min)
-  note right: active_containers = 0\nかつ updated_at < NOW() - idleThreshold
-
-  alt アイドル VM あり
-    loop 各アイドル VM
-      Provider -> GCEAPI: DeleteInstance(project, zone, vmName)
-      GCEAPI --> Provider: OK
-      Provider -> DB: DeleteVMInstance(vmID)
-    end
-  else なし
-    note over Provider: スキップ
-  end
-
-  Provider --> IdleChecker: error or nil
 end
+
+== VM reap (1) container-manager 自己終了 / 主経路、10 分周期 ==
+
+loop SELF_REAP_INTERVAL_SECONDS ごと（VM 上、常時）
+  SelfReaper -> Docker: list containers\n(label=component=cc-remote-agent)
+  Docker --> SelfReaper: count
+  alt count > 0
+    note over SelfReaper: zeroSince = nil
+  else count == 0 かつ zeroSince == nil
+    note over SelfReaper: zeroSince = now()
+  else count == 0 かつ\nnow() - zeroSince >= SELF_REAP_TIMEOUT (10min)
+    SelfReaper -> SelfReaper: metadata server から\ninstance name / zone / project
+    SelfReaper -> GCEAPI: instances.delete(self)
+    note right: VM SA に self-delete IAM が必要\n(該当 instance への scope 付き)
+    GCEAPI --> SelfReaper: Operation
+    note over SelfReaper, Docker
+      systemd が container-manager / agent コンテナごと
+      停止するのを待つ（GCE がシャットダウン）。
+      次回 Cloud Scheduler 経路で DB の vm_instances 行が掃除される。
+    end note
+  end
+end
+
+== VM reap (2) Cloud Scheduler 経由 / 保険経路、6 時間周期 ==
+
+Scheduler -> ReapHandler: POST /internal/reconcile-vms\nAuthorization: Bearer <OIDC ID token>
+note right: audience = Cloud Run service URL\nsubject = scheduler 専用 SA
+ReapHandler -> ReapHandler: idtoken.Validate(token, audience)\n→ SA email 許可リストと一致するか
+alt 認証失敗
+  ReapHandler --> Scheduler: 403
+else 認証 OK
+  ReapHandler -> Reconcile: ReconcileVMs(ctx)
+  Reconcile -> DB: SELECT * FROM vm_instances\nWHERE status='running'
+  loop 各 running VM
+    Reconcile -> CM: GET /v1/agents\n(ContainerManagerProbeTimeout)
+    alt 到達不能 / タイムアウト
+      note over Reconcile: フェイルセーフ: スキップ\n(container-manager が落ちている可能性。\n孤児検出は将来課題)
+    else count > 0
+      Reconcile -> DB: UPDATE zero_agents_since = NULL
+    else count == 0 かつ zero_agents_since IS NULL
+      Reconcile -> DB: UPDATE zero_agents_since = NOW()
+    else count == 0 かつ\nNOW() - zero_agents_since >= ZeroAgentsTimeout
+      Reconcile -> GCEAPI: instances.delete(vmName)
+      GCEAPI --> Reconcile: OK
+      Reconcile -> DB: DELETE FROM vm_instances WHERE id = ?
+    end
+  end
+  ReapHandler --> Scheduler: 200
+end
+
+note over Scheduler, GCEAPI
+  なぜ 2 経路か (ADR 参照):
+  ・主 (10min, self-reaper): ユーザー視点で「使い終わったらすぐ消える」を実現。
+                              VM 単独で完結するため scheduler / cc-tunnel / 中間NW
+                              いずれかが壊れていても reap が走る。
+  ・保険 (6h, Scheduler): container-manager 自身が OOM/systemd 障害で死んだ VM、
+                          または DB 上 running なのに GCE 上に存在しない孤児行の
+                          整合化。"孤児 VM が無限に課金され続ける" を防ぐ最終手段。
+  in-process VMScaler は Cloud Run の scale-to-zero / CPU throttle と相性が悪く
+  信頼できないため default 0 (無効)。local dev / テストでのみ明示的に有効化。
+end note
 
 @enduml
