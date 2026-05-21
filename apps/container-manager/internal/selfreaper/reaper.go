@@ -140,6 +140,20 @@ func (r *Reaper) tick(ctx context.Context, project, zone, name string) (bool, er
 	if err != nil {
 		return false, fmt.Errorf("list agents: %w", err)
 	}
+	now := r.now()
+	var elapsed time.Duration
+	if !r.zeroSince.IsZero() {
+		elapsed = now.Sub(r.zeroSince)
+	}
+	// One info log per tick so the goroutine's liveness is observable
+	// in Cloud Logging without needing debug-level verbosity. count is
+	// the authoritative source of truth; zero_elapsed surfaces how
+	// close we are to self-delete (0 while agents are present).
+	slog.Info("self-reaper: tick",
+		"agent_count", count,
+		"zero_elapsed", elapsed,
+		"timeout", r.cfg.Timeout,
+	)
 	if count > 0 {
 		if !r.zeroSince.IsZero() {
 			slog.Info("self-reaper: agents present, resetting zeroSince", "count", count)
@@ -147,15 +161,12 @@ func (r *Reaper) tick(ctx context.Context, project, zone, name string) (bool, er
 		r.zeroSince = time.Time{}
 		return false, nil
 	}
-	now := r.now()
 	if r.zeroSince.IsZero() {
 		r.zeroSince = now
 		slog.Info("self-reaper: first zero observation", "zero_since", now)
 		return false, nil
 	}
-	elapsed := now.Sub(r.zeroSince)
 	if elapsed < r.cfg.Timeout {
-		slog.Debug("self-reaper: zero continues", "elapsed", elapsed)
 		return false, nil
 	}
 	slog.Info("self-reaper: timeout reached, deleting self",
