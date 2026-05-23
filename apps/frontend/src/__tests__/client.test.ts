@@ -58,13 +58,26 @@ describe('sendMessage', () => {
     expect(assignMock).toHaveBeenCalledWith('/login/credentials?reason=missing&conversationId=conv-1');
   });
 
-  it('401 + redirect なし → throw する', async () => {
+  it('401 + redirect なし → /login へリダイレクトしてトークンをクリア', async () => {
+    sessionStorage.setItem('app_auth_token', 'stale-token');
+    const assignMock = vi.fn();
+    vi.stubGlobal('location', {
+      assign: assignMock,
+      pathname: '/chat',
+      search: '',
+      hash: '',
+    });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
       json: vi.fn().mockResolvedValue({ error: 'unauthorized' }),
     }));
 
-    await expect(sendMessage('conv-1', 'hello')).rejects.toThrow('sendMessage failed: 401');
+    const result = await sendMessage('conv-1', 'hello');
+
+    expect(result).toEqual({ message_id: '' });
+    expect(sessionStorage.getItem('app_auth_token')).toBeNull();
+    expect(assignMock).toHaveBeenCalledWith(expect.stringContaining('/login?'));
+    expect(assignMock.mock.calls[0][0]).toContain('redirect=%2Fchat');
   });
 });

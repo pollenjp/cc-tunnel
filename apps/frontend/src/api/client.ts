@@ -9,11 +9,26 @@ function getAuthToken(): string | null {
   return sessionStorage.getItem(SESSION_STORAGE_KEY);
 }
 
+// Redirect to /login when the server rejects our token. Triggered when the
+// in-memory AppSession on cc-tunnel is wiped (e.g. Cloud Run scale-to-zero
+// restart) while the browser still holds a stale token in sessionStorage.
+function handleUnauthorized(): void {
+  sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  const { pathname, search, hash } = window.location;
+  if (pathname === '/login') return;
+  const redirect = `${pathname}${search}${hash}`;
+  window.location.assign(`/login?${new URLSearchParams({ redirect }).toString()}`);
+}
+
 client.use({
   onRequest({ request }) {
     const token = getAuthToken();
     if (token) request.headers.set('Authorization', `Bearer ${token}`);
     return request;
+  },
+  onResponse({ response }) {
+    if (response.status === 401) handleUnauthorized();
+    return response;
   },
 });
 
@@ -109,6 +124,8 @@ export async function sendMessage(
         window.location.assign(body.redirect);
         return { message_id: '' };
       }
+      handleUnauthorized();
+      return { message_id: '' };
     }
     throw new Error(`sendMessage failed: ${res.status}`);
   }

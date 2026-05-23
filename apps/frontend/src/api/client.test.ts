@@ -1,6 +1,9 @@
 // openapi-fetch の use() で登録された middleware を捕捉し、直接テストする
 const { mockGet, registeredMiddlewares } = vi.hoisted(() => {
-  type MiddlewareFn = { onRequest: (ctx: { request: Request }) => Request | Promise<Request> };
+  type MiddlewareFn = {
+    onRequest: (ctx: { request: Request }) => Request | Promise<Request>;
+    onResponse?: (ctx: { response: Response }) => Response | Promise<Response>;
+  };
   const middlewares: MiddlewareFn[] = [];
   return {
     registeredMiddlewares: middlewares,
@@ -49,6 +52,65 @@ describe('openapi-fetch middleware - Authorization injection', () => {
     const result = await registeredMiddlewares[0].onRequest({ request });
 
     expect(result.headers.get('Authorization')).toBeNull();
+  });
+});
+
+describe('openapi-fetch middleware - 401 handling', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('401 レスポンス時に sessionStorage をクリアして /login へリダイレクト', async () => {
+    sessionStorage.setItem('app_auth_token', 'stale-token');
+    const assignMock = vi.fn();
+    vi.stubGlobal('location', {
+      assign: assignMock,
+      pathname: '/chat',
+      search: '?x=1',
+      hash: '',
+    });
+    const mw = registeredMiddlewares.find(m => m.onResponse);
+    expect(mw?.onResponse).toBeDefined();
+
+    const response = new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 });
+    mw!.onResponse!({ response });
+
+    expect(sessionStorage.getItem('app_auth_token')).toBeNull();
+    expect(assignMock).toHaveBeenCalledWith(expect.stringContaining('/login?'));
+    expect(assignMock.mock.calls[0][0]).toContain('redirect=%2Fchat%3Fx%3D1');
+  });
+
+  it('/login にいる時は再度 /login へリダイレクトしない', async () => {
+    const assignMock = vi.fn();
+    vi.stubGlobal('location', {
+      assign: assignMock,
+      pathname: '/login',
+      search: '',
+      hash: '',
+    });
+    const mw = registeredMiddlewares.find(m => m.onResponse);
+
+    const response = new Response(null, { status: 401 });
+    mw!.onResponse!({ response });
+
+    expect(assignMock).not.toHaveBeenCalled();
+  });
+
+  it('200 レスポンスではリダイレクトしない', async () => {
+    sessionStorage.setItem('app_auth_token', 'valid-token');
+    const assignMock = vi.fn();
+    vi.stubGlobal('location', { assign: assignMock, pathname: '/chat', search: '', hash: '' });
+    const mw = registeredMiddlewares.find(m => m.onResponse);
+
+    const response = new Response('{}', { status: 200 });
+    mw!.onResponse!({ response });
+
+    expect(sessionStorage.getItem('app_auth_token')).toBe('valid-token');
+    expect(assignMock).not.toHaveBeenCalled();
   });
 });
 
