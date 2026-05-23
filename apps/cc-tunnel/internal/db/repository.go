@@ -20,7 +20,13 @@ type VMInstance struct {
 	Status           string
 	ActiveContainers int
 	IdleSince        *time.Time
-	CreatedAt        time.Time
+	// ZeroAgentsSince records when container-manager last observed zero
+	// running cc-remote-agent containers on this VM. NULL means at least
+	// one agent was last seen (or no observation has been made yet). The
+	// VM reaper deletes VMs whose ZeroAgentsSince has aged past the
+	// configured threshold.
+	ZeroAgentsSince *time.Time
+	CreatedAt       time.Time
 }
 
 // --- SessionEndpoint ---
@@ -249,7 +255,7 @@ func (r *Repository) CreateVMInstance(ctx context.Context, gceInstanceName, zone
 	const q = `
 		INSERT INTO vm_instances (gce_instance_name, zone, internal_ip)
 		VALUES ($1, $2, $3)
-		RETURNING id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		RETURNING id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, zero_agents_since, created_at
 	`
 	row := r.pool.QueryRow(ctx, q, gceInstanceName, zone, internalIP)
 	return scanVMInstance(row)
@@ -257,7 +263,7 @@ func (r *Repository) CreateVMInstance(ctx context.Context, gceInstanceName, zone
 
 func (r *Repository) GetVMInstance(ctx context.Context, id string) (*VMInstance, error) {
 	const q = `
-		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, zero_agents_since, created_at
 		FROM vm_instances WHERE id = $1
 	`
 	row := r.pool.QueryRow(ctx, q, id)
@@ -266,7 +272,7 @@ func (r *Repository) GetVMInstance(ctx context.Context, id string) (*VMInstance,
 
 func (r *Repository) GetVMInstanceByName(ctx context.Context, name string) (*VMInstance, error) {
 	const q = `
-		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, zero_agents_since, created_at
 		FROM vm_instances WHERE gce_instance_name = $1
 	`
 	row := r.pool.QueryRow(ctx, q, name)
@@ -299,7 +305,7 @@ func (r *Repository) DecrementVMActiveContainers(ctx context.Context, id string)
 
 func (r *Repository) GetAvailableVMInstance(ctx context.Context, maxContainers int) (*VMInstance, error) {
 	const q = `
-		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, zero_agents_since, created_at
 		FROM vm_instances
 		WHERE status = 'running' AND active_containers < $1
 		ORDER BY active_containers DESC
@@ -311,7 +317,7 @@ func (r *Repository) GetAvailableVMInstance(ctx context.Context, maxContainers i
 
 func (r *Repository) ListVMInstances(ctx context.Context) ([]*VMInstance, error) {
 	const q = `
-		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, zero_agents_since, created_at
 		FROM vm_instances ORDER BY created_at ASC
 	`
 	rows, err := r.pool.Query(ctx, q)
@@ -333,7 +339,7 @@ func (r *Repository) ListVMInstances(ctx context.Context) ([]*VMInstance, error)
 
 func (r *Repository) ListIdleVMInstances(ctx context.Context, idleThreshold time.Duration) ([]*VMInstance, error) {
 	const q = `
-		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, created_at
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, zero_agents_since, created_at
 		FROM vm_instances
 		WHERE status = 'running' AND active_containers = 0 AND idle_since < NOW() - $1::interval
 		ORDER BY idle_since ASC
@@ -355,6 +361,43 @@ func (r *Repository) ListIdleVMInstances(ctx context.Context, idleThreshold time
 	return result, rows.Err()
 }
 
+// ListRunningVMInstances returns every VM the cc-tunnel side currently
+// considers `running`. The VM reaper iterates this list, queries each
+// container-manager for its actual cc-remote-agent count, and decides
+// independently whether to delete the VM.
+func (r *Repository) ListRunningVMInstances(ctx context.Context) ([]*VMInstance, error) {
+	const q = `
+		SELECT id, gce_instance_name, zone, internal_ip, status, active_containers, idle_since, zero_agents_since, created_at
+		FROM vm_instances
+		WHERE status = 'running'
+		ORDER BY created_at ASC
+	`
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*VMInstance
+	for rows.Next() {
+		vm, err := scanVMInstance(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, vm)
+	}
+	return result, rows.Err()
+}
+
+// SetVMZeroAgentsSince persists the timestamp when the VM was observed
+// with zero cc-remote-agent containers. Passing nil clears the field
+// (i.e. the VM has at least one agent again).
+func (r *Repository) SetVMZeroAgentsSince(ctx context.Context, id string, t *time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE vm_instances SET zero_agents_since = $1 WHERE id = $2`, t, id)
+	return err
+}
+
 func (r *Repository) DeleteVMInstance(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM vm_instances WHERE id = $1`, id)
 	return err
@@ -367,7 +410,7 @@ type vmScanner interface {
 
 func scanVMInstance(row vmScanner) (*VMInstance, error) {
 	vm := &VMInstance{}
-	if err := row.Scan(&vm.ID, &vm.GCEInstanceName, &vm.Zone, &vm.InternalIP, &vm.Status, &vm.ActiveContainers, &vm.IdleSince, &vm.CreatedAt); err != nil {
+	if err := row.Scan(&vm.ID, &vm.GCEInstanceName, &vm.Zone, &vm.InternalIP, &vm.Status, &vm.ActiveContainers, &vm.IdleSince, &vm.ZeroAgentsSince, &vm.CreatedAt); err != nil {
 		return nil, err
 	}
 	return vm, nil

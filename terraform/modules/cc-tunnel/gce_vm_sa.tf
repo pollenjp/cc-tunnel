@@ -35,3 +35,39 @@ resource "google_service_account_iam_member" "cr_runtime_vm_sa_user" {
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.runtime_sa.email}"
 }
+
+# Self-delete role for the VM SA. Each VM runs container-manager which
+# observes its own Docker daemon and, after SELF_REAP_TIMEOUT seconds of
+# zero cc-remote-agent containers, calls compute.instances.delete on
+# itself (apps/container-manager/internal/selfreaper). This is the
+# primary VM reap path; see
+#   adr/2026-05/2026-05-20T20:46:00+09:00_01_vm_reap_dual_path.md
+#
+# Scope: the role contains only compute.instances.delete, and the
+# binding below carries an IAM condition that restricts the
+# permission to VMs whose name starts with "cc-tunnel-" (the prefix
+# DockerGCEProvider uses when provisioning — see
+# apps/cc-tunnel/internal/provider/dockergce/provider.go:417). This
+# means a compromised VM SA cannot delete arbitrary instances in the
+# project, only instances whose name matches the cc-tunnel prefix.
+# In practice each VM's only path to invoke this is on its own
+# instance (it has no list permission), but the condition pins the
+# upper bound.
+resource "google_project_iam_custom_role" "vm_self_delete" {
+  role_id     = replace("ccTunnelVmSelfDelete${random_string.unique_id.result}", "-", "")
+  title       = "cc-tunnel VM self-delete"
+  description = "Allows a cc-tunnel-managed VM SA to delete its own VM instance via the container-manager self-reaper."
+  permissions = ["compute.instances.delete"]
+}
+
+resource "google_project_iam_member" "vm_runtime_sa_self_delete" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.vm_self_delete.id
+  member  = "serviceAccount:${google_service_account.vm_runtime_sa.email}"
+
+  condition {
+    title       = "self_delete_cc_tunnel_vms_only"
+    description = "Restrict compute.instances.delete to instances whose relative name starts with cc-tunnel-."
+    expression  = "resource.name.startsWith(\"projects/${var.project_id}/zones/${var.gce_zone}/instances/cc-tunnel-\")"
+  }
+}

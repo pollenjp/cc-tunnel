@@ -11,9 +11,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/admin"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/api"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/cmclient"
 	"github.com/pollenjp/cc-tunnel/apps/cc-tunnel/internal/credential"
@@ -112,6 +114,24 @@ func main() {
 	mux := http.NewServeMux()
 	api.HandlerFromMux(handler, mux)
 
+	// Out-of-band reconcile endpoint hit by Cloud Scheduler (safety-net
+	// VM reap path, see adr/2026-05 vm_reap_dual_path.md). Registered
+	// only when the active provider supports VM reconciliation
+	// (currently docker_gce) and the audience + allowed SA emails are
+	// configured. The primary reap path is the per-VM container-manager
+	// self-reaper; this endpoint catches VMs whose self-reaper is dead.
+	if reconciler, ok := execProvider.(admin.VMReconciler); ok {
+		aud := os.Getenv("RECONCILE_VMS_OIDC_AUDIENCE")
+		emails := splitAndTrim(os.Getenv("RECONCILE_VMS_ALLOWED_EMAILS"), ",")
+		if aud != "" && len(emails) > 0 {
+			rh := admin.NewReconcileVMsHandler(reconciler, aud, emails)
+			mux.Handle("/internal/reconcile-vms", rh)
+			slog.Info("registered /internal/reconcile-vms", "audience", aud, "allowed_emails", len(emails))
+		} else {
+			slog.Info("/internal/reconcile-vms not registered: RECONCILE_VMS_OIDC_AUDIENCE or RECONCILE_VMS_ALLOWED_EMAILS unset")
+		}
+	}
+
 	slog.Info("cc-tunnel listening", "addr", *addr)
 	if err := http.ListenAndServe(*addr, api.LoggingMiddleware(mux)); err != nil {
 		slog.Error("server failed", "err", err)
@@ -124,6 +144,20 @@ func getEnvOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+func splitAndTrim(s, sep string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, sep)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func getEnvIntOrDefault(key string, defaultVal int) int {
@@ -215,6 +249,22 @@ func newProviderFromEnv(ctx context.Context, envVal string, repo *db.Repository)
 			ContainerNamePrefix:  getEnvOrDefault("GCE_CONTAINER_NAME_PREFIX", "cc-remote-agent"),
 			PortRangeStart:       getEnvIntOrDefault("GCE_AGENT_PORT_RANGE_START", 61000),
 			PortRangeEnd:         getEnvIntOrDefault("GCE_AGENT_PORT_RANGE_END", 61999),
+			// VM reaper: delete a VM after its container-manager reports zero
+			// cc-remote-agent containers for this long.
+			//
+			// In production on Cloud Run the reaper is NOT driven by an
+			// in-process ticker (Cloud Run scales the instance to zero and
+			// throttles CPU between requests, so the goroutine is unreliable).
+			// Instead, the same logic is invoked via
+			// `POST /internal/reconcile-vms` from Cloud Scheduler at a coarse
+			// cadence (e.g. every 6h, as a safety net) and primarily by the
+			// per-VM container-manager self-reaper at a finer cadence
+			// (10 min). VMReconcileInterval therefore defaults to 0
+			// (disabled). Set GCE_VM_RECONCILE_INTERVAL_SECONDS only for
+			// local docker_gce dev / tests.
+			ZeroAgentsTimeout:            time.Duration(getEnvIntOrDefault("GCE_VM_ZERO_AGENTS_TIMEOUT_SECONDS", 600)) * time.Second,
+			VMReconcileInterval:          time.Duration(getEnvIntOrDefault("GCE_VM_RECONCILE_INTERVAL_SECONDS", 0)) * time.Second,
+			ContainerManagerProbeTimeout: time.Duration(getEnvIntOrDefault("GCE_CONTAINER_MANAGER_PROBE_TIMEOUT_SECONDS", 5)) * time.Second,
 		}
 		return dockergce.NewDockerGCEProvider(cfg, gceClient, repo), nil
 	default:

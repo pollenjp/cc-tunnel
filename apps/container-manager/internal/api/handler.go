@@ -27,6 +27,7 @@ type AgentManager interface {
 	RunAgent(ctx context.Context, req dockerops.RunAgentRequest) (string, error)
 	StopAgent(ctx context.Context, name string) error
 	RemoveAgent(ctx context.Context, name string) error
+	ListAgents(ctx context.Context) ([]dockerops.AgentSummary, error)
 }
 
 // Server implements the generated StrictServerInterface backed by AgentManager.
@@ -52,6 +53,22 @@ func (h *Server) GetHealthz(ctx context.Context, _ GetHealthzRequestObject) (Get
 		return GetHealthz503JSONResponse{Error: "docker daemon unreachable: " + err.Error()}, nil
 	}
 	return GetHealthz200JSONResponse{Status: "ok"}, nil
+}
+
+func (h *Server) ListAgents(ctx context.Context, _ ListAgentsRequestObject) (ListAgentsResponseObject, error) {
+	agents, err := h.mgr.ListAgents(ctx)
+	if err != nil {
+		slog.Error("ListAgents failed", "err", err)
+		return ListAgents500JSONResponse{Error: err.Error()}, nil
+	}
+	infos := make([]AgentInfo, 0, len(agents))
+	for _, a := range agents {
+		infos = append(infos, AgentInfo{Name: a.Name})
+	}
+	return ListAgents200JSONResponse{
+		Count:  int32(len(infos)),
+		Agents: infos,
+	}, nil
 }
 
 func (h *Server) CreateAgent(ctx context.Context, request CreateAgentRequestObject) (CreateAgentResponseObject, error) {

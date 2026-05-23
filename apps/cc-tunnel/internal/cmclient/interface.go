@@ -25,6 +25,12 @@ type RunAgentRequest struct {
 	Labels map[string]string
 }
 
+// AgentInfo describes one running cc-remote-agent container observed by
+// container-manager on the VM. Mirrors the OpenAPI AgentInfo schema.
+type AgentInfo struct {
+	Name string
+}
+
 // ContainerManager abstracts cc-remote-agent container operations on a
 // remote VM, executed via the container-manager HTTP API.
 type ContainerManager interface {
@@ -41,6 +47,11 @@ type ContainerManager interface {
 
 	// RemoveContainer force-removes a container.
 	RemoveContainer(ctx context.Context, name string) error
+
+	// ListAgents returns the running cc-remote-agent containers on the VM.
+	// cc-tunnel's VM reaper uses this as the authoritative source for
+	// agent count, decoupled from the DB-tracked active_containers.
+	ListAgents(ctx context.Context) ([]AgentInfo, error)
 
 	// IsReady checks if the container-manager (and the underlying Docker
 	// daemon) is reachable.

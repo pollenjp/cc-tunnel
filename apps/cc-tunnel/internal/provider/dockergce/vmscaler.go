@@ -7,20 +7,28 @@ import (
 	"time"
 )
 
-// VMScaler は定期的にアイドル GCE VM を削除する goroutine（設計書 §5.2）。
+// vmReconciler abstracts the ReconcileVMs operation so VMScaler can be
+// unit-tested without a full DockerGCEProvider.
+type vmReconciler interface {
+	ReconcileVMs(ctx context.Context) error
+}
+
+// VMScaler は定期的に container-manager の実測値を確認し、
+// cc-remote-agent コンテナ数がゼロのまま ZeroAgentsTimeout を超えた
+// GCE VM を削除する goroutine（設計書 §5.2）。
 type VMScaler struct {
-	cleaner  idleCleaner
-	interval time.Duration
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
+	reconciler vmReconciler
+	interval   time.Duration
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
 }
 
 // NewVMScaler creates a new VMScaler backed by provider.
 func NewVMScaler(provider *DockerGCEProvider, interval time.Duration) *VMScaler {
 	return &VMScaler{
-		cleaner:  provider,
-		interval: interval,
-		stopCh:   make(chan struct{}),
+		reconciler: provider,
+		interval:   interval,
+		stopCh:     make(chan struct{}),
 	}
 }
 
@@ -43,8 +51,8 @@ func (vs *VMScaler) run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			if err := vs.cleaner.CleanupOrphans(ctx); err != nil {
-				slog.Error("VMScaler: CleanupOrphans failed", "err", err)
+			if err := vs.reconciler.ReconcileVMs(ctx); err != nil {
+				slog.Error("VMScaler: ReconcileVMs failed", "err", err)
 			}
 		case <-vs.stopCh:
 			return

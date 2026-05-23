@@ -62,6 +62,14 @@ resource "google_project_iam_member" "sa_roles" {
 
     # Cloud Scheduler job の作成・更新 (vm_image_cleaner module)
     "roles/cloudscheduler.admin",
+
+    # Project IAM custom role の作成・取得・更新・削除
+    # (cc-tunnel module の google_project_iam_custom_role.vm_self_delete).
+    # resourcemanager.projectIamAdmin は IAM **binding** を管理するが、
+    # custom **role** リソース自体の CRUD (iam.roles.create/get/update/delete)
+    # は別権限で、これは roles/iam.roleAdmin にまとまっている。
+    # 関連 ADR: adr/2026-05 vm_reap_dual_path.md
+    "roles/iam.roleAdmin",
   ])
 
   project = var.project_id

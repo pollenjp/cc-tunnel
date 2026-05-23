@@ -116,7 +116,7 @@ Browser → frontend (nginx) → cc-tunnel (Cloud Run)
 │  │ API Handler  │  │ DockerGCEProvider（実装済み）            │    │
 │  │ (handler.go) │  │  - ExecutionProvider interface 実装      │    │
 │  │              ├─▶│  - GCE VM ライフサイクル管理             │    │
-│  │ Auth Handler │  │  - IdleChecker / VMScaler               │    │
+│  │ Auth Handler │  │  - IdleChecker / ReconcileVMs (§5.2)    │    │
 │  │ (認証専用)  ─┼─▶│                                         │    │
 │  └──────────────┘  └───────────┬─────────────────────────────┘    │
 │                                │                                   │
@@ -182,7 +182,8 @@ apps/cc-tunnel/internal/
     ├── provider.go        # DockerGCEProvider 本体（実装済み）
     │                      #   Execute / getOrCreateEndpoint / waitForVMReady(2段階) / Close
     ├── idle_checker.go    # IdleChecker goroutine（IdleCheckInterval 間隔でコンテナ idle 検出）（実装済み: Phase 3）
-    └── vmscaler.go        # VMScaler goroutine（アイドル VM を 5分後に削除）（実装済み: Phase 3）
+    └── vmscaler.go        # VMScaler goroutine（旧）。default off。Cloud Run 上で信頼できないため
+                           # production reap は §5.2 の二経路（self-reaper + Cloud Scheduler）が担う
 ```
 
 #### インターフェース定義
@@ -494,41 +495,120 @@ POST https://compute.googleapis.com/compute/v1/projects/{PROJECT}/zones/{ZONE}/i
 - `status == "RUNNING"` かつ `networkInterfaces[0].networkIP` が設定されたことを確認
 - タイムアウト時はエラーを返し、VM の削除クリーンアップを実行
 
-### 5.2 VMScaler（全コンテナ削除後の VM 削除）
+### 5.2 VM Reaper（実測ベース・二系統）
+
+VM の削除判定は **DB の `active_containers` ではなく、container-manager
+が報告する cc-remote-agent コンテナの実測値** を権威ソースとする。
+DB カウンタはセッション生成時のスケジューラ向けヒントとして残るが、
+クラッシュ・外部からの `docker rm`・cc-tunnel 自身の異常終了などにより
+DB と VM の状態がドリフトしてもこの経路では VM を不当に長く残さない
+（あるいは利用中の VM を誤って削除しない）ことを保証する。
+
+cc-tunnel は Cloud Run 上で動作する。Cloud Run はリクエストが無い間
+インスタンスを停止し、リクエスト処理間も CPU を throttle する。このため
+**in-process な ticker（goroutine）による周期実行は信頼できない**。
+本設計では reap を 2 系統で実行する:
+
+| 経路 | 主従 | 周期 | 実装 |
+|---|---|---|---|
+| **container-manager 自己終了** | 主 | 10 分 | 各 VM 上の container-manager が自分の Docker daemon を観測し、ゼロ継続で `compute.instances.delete` を自身に対して呼ぶ。VM が落ちる時に systemd が container-manager / agent コンテナごと停止する。 |
+| **Cloud Scheduler → cc-tunnel HTTP** | 保険 | 6 時間 | Cloud Scheduler が `POST /internal/reconcile-vms` を OIDC 認証付きで叩き、cc-tunnel が `DockerGCEProvider.ReconcileVMs` を実行する。container-manager が応答不能になった VM や、DB 上は running だが GCE 上に存在しない VM の整合化に使う。 |
 
 ```
-コンテナ削除イベント
-  ↓
-DecrementVMActiveContainers(vm_instance_id)
-  ↓
-active_containers == 0 → UPDATE vm_instances SET idle_since = NOW()
-  ↓
-VMScaler（5分間隔チェック）
-  ├── SELECT * FROM vm_instances WHERE status='running'
-  │     AND active_containers = 0
-  │     AND idle_since < NOW() - INTERVAL '5 minutes'
-  ↓
-  GCE API: instances.delete({vm_name})
-  ↓
-  UPDATE vm_instances SET status = 'terminated'
+（主）container-manager 自己終了 (VM 上、10 分周期)
+  Docker daemon に label=component=cc-remote-agent でフィルタ問い合わせ
+  ├── count > 0  → in-memory zero_since = nil
+  ├── count == 0 かつ zero_since 未設定 → zero_since = NOW()
+  └── count == 0 かつ zero_since < NOW() - SELF_REAP_TIMEOUT (10 分)
+        → metadata server から instance name / zone を取得
+        → compute.instances.delete(self)
+        → VM が停止 → cc-tunnel 側は次の ReconcileVMs で DB を整合化
+
+（保険）Cloud Scheduler → cc-tunnel (6 時間周期)
+  Cloud Scheduler → POST /internal/reconcile-vms (OIDC ID token)
+  cc-tunnel.ReconcileVMs(ctx):
+    SELECT * FROM vm_instances WHERE status='running'
+    各 VM について container-manager に GET /v1/agents
+      ├── count > 0  → UPDATE zero_agents_since = NULL
+      ├── count == 0 かつ zero_agents_since IS NULL
+      │     → UPDATE zero_agents_since = NOW()
+      ├── count == 0 かつ zero_agents_since < NOW() - ZeroAgentsTimeout
+      │     → GCE API: instances.delete({vm_name})
+      │     → DELETE FROM vm_instances WHERE id = ?
+      └── container-manager 到達不能（フェイルセーフ: 何もしない）
 ```
 
-**VMScaler goroutine**（`vmscaler.go`）:
+**設定**:
 
-```go
-func (vs *VMScaler) Run(ctx context.Context) {
-    ticker := time.NewTicker(5 * time.Minute)
-    defer ticker.Stop()
-    for {
-        select {
-        case <-ctx.Done():
-            return
-        case <-ticker.C:
-            vs.scaleDown(ctx)
-        }
-    }
-}
+| コンポーネント | フィールド / 環境変数 | デフォルト | 設定場所 | 説明 |
+|---|---|---|---|---|
+| cc-tunnel | `ZeroAgentsTimeout` / `GCE_VM_ZERO_AGENTS_TIMEOUT_SECONDS` | `600` (10 分) | Cloud Run env | `ReconcileVMs` (Cloud Scheduler 経路) が VM を削除するしきい値 |
+| cc-tunnel | `VMReconcileInterval` / `GCE_VM_RECONCILE_INTERVAL_SECONDS` | `0` (無効) | Cloud Run env | in-process ticker。**Cloud Run 上では 0 にしておく**。local dev のみ設定 |
+| cc-tunnel | `ContainerManagerProbeTimeout` / `GCE_CONTAINER_MANAGER_PROBE_TIMEOUT_SECONDS` | `5` 秒 | Cloud Run env | VM ごとの `GET /v1/agents` タイムアウト |
+| cc-tunnel | `RECONCILE_VMS_OIDC_AUDIENCE` | `cc-tunnel-reconcile-vms` | Cloud Run env (terraform 注入) | Cloud Scheduler が署名する OIDC `aud` クレーム |
+| cc-tunnel | `RECONCILE_VMS_ALLOWED_EMAILS` | scheduler SA email | Cloud Run env (terraform 注入) | `/internal/reconcile-vms` を叩ける SA email の許可リスト |
+| container-manager | `SELF_REAP_ENABLED` | `true` | Packer image の systemd unit | self-reaper goroutine 起動有無 |
+| container-manager | `SELF_REAP_TIMEOUT_SECONDS` | `600` (10 分) | 同上 | 自己 agent count ゼロ継続で VM を自己削除するしきい値 |
+| container-manager | `SELF_REAP_INTERVAL_SECONDS` | `60` | 同上 | 自己 reap loop の周期 |
+| Cloud Scheduler | cron | `0 */6 * * *` | terraform `scheduler.tf` | 6 時間ごとに `/internal/reconcile-vms` を発火 |
+
+container-manager は label `component=cc-remote-agent` でフィルタした
+コンテナのみを集計するため、VM 上に同居する他のワークロード（万一存在しても）
+は判定に影響しない。
+
+#### 5.2.1 「最後の操作 → VM が消える」までのタイムライン
+
+cc-remote-agent コンテナ自体は `IdleChecker` (cc-tunnel 内、別系統)
+が **最終アクティビティから 15 分** で削除する。その後 VM 上に他の
+agent が残っていなければ self-reaper が拾い始める。典型値:
+
 ```
+T+ 0:00   最後の SendMessage 等
+T+15:00   cc-tunnel IdleChecker のしきい値到達 (IdleTimeout = 15 min)
+T+15:00〜T+20:00
+          次回 IdleCheckInterval (default 300 s = 5 min) で
+          container-manager 経由でコンテナ削除 + DB から
+          session_endpoints 行を削除
+T+20:00   VM 上の agent count = 0
+T+21:00   self-reaper が初回 zero 観測 → zeroSince = now
+T+31:00   self-reaper の SELF_REAP_TIMEOUT (10 min) 到達
+          → compute.instances.delete(self) を呼ぶ
+T+31:30〜T+32:00
+          GCE が VM をシャットダウン、cc-tunnel 次回 ReconcileVMs で
+          DB の vm_instances 行を整合化（Cloud Scheduler 6h 内に発火）
+```
+
+最短ケース ≒ **30 分前後**、上振れて ~35 分。container-manager が
+何らかの理由で死んでいる VM は self-reaper が動かないので、6 時間
+以内に Cloud Scheduler 経路で掃除される（最悪 ~6 時間放置）。
+
+#### 5.2.2 Cloud Logging での生存確認
+
+self-reaper は 60 秒ごとに `self-reaper: tick` ハートビートログを
+emit する。`gcplogs` docker log driver 経由で Cloud Logging に流れ、
+**container label `component=container-manager`** がペイロード
+`jsonPayload.container.metadata.component` に出る。
+
+```
+# self-reaper の全ログ
+resource.type="gce_instance"
+jsonPayload.container.metadata.component="container-manager"
+jsonPayload.message:"self-reaper"
+
+# heartbeat だけ (60s 間隔で出続けていれば生存)
+jsonPayload.message="self-reaper: tick"
+
+# 「いま reap カウントダウン中」の VM のみ
+jsonPayload.message=~"self-reaper: tick.*agent_count\\\\\"\\:0"
+
+# self-delete が走った瞬間
+jsonPayload.message=~"(timeout reached, deleting self|delete dispatched)"
+```
+
+slog の内側 JSON は `jsonPayload.message` に文字列として入れ子に
+なっており、`agent_count` / `zero_elapsed` などの個別フィールドは
+構造化フィルタできない。サブストリング (`:`) または正規表現 (`=~`)
+マッチを使う。
 
 ### 5.3 VM 最大収容セッション数
 
@@ -884,7 +964,7 @@ case "docker_gce":
 | 状態 | コスト | 実現方法 |
 |------|--------|---------|
 | セッション稼働中 | $0.067/hr (1VM/10session) | 通常運用 |
-| 全セッション終了 → 5分後 | $0 | VMScaler が VM 削除 |
+| 全セッション終了 → 10分後 | $0 | container-manager self-reaper が VM 自身を削除（§5.2 主経路）。container-manager が落ちている場合でも 6h 以内に Cloud Scheduler 経由で掃除される |
 | Warm pool (e2-micro × 1台) | $5.76/月 | 設定で有効化 |
 
 ### 9.3 Warm Pool vs コスト最適化のトレードオフ

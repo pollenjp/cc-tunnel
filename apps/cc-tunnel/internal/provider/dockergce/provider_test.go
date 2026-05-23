@@ -200,6 +200,27 @@ func (m *mockDBRepo) ListIdleVMInstances(_ context.Context, _ time.Duration) ([]
 	return result, nil
 }
 
+func (m *mockDBRepo) ListRunningVMInstances(_ context.Context) ([]*db.VMInstance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []*db.VMInstance
+	for _, vm := range m.vms {
+		if vm.Status == "running" {
+			result = append(result, vm)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockDBRepo) SetVMZeroAgentsSince(_ context.Context, id string, t *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if vm, ok := m.vms[id]; ok {
+		vm.ZeroAgentsSince = t
+	}
+	return nil
+}
+
 func (m *mockDBRepo) DeleteVMInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1075,6 +1096,7 @@ func TestVMScaler_Started(t *testing.T) {
 		Zone:                    "us-central1-a",
 		IdleTimeout:             time.Minute,
 		IdleCheckInterval:       20 * time.Millisecond, // very short for test
+		VMReconcileInterval:     20 * time.Millisecond, // explicit; default is now 0
 		ContainerManagerFactory: factory,
 	}
 
@@ -1129,6 +1151,12 @@ func (r *countingCleanupRepo) ListIdleSessionEndpoints(_ context.Context, _ time
 	return nil, nil
 }
 func (r *countingCleanupRepo) DeleteSessionEndpoint(_ context.Context, _ string) error { return nil }
+func (r *countingCleanupRepo) ListRunningVMInstances(_ context.Context) ([]*db.VMInstance, error) {
+	return nil, nil
+}
+func (r *countingCleanupRepo) SetVMZeroAgentsSince(_ context.Context, _ string, _ *time.Time) error {
+	return nil
+}
 func (r *countingCleanupRepo) ListIdleVMInstances(_ context.Context, _ time.Duration) ([]*db.VMInstance, error) {
 	return nil, nil
 }
@@ -1394,6 +1422,12 @@ func (m *cleanupMockDBRepo) DeleteSessionEndpoint(_ context.Context, id string) 
 }
 func (m *cleanupMockDBRepo) ListIdleVMInstances(_ context.Context, _ time.Duration) ([]*db.VMInstance, error) {
 	return m.vmsToReturn, nil
+}
+func (m *cleanupMockDBRepo) ListRunningVMInstances(_ context.Context) ([]*db.VMInstance, error) {
+	return m.vmsToReturn, nil
+}
+func (m *cleanupMockDBRepo) SetVMZeroAgentsSince(_ context.Context, _ string, _ *time.Time) error {
+	return nil
 }
 func (m *cleanupMockDBRepo) DeleteVMInstance(_ context.Context, id string) error {
 	m.deletedVMs[id] = true

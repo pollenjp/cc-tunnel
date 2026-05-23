@@ -116,6 +116,27 @@ func (c *Client) RemoveContainer(ctx context.Context, name string) error {
 	return nil
 }
 
+// ListAgents issues GET /v1/agents.
+func (c *Client) ListAgents(ctx context.Context) ([]AgentInfo, error) {
+	resp, err := c.gen.ListAgents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cmclient: list agents: %w", err)
+	}
+	// ParseListAgentsResponse drains and closes the body.
+	parsed, err := genclient.ParseListAgentsResponse(resp)
+	if err != nil {
+		return nil, fmt.Errorf("cmclient: parse list agents response: %w", err)
+	}
+	if parsed.StatusCode()/100 != 2 || parsed.JSON200 == nil {
+		return nil, fmt.Errorf("cmclient: list agents: %s", parsed.Status())
+	}
+	out := make([]AgentInfo, 0, len(parsed.JSON200.Agents))
+	for _, a := range parsed.JSON200.Agents {
+		out = append(out, AgentInfo{Name: a.Name})
+	}
+	return out, nil
+}
+
 // IsReady issues GET /healthz with the parent context's deadline.
 func (c *Client) IsReady(ctx context.Context) bool {
 	resp, err := c.gen.GetHealthz(ctx)

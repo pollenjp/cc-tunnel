@@ -144,7 +144,13 @@ build {
       "Restart=always",
       "RestartSec=5",
       "ExecStartPre=-/usr/bin/docker rm -f container-manager",
-      "ExecStart=/usr/bin/docker run --rm --name container-manager --network=bridge -p ${var.container_manager_port}:9090 -v /var/run/docker.sock:/var/run/docker.sock --log-driver=gcplogs --log-opt labels=component --label component=container-manager ${var.container_manager_image}",
+      # SELF_REAP_* configure the per-VM self-reaper. Defaults: enabled,
+      # poll every 60s, delete the VM after 10 minutes of zero
+      # cc-remote-agent containers. The container-manager calls
+      # compute.instances.delete on its own instance via the VM SA
+      # (see terraform gce_vm_sa.tf and
+      # adr/2026-05 vm_reap_dual_path.md).
+      "ExecStart=/usr/bin/docker run --rm --name container-manager --network=bridge -p ${var.container_manager_port}:9090 -v /var/run/docker.sock:/var/run/docker.sock -e SELF_REAP_ENABLED=true -e SELF_REAP_INTERVAL_SECONDS=60 -e SELF_REAP_TIMEOUT_SECONDS=600 --log-driver=gcplogs --log-opt labels=component --label component=container-manager ${var.container_manager_image}",
       "ExecStop=/usr/bin/docker stop container-manager",
       "",
       "[Install]",
