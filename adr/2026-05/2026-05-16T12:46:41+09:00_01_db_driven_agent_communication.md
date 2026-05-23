@@ -98,7 +98,10 @@ per-session container (`cctunnel-session-<convID[:8]>`) の中で:
 hook の `Stop` で `{"decision":"block","reason":<next_prompt>}` を返す
 ことで、新しいユーザー入力をそのまま同一セッションへ注入し続ける。
 
-### 2. DB スキーマ (新規 migration `009_create_agent_dispatch.sql`)
+### 2. DB スキーマ (新規 migration `010_create_agent_dispatch.sql`)
+
+> `009_add_zero_agents_since.sql` は VM reap 用に main で既に採番済み
+> (ADR `2026-05-20_vm_reap_dual_path`)。本 ADR の DDL は 010 から始める。
 
 既存 `messages` テーブルは「ユーザーに見せる会話ログ」として責務を
 維持し、agent との物理通信路は専用テーブルに分離する。
@@ -224,7 +227,7 @@ hook で `payload.session_id` から取得) を入れる。
 
 | ファイル | 変更 |
 |----------|------|
-| `apps/cc-tunnel/internal/db/migrations/009_create_agent_dispatch.sql` | 新規。`agent_dispatches` / `agent_outputs` テーブル DDL |
+| `apps/cc-tunnel/internal/db/migrations/010_create_agent_dispatch.sql` | 新規。`agent_dispatches` / `agent_outputs` テーブル DDL |
 | `apps/cc-tunnel/internal/api/message_service.go` | `POST /messages` で `agent_dispatches` を INSERT。`remoteclient.Execute` 呼び出しは削除し、cc-remote-agent へは「container を起動・claude を生かしておく」指示のみ送る |
 | `apps/cc-tunnel/internal/agent_outputs/` (新設) | `agent_outputs` の polling/集約。message_data.content_blocks への fold |
 | `apps/cc-tunnel/internal/remoteclient/client.go` | `Execute` を削除。代わりに `EnsureAgentRunning(conversationID)` を追加 |
@@ -343,7 +346,7 @@ LISTEN は connection-bound で longrunning なので Cloud SQL connection
 
 ## 実装ステップ (見通し)
 
-1. **migration 009**: `agent_dispatches` / `agent_outputs` テーブル追加。
+1. **migration 010**: `agent_dispatches` / `agent_outputs` テーブル追加。
    既存コードからは未参照のまま入れる (リバート容易)。
 2. **`cc-hook-bridge` の skeleton**: SessionStart / Stop だけ実装し、
    ローカル compose 環境で長寿命 `claude` + hook → DB INSERT を確認。
