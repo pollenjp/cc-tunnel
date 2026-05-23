@@ -26,6 +26,7 @@ type repository interface {
 	conversationRepository
 	messageRepository
 	sessionEndpointRepository
+	agentDispatchRepository
 }
 
 // conversationRepository handles conversation-level CRUD and metadata updates.
@@ -54,4 +55,13 @@ type messageRepository interface {
 // idle-cleanup loop in the docker_gce / local providers.
 type sessionEndpointRepository interface {
 	UpdateSessionEndpointLastActivity(ctx context.Context, conversationID string) error
+}
+
+// agentDispatchRepository carries the new hook-driven command path
+// (ADR 2026-05-16). Today only the SendMessage handler uses it for shadow
+// writes; the long-lived claude integration will read these rows once
+// /execute is retired.
+type agentDispatchRepository interface {
+	CreateAgentDispatch(ctx context.Context, conversationID, assistantMessageID, prompt string, systemPrompt *string) (*db.AgentDispatch, error)
+	MarkDispatchConsumed(ctx context.Context, id string) error
 }

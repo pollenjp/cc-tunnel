@@ -1,0 +1,60 @@
+{
+  "_comment": "Container-baked Claude Code hooks for cc-remote-agent. ADR 2026-05-16. The Stop hook is the loop driver: it consumes the active agent_dispatch and emits {\"decision\":\"block\",\"reason\":...} to inject the next pending prompt into the same claude session.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cc-hook-bridge session-start",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cc-hook-bridge user-prompt-submit",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cc-hook-bridge pre-tool-use",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cc-hook-bridge post-tool-use",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cc-hook-bridge stop",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,7 +1,7 @@
 # ADR: cc-remote-agent の `claude -p` を廃し DB 経由の Hook 駆動通信に切り替える
 
 **日時**: 2026-05-16T12:46:41+09:00
-**ステータス**: 提案
+**ステータス**: 採用 (段階 1-4 実装中 / 段階 5-6 は後続 PR)
 **関連ブランチ**: `claude/db-agent-communication-Pr60j`
 **関連 ADR**:
 - `2026-04-29T11:50:04+09:00_01_cc_login_redesign_session_container.md` (session container 化)

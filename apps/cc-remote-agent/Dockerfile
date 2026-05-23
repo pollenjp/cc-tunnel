@@ -4,7 +4,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /cc-remote-agent ./cmd/cc-remote-agent
+RUN CGO_ENABLED=0 go build -o /cc-remote-agent ./cmd/cc-remote-agent \
+    && CGO_ENABLED=0 go build -o /cc-hook-bridge ./cmd/cc-hook-bridge
 
 FROM mirror.gcr.io/library/debian:bookworm-slim
 
@@ -23,6 +24,9 @@ RUN useradd -m -s /bin/bash user \
     && chown -R user:user /home/user/.claude
 
 COPY --from=builder /cc-remote-agent /usr/local/bin/cc-remote-agent
+COPY --from=builder /cc-hook-bridge /usr/local/bin/cc-hook-bridge
+COPY cmd/cc-hook-bridge/settings.json /home/user/.claude/settings.json
+RUN chown user:user /home/user/.claude/settings.json
 
 USER user
 WORKDIR /home/user

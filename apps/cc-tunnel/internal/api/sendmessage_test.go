@@ -124,6 +124,23 @@ func (m *mockRepoCheckCtx) UpdateSessionEndpointLastActivity(_ context.Context, 
 	return nil
 }
 
+func (m *mockRepoCheckCtx) CreateAgentDispatch(_ context.Context, conversationID, assistantMessageID, prompt string, systemPrompt *string) (*db.AgentDispatch, error) {
+	return &db.AgentDispatch{
+		ID:                 uuid.New().String(),
+		ConversationID:     conversationID,
+		AssistantMessageID: assistantMessageID,
+		Prompt:             prompt,
+		SystemPrompt:       systemPrompt,
+		Status:             db.DispatchStatusPending,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}, nil
+}
+
+func (m *mockRepoCheckCtx) MarkDispatchConsumed(_ context.Context, _ string) error {
+	return nil
+}
+
 // --- Test doubles for remoteClient ---
 
 // mockRemoteWithCancel cancels the caller's r.Context() mid-execution to simulate
