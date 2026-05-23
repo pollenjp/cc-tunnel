@@ -111,4 +111,27 @@ describe('ChatPage', () => {
     expect(screen.getByTestId('chat-view')).toBeTruthy();
     expect(screen.queryByTestId('agent-selector')).toBeNull();
   });
+
+  it('createConversation 実行中に AgentSelector の spinner が表示されること', async () => {
+    // 解決しない Promise を返して進行中状態を維持
+    vi.mocked(clientModule.createConversation).mockReturnValue(
+      new Promise<Conversation>(() => {}),
+    );
+
+    renderChatPage('/chat');
+    await flush();
+
+    // spinner はまだ表示されていない
+    expect(screen.queryByTestId('agent-selector-loading')).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('agent-btn-claude-code'));
+    });
+
+    // クリック直後に spinner が表示されること
+    expect(screen.getByTestId('agent-selector-loading')).toBeTruthy();
+    // ボタンも disabled になっていること
+    const btn = screen.getByTestId('agent-btn-claude-code') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
 });
