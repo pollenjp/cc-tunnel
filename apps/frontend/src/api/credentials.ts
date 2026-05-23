@@ -15,6 +15,14 @@ async function apiFetch<T>(path: string, token: string, options?: RequestInit): 
     },
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      sessionStorage.removeItem('app_auth_token');
+      if (window.location.pathname !== '/login') {
+        const { pathname, search, hash } = window.location;
+        const redirect = `${pathname}${search}${hash}`;
+        window.location.assign(`/login?${new URLSearchParams({ redirect }).toString()}`);
+      }
+    }
     const text = await res.text().catch(() => String(res.status));
     throw new Error(`${path} failed (${res.status}): ${text}`);
   }
