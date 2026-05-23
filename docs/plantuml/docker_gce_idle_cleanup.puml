@@ -41,6 +41,14 @@ end
 loop SELF_REAP_INTERVAL_SECONDS ごと（VM 上、常時）
   SelfReaper -> Docker: list containers\n(label=component=cc-remote-agent)
   Docker --> SelfReaper: count
+  note over SelfReaper
+    info-log: "self-reaper: tick"
+      agent_count=<n>
+      zero_elapsed=<duration>
+      timeout=10m
+    → Cloud Logging で生存確認・reap カウントダウン状態を観測可能
+       (docs/docker-gce-design.md §5.2.2 のフィルタ参照)
+  end note
   alt count > 0
     note over SelfReaper: zeroSince = nil
   else count == 0 かつ zeroSince == nil
@@ -48,7 +56,12 @@ loop SELF_REAP_INTERVAL_SECONDS ごと（VM 上、常時）
   else count == 0 かつ\nnow() - zeroSince >= SELF_REAP_TIMEOUT (10min)
     SelfReaper -> SelfReaper: metadata server から\ninstance name / zone / project
     SelfReaper -> GCEAPI: instances.delete(self)
-    note right: VM SA に self-delete IAM が必要\n(該当 instance への scope 付き)
+    note right
+      VM SA は project レベルで
+      compute.instances.delete のみを持つ custom role を
+      IAM Condition (resource.name.startsWith("...cc-tunnel-"))
+      付きで付与されている。任意 VM 削除は不可。
+    end note
     GCEAPI --> SelfReaper: Operation
     note over SelfReaper, Docker
       systemd が container-manager / agent コンテナごと

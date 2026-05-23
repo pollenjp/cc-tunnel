@@ -79,7 +79,8 @@ cc-tunnel/
     │       │       ├── 005_create_vm_instances.sql        # vm_instances テーブル (DockerGCEProvider 用)
     │       │       ├── 006_create_session_endpoints.sql   # session_endpoints テーブル (DockerGCEProvider 用)
     │       │       ├── 007_create_credentials.sql         # credentials テーブル (AES-256-GCM 暗号化 credentials)
-    │       │       └── 008_session_endpoints_unique_vm_port.sql  # session_endpoints の (vm_instance_id, port) UNIQUE 制約
+    │       │       ├── 008_session_endpoints_unique_vm_port.sql  # session_endpoints の (vm_instance_id, port) UNIQUE 制約
+    │       │       └── 009_add_zero_agents_since.sql       # vm_instances.zero_agents_since (実測ベース reap の権威タイムスタンプ)
     │       ├── docker/               # Docker デーモン操作の抽象化レイヤー
     │       │   ├── runner.go         # DockerRunner interface + ContainerCreateOpts / ContainerInfo 型定義
     │       │   ├── sdk_runner.go     # SDKRunner: Docker SDK を使った DockerRunner 実装
@@ -99,15 +100,36 @@ cc-tunnel/
     │       │   │   ├── mock.go
     │       │   │   └── mock_test.go
     │       │   └── dockergce/        # DockerGCEProvider (本格実装済み)
-    │       │       ├── provider.go       # DockerGCEProvider 本体 (Execute / getOrCreateEndpoint / waitForVMReady / Close)
+    │       │       ├── provider.go       # DockerGCEProvider 本体 (Execute / getOrCreateEndpoint / waitForVMReady / ReconcileVMs / Close)
     │       │       ├── provider_test.go  # DockerGCEProvider テスト
-    │       │       ├── idle_checker.go   # IdleChecker goroutine (コンテナ idle 検出)
+    │       │       ├── reconcile_vms_test.go  # ReconcileVMs (Cloud Scheduler / self-reaper 共通の権威ロジック) テスト
+    │       │       ├── idle_checker.go   # IdleChecker goroutine (セッション endpoint idle 検出)
     │       │       ├── idle_checker_test.go
-    │       │       ├── vmscaler.go       # VMScaler goroutine (アイドル VM 削除)
+    │       │       ├── vmscaler.go       # VMScaler goroutine。default off (Cloud Run 上で信頼できないため)。ADR vm_reap_dual_path 参照
     │       │       ├── mock.go           # MockProvider (フォールバック用スタブ)
     │       │       └── mock_test.go
+    │       ├── admin/                # OpenAPI 非公開の内部 HTTP エンドポイント
+    │       │   ├── reconcile_vms.go      # POST /internal/reconcile-vms ハンドラ (OIDC ID token 検証 → ReconcileVMs)
+    │       │   └── reconcile_vms_test.go # ハンドラユニットテスト (happy path / 認可失敗 / probe error)
     │       └── remoteclient/
     │           └── client.go         # cc-remote-agent HTTP クライアント (Execute / Auth*)
+    │
+    ├── container-manager/            # 各 GCE VM に常駐し Docker daemon を操作するサービス (Go)
+    │   ├── Dockerfile
+    │   ├── go.mod
+    │   ├── go.sum
+    │   ├── cmd/
+    │   │   └── container-manager/
+    │   │       └── main.go              # エントリーポイント (HTTP サーバー + self-reaper goroutine 起動)
+    │   └── internal/
+    │       ├── api/                     # OpenAPI 生成サーバー (GET /v1/agents 等)
+    │       ├── docker/                  # Moby SDK ラッパー (Manager.ListAgents / RunAgent / StopAgent ...)
+    │       ├── logging/                 # Cloud Logging 用 slog handler
+    │       └── selfreaper/              # primary VM reap path (ADR vm_reap_dual_path)
+    │           ├── reaper.go            # 60s 毎に AgentCount を観測、10 分連続 0 で compute.instances.delete(self) を呼ぶ
+    │           ├── reaper_test.go       # tick 単位の挙動テスト (probe failure / metadata fatal / retry on API error 等)
+    │           ├── gce.go               # cloud.google.com/go/compute/apiv1 を使う InstanceDeleter 実装
+    │           └── docker_adapter.go    # docker.Manager を AgentLister インターフェースに適合
     │
     └── frontend/                     # React SPA (Vite + Tailwind CSS v4)
         ├── Dockerfile
