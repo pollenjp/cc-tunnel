@@ -251,6 +251,67 @@ describe('ChatView', () => {
     expect(useConversationsStore.getState().conversations[0].status).toBe('running');
   });
 
+  it('getConversation 実行中（解決前）に chat-loading spinner が表示されること', async () => {
+    vi.mocked(clientModule.getConversation).mockReturnValue(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Promise<any>(() => {}),
+    );
+
+    render(<ChatView {...defaultProps} />);
+
+    expect(screen.getByTestId('chat-loading')).toBeTruthy();
+  });
+
+  it('getConversation が解決した後は chat-loading spinner が消えること', async () => {
+    vi.mocked(clientModule.getConversation).mockResolvedValue(
+      makeConvDetail('completed', []),
+    );
+
+    render(<ChatView {...defaultProps} />);
+    await flush();
+
+    expect(screen.queryByTestId('chat-loading')).toBeNull();
+  });
+
+  it('送信中（sending=true）のとき chat-status-banner が表示されること', async () => {
+    vi.mocked(clientModule.getConversation).mockResolvedValue(
+      makeConvDetail('completed', []),
+    );
+    // sendMessage が解決しない → sending=true が継続
+    vi.mocked(clientModule.sendMessage).mockReturnValue(
+      new Promise<{ message_id: string }>(() => {}),
+    );
+
+    render(<ChatView {...defaultProps} />);
+    await flush();
+
+    expect(screen.queryByTestId('chat-status-banner')).toBeNull();
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('message-input-text'), {
+        target: { value: 'テスト' },
+      });
+    });
+    act(() => {
+      fireEvent.click(screen.getByTestId('message-send-btn'));
+    });
+
+    const banner = screen.getByTestId('chat-status-banner');
+    expect(banner).toBeTruthy();
+    expect(banner.textContent).toContain('送信中');
+  });
+
+  it('idle 状態（送信もポーリングもしていない）のとき chat-status-banner は表示されないこと', async () => {
+    vi.mocked(clientModule.getConversation).mockResolvedValue(
+      makeConvDetail('completed', []),
+    );
+
+    render(<ChatView {...defaultProps} />);
+    await flush();
+
+    expect(screen.queryByTestId('chat-status-banner')).toBeNull();
+  });
+
   it('[Cycle2] 送信中（sending=true）のとき TypingIndicator が表示されること', async () => {
     vi.mocked(clientModule.getConversation).mockResolvedValue(
       makeConvDetail('completed', [])

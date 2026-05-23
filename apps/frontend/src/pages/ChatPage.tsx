@@ -16,6 +16,7 @@ export function ChatPage() {
   const removeConversation = useConversationsStore(s => s.remove);
   const hasRunning = useConversationsStore(s => s.hasRunning());
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
   const selectedId = urlId ?? null;
 
@@ -40,11 +41,15 @@ export function ChatPage() {
   };
 
   const handleAgentSelect = async () => {
+    if (isCreating) return;
+    setIsCreating(true);
     try {
       const conv = await createConversationStore();
       handleSelectConversation(conv.id);
     } catch (e) {
       console.error('Failed to create conversation:', e);
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -90,7 +95,7 @@ export function ChatPage() {
               >
                 ☰
               </button>
-              <AgentSelector onSelect={handleAgentSelect} />
+              <AgentSelector onSelect={handleAgentSelect} isLoading={isCreating} />
             </div>
           )}
         </main>

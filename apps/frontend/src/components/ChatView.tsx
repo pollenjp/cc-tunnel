@@ -27,6 +27,7 @@ export function ChatView({ conversationId, onHamburger }: ChatViewProps) {
   const [sending, setSending] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
   const [input, setInput] = useState('');
+  const [isLoadingConversation, setIsLoadingConversation] = useState(false);
 
   const isRunning = sending || isPolling || messages.some(m => m.status === 'streaming');
 
@@ -39,11 +40,14 @@ export function ChatView({ conversationId, onHamburger }: ChatViewProps) {
 
     if (!conversationId) return;
 
+    setIsLoadingConversation(true);
     getConversation(conversationId).then(detail => {
       const msgs = detail.messages ?? [];
       setMessages(msgs);
       if (detail.status === 'running') setIsPolling(true);
-    }).catch(console.error);
+    }).catch(console.error).finally(() => {
+      setIsLoadingConversation(false);
+    });
   }, [conversationId]);
 
   // messages 更新時にスクロール
@@ -92,7 +96,15 @@ export function ChatView({ conversationId, onHamburger }: ChatViewProps) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {isEmpty ? (
+      {isLoadingConversation && messages.length === 0 ? (
+        <div
+          className="flex-1 flex items-center justify-center text-[var(--color-text)] gap-2"
+          data-testid="chat-loading"
+        >
+          <span className="inline-block h-4 w-4 rounded-full border-2 border-[var(--color-accent)] border-t-transparent animate-spin" />
+          <span>会話を読み込み中...</span>
+        </div>
+      ) : isEmpty ? (
         <div className="flex-1 flex items-center justify-center text-[var(--color-text)]">
           <p>メッセージを入力して会話を始めましょう。</p>
         </div>
@@ -237,10 +249,17 @@ export function ChatView({ conversationId, onHamburger }: ChatViewProps) {
           <div ref={messagesEndRef} />
         </div>
       )}
-      {isPolling && (
-        <div className="px-4 py-2 text-sm text-[var(--color-text)] bg-[var(--color-bg-secondary)] border-t border-[var(--color-border)] flex items-center gap-2">
-          <span className="animate-spin">⏳</span>
-          <span>処理中...</span>
+      {(sending || isPolling) && (
+        <div
+          data-testid="chat-status-banner"
+          className="px-4 py-2 text-sm text-[var(--color-text)] bg-[var(--color-bg-secondary)] border-t border-[var(--color-border)] flex items-center gap-2"
+        >
+          <span className="inline-block h-3 w-3 rounded-full border-2 border-[var(--color-accent)] border-t-transparent animate-spin" />
+          <span>
+            {sending
+              ? '送信中... (初回はVM/コンテナの起動に時間がかかる場合があります)'
+              : '処理中...'}
+          </span>
         </div>
       )}
       <MessageInput
