@@ -1,0 +1,79 @@
+@startuml agent_dispatch_sequence
+' Hook-driven agent communication sequence (ADR 2026-05-16, planned 段階 5-6).
+'
+' 本 PR (段階 1-4) では agent_dispatches への shadow write のみ wire 済。
+' 本図は段階 5-6 完了後の data plane を示す。
+
+title cc-tunnel: hook 駆動 agent 通信 (ADR 2026-05-16, 段階 5-6 想定)
+
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend\n(React/Vite)" as F
+participant "cc-tunnel\n(Go API)" as T
+database "PostgreSQL\n(agent_dispatches\n+ agent_outputs)" as D
+participant "cc-remote-agent\n(Handler)" as A
+participant "cc-hook-bridge\n(in-container)" as H
+participant "claude\n(long-lived PTY)" as C
+participant "Anthropic API" as Ext
+
+== container 起動時 (cold start) ==
+A -> C: 起動 (PTY 常駐)
+C -> H: SessionStart hook\n(stdin: hook JSON)
+H -> D: INSERT agent_outputs\n(event_type='session_start', dispatch_id=nil)
+note over H: 初回は state file 無し、no-op で抜ける
+
+== ターン N: ユーザー入力 ==
+User -> F: メッセージ入力
+F -> T: POST /conversations/{id}/messages
+T -> D: INSERT messages(status='streaming')
+T -> D: INSERT agent_dispatches(status='pending')
+T -> A: POST /agent/kick (idempotent)
+T -> F: 202 Accepted {message_id}
+
+== claude 起動と hook fan-out ==
+A -> C: PTY stdin: <prompt>
+C -> H: UserPromptSubmit hook
+H -> D: INSERT agent_outputs\n(event_type='user_prompt_submit')
+
+loop ツール呼び出しごと
+  C -> H: PreToolUse hook
+  H -> D: INSERT agent_outputs (pre_tool_use)
+  C -> Ext: LLM / Tool API
+  C -> H: PostToolUse hook
+  H -> D: INSERT agent_outputs (post_tool_use)
+end
+
+C -> H: Stop hook (ターン完了)
+H -> D: INSERT agent_outputs\n(event_type='stop', status='final')
+H -> D: UPDATE agent_dispatches SET status='consumed'
+
+== ターン継続 (loop driver) ==
+H -> D: SELECT pending dispatch\n  FOR UPDATE SKIP LOCKED
+alt 新規 pending あり
+  D --> H: next dispatch
+  H -> D: UPDATE status='delivered'
+  H -> H: write /tmp/cc-hook-bridge-state.json\n(0600)
+  H --> C: stdout: {"decision":"block",\n  "reason": <次の prompt>}
+  note over C: 同一セッションで次ターン実行 (claude 再起動なし)
+else 55s で見つからず
+  H --> C: exit 0
+  note over C: container は idle 検知後に停止
+end
+
+== frontend ポーリング (常時) ==
+loop 1秒間隔
+  F -> T: GET /conversations/{id}
+  T -> D: SELECT messages\n+ agent_outputs (fold)
+  T --> F: ConversationDetail
+end
+
+note over T, D
+  cc-tunnel 側に **fold worker** を新設 (段階 4):
+  agent_outputs を assistant_message_id でグルーピングし、
+  event_type に応じて messages.message_data.content_blocks /
+  tool_calls / cost_usd を再構成して UPDATE する。
+  Frontend からは従来どおり messages 経由でしか見えない。
+end note
+
+@enduml

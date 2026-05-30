@@ -37,8 +37,12 @@ cc-tunnel/
     │   ├── go.sum
     │   ├── mise.toml                 # サービス固有タスク (build / run)
     │   ├── cmd/
-    │   │   └── cc-remote-agent/
-    │   │       └── main.go           # エントリーポイント: HTTP サーバー起動・ルーティング
+    │   │   ├── cc-remote-agent/
+    │   │   │   └── main.go           # エントリーポイント: HTTP サーバー起動・ルーティング
+    │   │   └── cc-hook-bridge/       # Claude Code hook 用 Go バイナリ (ADR 2026-05-16)
+    │   │       ├── main.go           # subcommand 5 種 (session-start / user-prompt-submit / pre-tool-use / post-tool-use / stop)
+    │   │       ├── main_test.go      # state file / payload / config の DB なしユニットテスト
+    │   │       └── settings.json     # ~/.claude/settings.json テンプレ (image に焼き込み)
     │   └── internal/
     │       ├── api/
     │       │   └── handler.go        # HTTP ハンドラー (/execute, /health, /auth/*)
@@ -73,7 +77,7 @@ cc-tunnel/
     │       │   ├── message_service.go    # executeAndPersist / streamAggregator (goroutine 実行)
     │       │   ├── app_session.go    # AppSession / bearerToken / requireAppAuthIfEnabled
     │       │   ├── helpers.go        # writeJSON / writeError / LoggingMiddleware
-    │       │   ├── interfaces.go     # repository (3 分割: conversation/message/sessionEndpoint) + credentialService 等の抽象
+    │       │   ├── interfaces.go     # repository (4 分割: conversation/message/sessionEndpoint/agentDispatch) + credentialService 等の抽象
     │       │   ├── mapping.go        # DB→API 変換コンストラクタ (newConversation / newMessage / newConversationDetail)
     │       │   ├── title.go          # 会話タイトル自動生成
     │       │   ├── gen.go            # oapi-codegen 生成コード (ServerInterface / HandlerFromMux)
@@ -81,6 +85,8 @@ cc-tunnel/
     │       ├── db/
     │       │   ├── db.go             # pgx 接続プール・goose マイグレーション実行
     │       │   ├── repository.go     # 会話・メッセージ CRUD (Repository)
+    │       │   ├── agent_dispatch.go # agent_dispatches / agent_outputs CRUD (ADR 2026-05-16)
+    │       │   ├── agent_dispatch_test.go # FIFO claim・UNIQUE 制約等のテスト (DB 必須)
     │       │   └── migrations/
     │       │       ├── 001_create_conversations.sql       # conversations テーブル
     │       │       ├── 002_create_messages.sql            # messages テーブル
@@ -90,7 +96,8 @@ cc-tunnel/
     │       │       ├── 006_create_session_endpoints.sql   # session_endpoints テーブル (DockerGCEProvider 用)
     │       │       ├── 007_create_credentials.sql         # credentials テーブル (AES-256-GCM 暗号化 credentials)
     │       │       ├── 008_session_endpoints_unique_vm_port.sql  # session_endpoints の (vm_instance_id, port) UNIQUE 制約
-    │       │       └── 009_add_zero_agents_since.sql       # vm_instances.zero_agents_since (実測ベース reap の権威タイムスタンプ)
+    │       │       ├── 009_add_zero_agents_since.sql       # vm_instances.zero_agents_since (実測ベース reap の権威タイムスタンプ)
+    │       │       └── 010_create_agent_dispatch.sql       # agent_dispatches / agent_outputs テーブル (hook 駆動 agent 通信)
     │       ├── docker/               # Docker デーモン操作の抽象化レイヤー
     │       │   ├── runner.go         # DockerRunner interface + ContainerCreateOpts / ContainerInfo 型定義
     │       │   ├── sdk_runner.go     # SDKRunner: Docker SDK を使った DockerRunner 実装

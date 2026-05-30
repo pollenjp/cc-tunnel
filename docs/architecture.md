@@ -199,6 +199,67 @@ go tool oapi-codegen -config ../../../openapi/oapi-codegen.yaml -o gen.go ../../
 
 `ToolCallData` 型が定義されている（`tool_use_id`, `tool_name`, `input_json`, `result`, `is_running`）。
 
+## hook 駆動 agent 通信 (ADR 2026-05-16, 段階 1-4 実装中)
+
+cc-remote-agent の `claude -p` 経由実行を、container 内で**長寿命の対話モード `claude`** を起動し
+Claude Code の hook 機構経由で DB を介して I/O する方式に置き換える計画 (ADR
+`2026-05-16_db_driven_agent_communication`)。現状は段階 1-4 の foundation のみ実装済で、
+既存 `/execute` ndjson 経路と並走する **shadow write** 段階。
+
+### 段階別ステータス
+
+| 段階 | 内容 | 状態 |
+|------|------|------|
+| 1 | migration 010 (`agent_dispatches` / `agent_outputs`) | ✅ 実装済 |
+| 2 | `cc-hook-bridge` バイナリ (apps/cc-remote-agent/cmd/cc-hook-bridge) | ✅ skeleton 実装済 |
+| 3 | `SendMessage` で `agent_dispatches` を shadow INSERT | ✅ 実装済 (失敗は log のみ) |
+| 4 | `agent_outputs` → `messages.message_data` fold worker | ⏳ /execute 廃止と同時 |
+| 5 | cc-remote-agent の PTY 常駐 claude + `/execute` 廃止 | ⏳ 後続 PR |
+| 6 | `/agent/start` `/agent/kick` 新設 / `~/.claude/settings.json` 経由 hook | ⏳ 後続 PR |
+
+### 新規 DB スキーマ概要
+
+詳細は [`database.md`](./database.md) 参照。
+
+- **agent_dispatches** — cc-tunnel → agent への命令キュー。1 user message = 1 row。
+  `status` ∈ {`pending`, `delivered`, `consumed`, `error`}。Stop hook が
+  `FOR UPDATE SKIP LOCKED` で次の `pending` を奪取し `delivered` に遷移する。
+- **agent_outputs** — append-only な hook イベントログ。
+  `event_type` ∈ {`session_start`, `user_prompt_submit`, `pre_tool_use`,
+  `post_tool_use`, `stop`, `assistant_text`, `thinking`, `error`}。
+  `UNIQUE (dispatch_id, event_seq)` で冪等リトライを許容。
+
+### cc-hook-bridge (apps/cc-remote-agent/cmd/cc-hook-bridge)
+
+`~/.claude/settings.json` の `command` として container 内で発火する Go 製 hook。
+subcommand は Claude Code の hook event と 1:1 対応:
+
+| subcommand | matcher | DB 操作 | stdout |
+|------------|---------|---------|--------|
+| `session-start` | startup/resume/clear/compact | `agent_outputs` (event_type=`session_start`) | additionalContext (現状空) |
+| `user-prompt-submit` | — | `agent_outputs` (event_type=`user_prompt_submit`) | — |
+| `pre-tool-use` | 全 tool | `agent_outputs` (event_type=`pre_tool_use`) | — |
+| `post-tool-use` | 全 tool | `agent_outputs` (event_type=`post_tool_use`) | — |
+| `stop` | — | (a) `agent_outputs` に `event_type='stop', status='final'` (b) 現 dispatch を `consumed` (c) 次の `pending` を最大 55s で polling して `delivered` に遷移 | `{"decision":"block","reason":<次の prompt>}` (新 dispatch が見つかった場合のみ) |
+
+state は `/tmp/cc-hook-bridge-state.json` (mode 0600) で `{dispatch_id,
+assistant_message_id}` を hook 間で受け渡す。Stop hook が次 dispatch を claim した
+タイミングで上書きされる。
+
+### shadow write 段階の挙動
+
+```
+POST /messages
+  ├─ INSERT messages(status='streaming')         ← 既存
+  ├─ INSERT agent_dispatches(status='pending')   ← 新規 (失敗は warn log)
+  ├─ goroutine: claude -p ndjson → DB UPDATE     ← 既存 (主経路)
+  └─ goroutine 終了後: agent_dispatches.status = 'consumed'
+```
+
+`agent_dispatches` 行は作られるが、まだ `cc-hook-bridge` も PTY 常駐 claude も
+deploy されていないので **reader は存在しない**。よって新スキーマが壊れても
+ユーザー応答品質は変わらない。段階 5-6 で reader 側が wire される。
+
 ## content_blocks アーキテクチャ
 
 `SendMessage()` (handler.go) は SSE ストリームを処理しながら `contentBlocksList` を構築し、
