@@ -1,0 +1,6 @@
+# Terragrunt Stacks generate units here; it is build output, not source.
+.terragrunt-stack
+.terragrunt-cache
+.terraform
+*.tfstate
+*.tfstate.*
