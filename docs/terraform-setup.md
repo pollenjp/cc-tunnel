@@ -166,6 +166,15 @@ DB パスワードは Secret Manager で管理され、Cloud Run には Cloud SQ
 | `deploy_env` | Cloud Run 名生成に使用（必須） | `include.root.locals.env` |
 | `enable_public_access` | 全公開 IAM binding (bool, default: false) | 省略可 |
 | `container_port` | コンテナ待受ポート (number, default: 5173) | 省略可 |
+| `github_owner` | 全 Cloud Build trigger の owner (default: `pollenjp`) | 省略可 |
+| `github_repo_name` | 全 Cloud Build trigger の repo 名 (default: `cc-tunnel`) | 省略可 |
+| `github_branch_name` | ビルドを発火させる push 対象ブランチ (default: `main`) | 省略可 |
+| `cc_tunnel_dockerfile_dir` | cc-tunnel Dockerfile ディレクトリ (default: `apps/cc-tunnel`) | 省略可 |
+
+> GitHub trigger の source（owner / repo / branch / Dockerfile dir）は commit 0e7f875 (#71) で
+> module 変数に切り出され、cc-tunnel / frontend / cc-remote-agent / container-manager / vm-image の
+> 全 Cloud Build trigger がこれらの変数を参照する。デフォルト値が従来のハードコード値と一致するため、
+> 通常は terragrunt.hcl で上書き不要。
 
 ## frontend nginx reverse proxy の env 注入
 
@@ -256,45 +265,71 @@ Artifact Registry push を管理する。
 | `GCE_MACHINE_TYPE` | `var.gce_machine_type` (default: `e2-medium`) | VM マシンタイプ |
 | `GCE_VM_IMAGE` | `local.vm_image_url` | Packer で焼いた VM イメージの URL |
 | `GCE_VM_SERVICE_ACCOUNT` | `google_service_account.vm_runtime_sa.email` | VM にアタッチする SA。AR reader / logging / monitoring の最小権限 |
-| `GCE_VM_SUBNETWORK` | `google_compute_subnetwork.cc_remote_agent_vm.id` | VM をぶら下げる subnet（`cc-remote-agent-vm`、Private Google Access 有効）。VM は ephemeral external IP も同時付与される。詳細は ADR `2026-05-09T11:50:55+09:00_01_gce_vm_egress_via_external_ip.md` |
+| `GCE_VM_SUBNETWORK` | `google_compute_subnetwork.cc_remote_agent_vm.id` | VM をぶら下げる subnet（カスタム VPC の `cc-remote-agent-vm`）。VM は ephemeral external IP を付与され、AR / 外部依存の pull は public 経路を通る（Private Google Access は不要）。詳細は ADR `2026-05-09T11:50:55+09:00_01_gce_vm_egress_via_external_ip.md` |
 | `CC_REMOTE_AGENT_IMAGE` | `local.cra_fqim` | AR 上の cc-remote-agent イメージ URL |
 
 ### outputs
 
 `cc_remote_agent_image` output に cc-remote-agent の Artifact Registry イメージ URL が出力される。
 
-### GCE ネットワークタグと Firewall ルール
+### カスタム VPC（`vpc.tf`）
 
-DockerGCEProvider が動的作成する GCE VM には `cc-tunnel-agent` ネットワークタグが付与される。
-このタグに対して以下の Firewall ルールが必要:
+cc-tunnel は default VPC に依存せず、専用のカスタム VPC を作成する（commit 7586d56, #60）。
+`vpc.tf` で以下を管理する:
 
-| ルール名 (例) | 方向 | ソース | ターゲットタグ | プロトコル/ポート | 用途 |
+| リソース | 内容 |
+|---|---|
+| `google_compute_network.cc_tunnel` | カスタム VPC（`var.network_name`、default `cc-tunnel`、`auto_create_subnetworks=false`、`REGIONAL`）|
+| `google_compute_subnetwork.cc_tunnel_egress` | Cloud Run Direct VPC egress 用 subnet（`cc-tunnel-egress`、CIDR=`var.vpc_connector_subnet_cidr`、最小 /28）。cc-tunnel が GCE VM 内部 IP の container-manager API に到達するために使用 |
+| `google_compute_subnetwork.cc_remote_agent_vm` | cc-remote-agent VM 用 subnet（`cc-remote-agent-vm`、CIDR=`var.cc_remote_agent_subnet_cidr`、default `10.16.0.0/20`）|
+
+VM は ephemeral external IP（`ONE_TO_ONE_NAT`）を持つため、Artifact Registry / 外部依存の pull は public 経路を通る。Private Google Access は不要。
+
+### GCE ネットワークタグと Firewall ルール（`firewall.tf`）
+
+DockerGCEProvider が動的作成する GCE VM には `cc-tunnel-agent` ネットワークタグが付与される
+（タグ指定は `dockergce/provider.go` の `createGCEVM` 関数内）。`firewall.tf` は以下のルールを管理する:
+
+| ルール名 | 方向 | ソース | ターゲットタグ | プロトコル/ポート | 用途 |
 |---|---|---|---|---|---|
-| `allow-docker-daemon` | ingress | cc-tunnel Cloud Run の IP レンジ（VPC 内部 IP）| `cc-tunnel-agent` | TCP/2375 | cc-tunnel → GCE VM Docker デーモンへの接続（暗号化なし、VPC 内部限定） |
+| `cc-tunnel-container-manager` | ingress | `var.vpc_connector_subnet_cidr`（Cloud Run Direct VPC egress subnet）| `cc-tunnel-agent` | TCP `container_manager_port`（default 9090）+ `cc_remote_agent_host_port_start`-`cc_remote_agent_host_port_end`（default 61000-61999）| cc-tunnel → container-manager API + 各 cc-remote-agent コンテナの公開ホストポート（`/auth/status` 等のポーリング）|
+| `cc-tunnel-iap-ssh`（任意）| ingress | `35.235.240.0/20`（IAP TCP forwarding レンジ）| `cc-tunnel-agent` | TCP/22 | デバッグ用 SSH。`var.enable_ssh_debug=true`（default false）時のみ作成。IAP 経由のみ許可され、外部 IP 直接 SSH は不可 |
 
-**重要**: TCP/2375 は暗号化なし（TLS なし）の Docker デーモン API。**VPC 内部ネットワークかつ `cc-tunnel-agent` タグ付き VM のみに限定**すること。外部 IP からのアクセスを Firewall ルールで明示的に拒否すること。
+**重要**:
+- dockerd は Unix socket にバインドされ**ネットワーク到達不可**。VM 上の操作は container-manager HTTP API（旧 TCP/2375 Docker デーモン直叩きは廃止）経由で行う。
+- container-manager API・agent ホストポートへの ingress は **Cloud Run Direct VPC egress subnet（`vpc_connector_subnet_cidr`）かつ `cc-tunnel-agent` タグ付き VM のみ**に限定される。
+- agent ホストポートレンジは `dockergce/provider.go` の `PortRangeStart`/`PortRangeEnd` 定数と一致させること。
 
-Terraform での実装例（`modules/cc-tunnel/network.tf`）:
+## ログ集約 (Cloud Logging / Ops Agent)
 
-```hcl
-resource "google_compute_firewall" "allow_docker_daemon" {
-  name    = "${var.deploy_env}-allow-docker-daemon"
-  network = "default"
+GCE 側のログを Cloud Logging に一元集約する（commit 9ca2e50, #72）。
 
-  allow {
-    protocol = "tcp"
-    ports    = ["2375"]
-  }
+| レイヤ | 仕組み |
+|---|---|
+| Cloud Build trigger（cc-tunnel / frontend / cc-remote-agent / container-manager / vm-image）| ビルドステップの `options { logging = "CLOUD_LOGGING_ONLY" }` で Cloud Logging のみに出力（GCS ログバケット不要） |
+| GCE VM の dockerd | Packer イメージ（`apps/vm-image/packer.pkr.hcl`）で `daemon.json` に `"log-driver": "gcplogs"` を設定し、コンテナ stdout/stderr を Cloud Logging へ送る |
+| container-manager コンテナ | systemd unit の `docker run` に `--log-driver=gcplogs --log-opt labels=component --label component=container-manager` を付与 |
+| Ops Agent | Packer ビルド時に Google Cloud Ops Agent をインストール（`add-google-cloud-ops-agent-repo.sh --also-install`）し、VM 本体のシステムログ/メトリクスを収集 |
 
-  # cc-tunnel Cloud Run は Serverless VPC Access Connector 経由で VPC に接続
-  source_ranges = [var.vpc_connector_ip_range]
-  target_tags   = ["cc-tunnel-agent"]
+VM ランタイム SA には `roles/logging.logWriter` 等の最小権限が付与される（`gce_vm_sa.tf` / 上記 env テーブルの `GCE_VM_SERVICE_ACCOUNT`）。
 
-  description = "Allow cc-tunnel to reach GCE VM Docker daemon (internal only)"
-}
-```
+## VM リープ (Cloud Scheduler safety-net)
 
-GCE VM 作成時のネットワークタグ指定は `dockergce/provider.go` の `createGCEVM` 関数内で設定される。
+docker_gce の GCE VM は二経路でリープ（自動削除）される。設計詳細は
+`docs/docker-gce-design.md` §5.2 と ADR `2026-05/2026-05-20T20:46:00+09:00_01_vm_reap_dual_path.md` を参照。
+
+| 経路 | 主体 | 間隔 | 役割 |
+|---|---|---|---|
+| 主経路 | VM 上の container-manager 自己リーパー（`SELF_REAP_*` env、systemd unit で有効化）| 10 分 | agent コンテナ数が 0 を観測し続けたら VM 自身を削除 |
+| safety-net | Cloud Scheduler → cc-tunnel `POST /internal/reconcile-vms`（`scheduler.tf`）| 6 時間 | 自己リーパーが死んだ（OOM / systemd 失敗等）VM を回収 |
+
+`scheduler.tf` が管理する safety-net 経路の Terraform リソース:
+
+- `google_cloud_scheduler_job.reconcile_vms`: `schedule = "0 */6 * * *"`、`POST <cloud_run_uri>/internal/reconcile-vms`
+- `google_service_account.scheduler_sa` + `google_cloud_run_v2_service_iam_member.scheduler_invoker`: Scheduler 用 SA に Cloud Run invoker を付与
+- 認証: Cloud Scheduler が OIDC ID トークンを署名（`aud=cc-tunnel-reconcile-vms` の静的 custom audience）。cc-tunnel は `idtoken.Validate` で検証し、email を `RECONCILE_VMS_ALLOWED_EMAILS` と照合する（`main.tf` で Scheduler SA を設定）
+
+> audience に Cloud Run URL ではなく静的文字列を使うのは、env var ⇔ `cloud_run.uri` 間の terraform 循環依存を避けるため。
 
 ## Phase 2: External Global HTTPS LB + serverless NEG 構成
 
@@ -338,10 +373,10 @@ Browser → DNS (cctunnel.pollenjp.com → LB IP) → Global HTTPS LB
 ### 注意事項
 
 - serverless NEG 経由（Global LB）でも Cloud Run の IAM invoker チェックは有効。
-  `ingress=INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` で `.run.app` 直接アクセスをブロックしつつ、
-  `allUsers` に `roles/run.invoker` を付与して LB からのアクセスを許可すること（`enable_public_access=true`）。
-  IAP 有効化後 (Phase 3) も現状は `allUsers` invoker を残しているが、
-  defense-in-depth として撤去 + IAP P4SA に invoker 付与する作業は GitHub Issue #62 で追跡。
+  `ingress=INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` で `.run.app` 直接アクセスをブロックする。
+  IAP 無効で LB 直公開する場合のみ `allUsers` に `roles/run.invoker` を付与する（`enable_public_access=true`、default false）。
+  IAP 有効化後 (Phase 3) は `allUsers` invoker を撤去し IAP P4SA のみに invoker を付与する
+  defense-in-depth 構成に移行済み（commit d9bd840, Issue #62 クローズ）。
 - cert が ACTIVE になるまでは HTTPS アクセス不可（ERR_SSL_PROTOCOL_ERROR）
 - ingress=INTERNAL_LOAD_BALANCING 切替後、Cloud Run の `.run.app` URL への直接アクセスは拒否される
 - ローカル開発（compose.yaml）は引き続き nginx の /api/ proxy_pass で動作（Cloud Run 側の変更は影響なし）
@@ -444,15 +479,16 @@ Browser ─▶ Global HTTPS LB
 | `"Access blocked: <app> has not completed the Google verification process"` (Google ログイン画面) | Publishing=Testing で Test users 未登録 | OAuth consent screen の Test users にアカウント追加 (or Publish) |
 | `"403"` を IAP が返す (consent 後) | `iap_allowed_members` 未設定 / アカウントが含まれない | `iap_allowed_members` に `user:<email>` を追加 |
 
-### follow-up: defense-in-depth (Issue #62)
+### defense-in-depth (Issue #62, 対応済み)
 
-現状は IAP が backend service レベルで効いているが、Cloud Run service の invoker は
-`allUsers` のままで、`ingress=INTERNAL_LOAD_BALANCER` のおかげで外部直叩きが塞がっている、
-という構成。完全な defense-in-depth にするには:
+IAP が backend service レベルで効いた上で、Cloud Run service の invoker も
+IAP P4SA のみに絞る defense-in-depth 構成が完了している（commit d9bd840）:
 
-1. `google_cloud_run_v2_service_iam_member.public_access` (allUsers) を撤去
-2. IAP P4SA への `roles/run.invoker` のみを invoker として残す (本リポジトリでは既に付与済み)
+1. `google_cloud_run_v2_service_iam_member.public_access` (allUsers) は `var.enable_public_access`
+   が `true` の場合のみ作成され、IAP 運用時（default）は付与されない（`main.tf`）
+2. `iap.tf` で IAP P4SA に `roles/run.invoker` を付与（`var.iap_enabled=true` 時）
 
-を行う。順序を逆にすると一瞬全リクエスト 403 になるので、
-1 PR で両方変更し terraform に dependency 解決を任せる方が安全。
+`ingress=INTERNAL_LOAD_BALANCER` と合わせ、`.run.app` への直接アクセス・LB 経由の未認証アクセスの双方を遮断する。
+allUsers の撤去と P4SA への付与は 1 PR で行い（順序を逆にすると一瞬全リクエスト 403 になる）、
+terraform に dependency 解決を任せる。
 
