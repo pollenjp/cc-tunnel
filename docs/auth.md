@@ -183,6 +183,15 @@ cc-tunnel は受け取った credentials JSON を AES-256-GCM で暗号化し、
 
 **Response 202**: credentials.json がまだ書き込まれていない（PTY ログイン未完了）
 
+### finalize のトリガー（dual-trigger）
+
+`CredentialsLoginPage` は `POST /credentials/relogin/finalize` を **2 経路**で呼び出す（commit a949092、ADR `2026-04-30T10:23:00+09:00_auth_done_button.md`）:
+
+1. **自動検知**: `AuthTerminal` の `onTextOutput` で PTY 出力を監視し、`/Login successful|Logged in|authentication successful/i` パターンを検出したら自動で finalize を呼ぶ
+2. **手動「完了」ボタン**: PTY フェーズ中に「完了」ボタンを表示。自動検知が失敗した場合のフォールバックとしてユーザーが手動で finalize できる
+
+どちらのトリガーも `finalizedRef` フラグで二重実行を防止する。詳細は `docs/frontend.md`「`CredentialsLoginPage` — 認証完了トリガー」を参照。
+
 ---
 
 ## AuthGuard と AuthTerminal（xterm.js TUI）

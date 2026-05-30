@@ -74,11 +74,13 @@ DockerGCEProvider が GCE VM のライフサイクルを管理するテーブル
 | `status`             | TEXT        | NOT NULL, CHECK   | `'provisioning'`      | VM 状態 (`provisioning` / `running` / `terminated`)      |
 | `active_containers`  | INTEGER     | NOT NULL          | `0`                   | アクティブコンテナ数                                     |
 | `idle_since`         | TIMESTAMPTZ | nullable          | —                     | アイドル開始時刻（active_containers=0 になった時刻）      |
+| `zero_agents_since`  | TIMESTAMPTZ | nullable          | —                     | container-manager が「稼働 agent コンテナ数 0」を最後に報告した時刻（実測ベース reap の権威タイムスタンプ）。NULL = 現在 1 個以上稼働 or 未観測。閾値超過で VM reaper が削除（migration 009）|
 | `created_at`         | TIMESTAMPTZ | NOT NULL          | `NOW()`               | 作成日時                                                 |
 
 **インデックス**:
 
 - `idx_vm_instances_status ON vm_instances(status) WHERE status = 'running'` — 稼働中 VM の高速検索
+- `idx_vm_instances_zero_agents_since ON vm_instances(zero_agents_since) WHERE status = 'running' AND zero_agents_since IS NOT NULL` — reap 対象 VM の検索（migration 009）
 
 ### session_endpoints
 
@@ -146,14 +148,15 @@ apps/cc-tunnel/internal/db/migrations/
 ├── 005_create_vm_instances.sql           # vm_instances テーブル作成 (DockerGCEProvider 用)
 ├── 006_create_session_endpoints.sql      # session_endpoints テーブル作成 (DockerGCEProvider 用)
 ├── 007_create_credentials.sql            # credentials テーブル作成 (AES-256-GCM 暗号化 credentials)
-└── 008_session_endpoints_unique_vm_port.sql  # session_endpoints の (vm_instance_id, port) に UNIQUE 制約追加
+├── 008_session_endpoints_unique_vm_port.sql  # session_endpoints の (vm_instance_id, port) に UNIQUE 制約追加
+└── 009_add_zero_agents_since.sql          # vm_instances.zero_agents_since カラム + 部分インデックス追加 (実測ベース VM reap)
 ```
 
 各マイグレーションファイルは `-- +goose Up` / `-- +goose Down` アノテーションで Up/Down を定義する。
 
 ## データアクセス層（Repository パターン）
 
-`db.Repository` 構造体が `*pgxpool.Pool` をラップし、すべての DB アクセスを一元管理する。
+`db.Repository` 構造体が `*pgxpool.Pool` をラップし、すべての DB アクセスを一元管理する（具体実装）。
 
 ```go
 type Repository struct {
@@ -161,6 +164,26 @@ type Repository struct {
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository
+```
+
+### API 層が要求するインターフェース（3 分割）
+
+API 層（`internal/api/interfaces.go`）は `db.Repository` を直接参照せず、責務ごとに分割した
+3 つのインターフェースの合成 `repository` に依存する（commit 2476a81）。`db.Repository` はこれらを
+すべて満たす。テスト時はサブインターフェース単位で差し替え可能。
+
+| インターフェース | 責務 | 主なメソッド |
+|---|---|---|
+| `conversationRepository` | 会話の CRUD とメタデータ更新 | `CreateConversation` / `GetConversation` / `ListConversations` / `DeleteConversation` / `UpdateConversationUpdatedAt` / `UpdateConversationTitle` / `UpdateConversationStatus` |
+| `messageRepository` | メッセージの永続化（streaming ライフサイクル含む） | `CreateMessage` / `ListMessages` / `CreateStreamingMessage` / `UpdateMessageContentBlocks` / `UpdateMessageStatus` / `MergeMessageData` |
+| `sessionEndpointRepository` | idle-cleanup 用の session endpoint 活動追跡 | `UpdateSessionEndpointLastActivity` |
+
+```go
+type repository interface {
+    conversationRepository
+    messageRepository
+    sessionEndpointRepository
+}
 ```
 
 ### 主要クエリパターン

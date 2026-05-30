@@ -155,6 +155,23 @@ Agent 選択 UI コンポーネント。会話開始時に表示。
 - **GitHub Copilot**: 将来対応（グレーアウト表示）
 - **Cursor CLI**: 将来対応（グレーアウト表示）
 
+**Props**
+
+| 名前        | 型                          | 用途                                                       |
+| ----------- | --------------------------- | ---------------------------------------------------------- |
+| `onSelect`  | `(agentId: string) => void` | Agent ボタン押下時のハンドラ                               |
+| `onCancel`  | `() => void`（任意）        | キャンセルリンク押下時のハンドラ                           |
+| `isLoading` | `boolean`（任意, 既定 false）| セッション準備中フラグ。`true` の間は全ボタンを無効化する  |
+
+**セッション準備中の表示（プロビジョニングスピナー）**
+
+`isLoading=true` の間（= 会話作成 API 呼び出し中、VM/コンテナ起動待ち）は:
+
+- 全 Agent ボタンを `disabled` にする
+- スピナー + 「セッションを準備中... (VM/コンテナを起動しています)」を表示する（`data-testid="agent-selector-loading"`）
+
+これは初回セッションで VM/コンテナのプロビジョニングに時間がかかることをユーザーに伝えるための表示。`ChatPage` の `isCreating` state が `isLoading` prop として渡される。
+
 ### ページ一覧
 
 | ページ | ファイル | ルート | 説明 |
@@ -228,29 +245,40 @@ ChatView での使用:
 **責務（リファクタ後）**
 
 - `conversationId` 変更時に messages をクリアし `getConversation` で再取得
-- `messages`, `sending`, `isPolling` state を内部管理
+- `messages`, `sending`, `isPolling`, `isLoadingConversation` state を内部管理
 - `isRunning = sending || isPolling || messages.some(m => m.status === 'streaming')`
 - `useConversationPoller` を内部で呼んでポーリング制御
 - メッセージ送信（`handleSend`）を内部に実装
+- 送信時に `useConversationsStore` の `markRunning(conversationId)` で楽観的に running 表示、ポーリング完了時に `refresh()` で会話一覧を更新
 - TypingIndicator・content_blocks・ToolCallCard 等の全表示責任
+- 会話読み込み中スピナー・セッション準備中ステータスバナーの表示
 
 **Props**
 
 | 名前                    | 型                   | 用途                                         |
 | ----------------------- | -------------------- | -------------------------------------------- |
 | `conversationId`        | `string \| null`     | 表示する会話の ID（null = 未選択）           |
-| `onConversationUpdate`  | `() => void`         | 会話完了時に App 側の conversations を更新  |
 | `onHamburger`           | `() => void`         | モバイルでサイドバーを開くハンドラ           |
+
+> 旧 `onConversationUpdate` prop は廃止。会話一覧の更新は `useConversationsStore`（Zustand）の `refresh()` を ChatView から直接呼ぶ方式に変更された（commit bc1dce3）。
 
 **内部 state**
 
-| 名前        | 型                    | 用途                              |
-| ----------- | --------------------- | --------------------------------- |
-| `messages`  | `Message[]`           | 表示するメッセージ一覧            |
-| `sending`   | `boolean`             | 送信中フラグ                      |
-| `isPolling` | `boolean`             | ポーリング中フラグ                |
-| `input`     | `string`              | テキストエリアの入力値            |
-| `isRunning` | `boolean`（derived）  | `sending \|\| isPolling \|\| messages.some(m => m.status === 'streaming')` |
+| 名前                    | 型                    | 用途                              |
+| ----------------------- | --------------------- | --------------------------------- |
+| `messages`              | `Message[]`           | 表示するメッセージ一覧            |
+| `sending`               | `boolean`             | 送信中フラグ                      |
+| `isPolling`             | `boolean`             | ポーリング中フラグ                |
+| `input`                 | `string`              | テキストエリアの入力値            |
+| `isLoadingConversation` | `boolean`             | 会話初期ロード中フラグ（読み込みスピナー表示用） |
+| `isRunning`             | `boolean`（derived）  | `sending \|\| isPolling \|\| messages.some(m => m.status === 'streaming')` |
+
+**ローディング/ステータス表示**
+
+- **会話読み込み中スピナー**: `isLoadingConversation && messages.length === 0` のとき、本文領域に「会話を読み込み中...」スピナーを表示する（`data-testid="chat-loading"`）。
+- **セッション準備中ステータスバナー**: `sending || isPolling` のとき、入力欄の上にステータスバナーを表示する（`data-testid="chat-status-banner"`）。
+  - `sending` 時: 「送信中... (初回はVM/コンテナの起動に時間がかかる場合があります)」
+  - `isPolling` 時: 「処理中...」
 
 **メッセージ表示の優先順位**
 
@@ -335,11 +363,30 @@ App.tsx はルーティング定義のみを担う。会話管理・サイドバ
 
 | 名前               | 種別                        | 用途                                                     |
 | ------------------ | --------------------------- | -------------------------------------------------------- |
-| `conversations`    | `useState<Conversation[]>`  | 会話リスト                                               |
+| `conversations`    | `useConversationsStore`（Zustand）| 会話リスト（store のセレクタ経由で取得）           |
 | `selectedId`       | derived（URL params）       | 選択中会話 ID（`useParams` から直接導出、state ではない）|
 | `sidebarOpen`      | `useState<boolean>`         | モバイルでのサイドバー開閉状態                           |
+| `isCreating`       | `useState<boolean>`         | 会話作成中フラグ。`AgentSelector` の `isLoading` に渡す  |
 
 > `messages`, `sending`, `isPolling`, `isRunning`, `input` は ChatView に移動済み。
+> `conversations` は `useState` ではなく `useConversationsStore`（Zustand）で管理する（後述）。
+
+### `useConversationsStore`（会話リスト store）
+
+会話リストの単一の真実の源（single source of truth）。以前 `ChatPage` の `useState<Conversation[]>` と、`ChatView` へ drill していた `onConversationUpdate` / `onSendStart` コールバックを置き換えた Zustand store。
+
+- **実装ファイル**: `src/store/conversations.ts`
+
+| メンバー       | 種別     | 用途                                                                 |
+| -------------- | -------- | -------------------------------------------------------------------- |
+| `conversations`| state    | 会話リスト                                                           |
+| `hasRunning()` | selector | `status === 'running'` の会話が 1 つでもあるか                       |
+| `refresh()`    | action   | `listConversations` を呼んで `conversations` を更新                  |
+| `create()`     | action   | `createConversation` を呼び、`refresh()` 後に新規会話を返す          |
+| `remove(id)`   | action   | `deleteConversation` を呼び、`refresh()` する                        |
+| `markRunning(id)` | action| 送信直後に楽観的に該当会話を `running` にする（次の `refresh()` で実値に同期）|
+
+`ChatPage` は `conversations` / `refresh` / `create` / `remove` / `hasRunning()` を、`ChatView` は `markRunning` / `refresh` をセレクタ経由で利用する。
 
 ### `useAuth.ts`
 
@@ -474,10 +521,11 @@ export function useConversationListPoller({
 }
 ```
 
-**App.tsx での使用:**
+**ChatPage.tsx での使用:**
 
 ```ts
-const hasRunning = conversations.some(c => c.status === 'running');
+const hasRunning = useConversationsStore(s => s.hasRunning());
+const refreshConversations = useConversationsStore(s => s.refresh);
 useConversationListPoller({
   hasRunning,
   onPoll: refreshConversations,
@@ -525,7 +573,7 @@ useConversationPoller({
   onMessages: (msgs) => setMessages(msgs),  // 全置換（差分でなく全上書き）
   onCompleted: () => {
     setIsPolling(false);
-    onConversationUpdate?.();  // App 側の conversations 一覧を更新
+    void refreshConversations();  // useConversationsStore の refresh() で会話一覧を更新
   },
   intervalMs: 1000,
 });

@@ -23,26 +23,30 @@ end note
 
 frame "local モード (EXECUTION_PROVIDER=local)" as local_frame {
 
-  node "cc-tunnel ホスト\n(単一マシン)" as local_host {
+  node "cc-tunnel ホスト\n(docker compose)" as local_host {
     component "cc-tunnel\n(API + LocalDockerProvider)" as local_api
-    component "SessionManager\n(in-memory map)\nsync.Mutex" as local_sm
-    component "Docker daemon\n/var/run/docker.sock\n(DooD)" as local_docker
+    component "SessionManager\n(in-memory map)\nsync.Mutex\nDockerRunner = CMRunner" as local_sm
+    component "container-manager\n(HTTP :9090)" as local_cm
+    component "Docker daemon\n/var/run/docker.sock" as local_docker
 
-    component "cctunnel-session-{convID-prefix8}\ncc-remote-agent\nport: 9091 (固定)\nnetwork: apps_default" as local_container
+    component "cctunnel-session-{convID-prefix8}\ncc-remote-agent\nport: 9090 (CM mode)\nnetwork: apps_default" as local_container
   }
 
   local_api --> local_sm : GetOrCreate(convID, credentials)
-  local_sm --> local_docker : ContainerCreate/Start\n(DooD socket)
+  local_sm --> local_cm : RunAgent/Stop/List\n(HTTP :9090, CMRunner)
+  local_cm --> local_docker : pull/run/stop\n(docker.sock)
   local_docker --> local_container : docker run
   local_api --> local_container : POST /execute\n(compose network 内通信)
 }
 
 note right of local_frame
   **local モードの特徴**
-  - コンテナ配置先: cc-tunnel と同一ホスト
-  - Docker 接続: /var/run/docker.sock (DooD)
+  - コンテナ配置先: cc-tunnel と同一ホスト (compose)
+  - Docker 接続: container-manager HTTP :9090 経由（compose 既定）
+    docker.sock 直叩き (SDKRunner) は CONTAINER_MANAGER_URL
+    未設定時のフォールバック。cc-tunnel は docker.sock を持たない
   - コンテナ命名: cctunnel-session-{convID 先頭8文字}
-  - ポート: 9091 固定（compose ネットワーク内）
+  - ポート: 9090（CM mode）/ 9091（SDK fallback）
   - セッション管理: in-memory map（再起動で喪失）
   - 並行制御: sync.Mutex
   - idle cleanup: idleTimer 15min（コンテナ単位）
@@ -63,7 +67,7 @@ frame "docker_gce モード (EXECUTION_PROVIDER=docker_gce)" as gce_frame {
 
   database "PostgreSQL\n(vm_instances\n session_endpoints)" as gce_db
 
-  node "GCE VM A\n(Docker daemon\ntcp://<vm-ip>:2375)" as gce_vma {
+  node "GCE VM A\n(container-manager :9090\n+ dockerd unix socket)" as gce_vma {
     component "session-{convID}\ncc-remote-agent\nhostPort: 9091+" as gce_ca1
     component "session-{convID2}\ncc-remote-agent\nhostPort: 9092+" as gce_ca2
   }
@@ -75,22 +79,24 @@ frame "docker_gce モード (EXECUTION_PROVIDER=docker_gce)" as gce_frame {
   node "Compute Engine API\n(GCE)" as compute_api
 
   gce_api --> gce_db : session_endpoints / vm_instances CRUD\n(singleflight で convID 単位重複排除)
-  gce_api --> gce_vma : RunAgentContainer\ntcp://<vm-ip>:2375
+  gce_api --> gce_vma : RunAgentContainer\nvia container-manager HTTP :9090
   gce_api --> gce_vmb : RunAgentContainer\n(MaxContainers 超過時にスケールアウト)
   gce_api --> compute_api : instances.insert / delete
   idle_checker --> gce_api : CleanupOrphans() 定期実行
-  vmscaler --> gce_api : CleanupOrphans() 定期実行
+  vmscaler --> gce_api : (default 無効)\nreap は self-reaper / Cloud Scheduler
 }
 
 note right of gce_frame
   **docker_gce モードの特徴**
   - コンテナ配置先: GCE VM プール（複数 VM）
-  - Docker 接続: tcp://<vm-ip>:2375（VPC + FW 限定）
+  - Docker 接続: container-manager HTTP :9090（VPC + FW 限定）
+    dockerd は Unix socket バインド（TCP 2375 は廃止済み）
   - コンテナ命名: session-{conversationID}（フルID）
   - ポート: GetMaxPortOnVM+1（9091 起点、collision retry 3回）
   - セッション管理: DB 永続化（vm_instances + session_endpoints）
   - 並行制御: singleflight.Group（convID 単位重複排除）
-  - idle cleanup: IdleChecker + VMScaler goroutine（2段階）
+  - idle cleanup: IdleChecker（コンテナ）+ VM reap
+    （self-reaper 主 / Cloud Scheduler 保険、VMScaler は default 無効）
   - スケール: 自動 VM スケールアウト（MaxContainers 超過時）
 end note
 
@@ -104,7 +110,7 @@ note as diff_note
   │ 観点                │ local                    │ docker_gce                       │
   ├─────────────────────┼──────────────────────────┼──────────────────────────────────┤
   │ コンテナ配置先      │ 同一ホスト               │ GCE VM プール                    │
-  │ 接続方式            │ DooD (/var/run/docker.sock) │ TCP 2375 (VPC + FW 限定)      │
+  │ 接続方式            │ container-manager :9090 (CMRunner) │ container-manager :9090 (VPC+FW)  │
   │ 状態管理            │ in-memory（再起動で喪失） │ DB 永続化（再起動後も復元可能）  │
   │ スケール            │ 固定1ホスト              │ 自動 VM スケールアウト           │
   └─────────────────────┴──────────────────────────┴──────────────────────────────────┘

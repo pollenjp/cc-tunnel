@@ -7,7 +7,8 @@ participant "cc-tunnel API\n(handler.go)" as CloudRun
 participant "DockerGCEProvider\n[ExecutionProvider]" as Provider
 participant PostgreSQL as DB
 participant "GCE API" as GCEAPI
-participant "GCE VM\n(COS + Docker)" as VM
+participant "GCE VM\n(Packer Ubuntu+Docker)" as VM
+participant "container-manager\n(VM 常駐 :9090)" as CM
 participant "cc-remote-agent\nContainer" as Container
 
 Browser -> CloudRun: POST /api/conversations\n(新規会話作成)
@@ -38,12 +39,14 @@ else エンドポイントなし (cold path)
 
   else VM なし → 新規 VM 作成
     DB --> Provider: エラー(なし)
-    Provider -> GCEAPI: CreateInstance(project, zone,\n  machineType, startupScript)
+    Provider -> GCEAPI: CreateInstance(project, zone,\n  machineType, vmImage)
     note over GCEAPI,VM
-      startup script (COS):
-      1. Docker daemon を TCP 2375 で設定
-      2. docker pull cc-remote-agent
-      3. docker run -d -p 9091:9091 cc-remote-agent
+      VM イメージ (Packer Ubuntu+Docker) に
+      container-manager systemd unit を焼き込み済み:
+      1. dockerd は Unix socket バインド (TCP 2375 なし)
+      2. container-manager (:9090) が起動時に常駐
+      3. cc-remote-agent は cc-tunnel の要求時に
+         container-manager の RunAgent で逐次起動
     end note
     GCEAPI --> Provider: {name: "cc-tunnel-xxxx"}
     Provider -> DB: CreateVMInstance(gceInstanceName, zone, ip)
@@ -61,10 +64,22 @@ else エンドポイントなし (cold path)
 
     Provider -> DB: UpdateVMInstanceIP(vmID, internalIP)
 
-    loop Stage 2: cc-remote-agent health check\n(タイムアウト: 1分, ポーリング: 5秒)
+    loop Stage 2a: container-manager 疎通確認\n(ポーリング)
+      Provider -> CM: GET /v1/agents (HTTP :9090)
+      alt 応答あり (HTTP 200)
+        note over Provider: container-manager Ready
+        break
+      end
+    end
+
+    Provider -> CM: RunAgent(image, hostPort)\n(pull + run を 1 step で)
+    CM -> VM: dockerd に pull/run (Unix socket)
+    VM --> Container: cc-remote-agent 起動
+
+    loop Stage 2b: cc-remote-agent health check\n(タイムアウト: 1分, ポーリング: 5秒)
       Provider -> Container: GET /auth/status\n(remoteclient.GetAuthStatus)
       alt 応答あり (HTTP 200)
-        note over Provider: Stage 2 完了 → VM Ready
+        note over Provider: Stage 2 完了 → VM/Agent Ready
         break
       end
     end

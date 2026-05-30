@@ -58,7 +58,7 @@ Deployment_Node(gcp_project, "GCP Project (cc-tunnel-local)", "Google Cloud") {
   }
 
   ' ----- Cloud Run boundary -----
-  Deployment_Node(cloud_run, "Cloud Run service: cc-tunnel", "ingress = INTERNAL_LOAD_BALANCER\nDirect VPC Egress 有効\nrun_sa: cc-runtime-sa (iam.serviceAccountUser on vm_runtime_sa)\ninvoker: allUsers (現状) + IAP P4SA\n→ allUsers 撤去は Issue #62") {
+  Deployment_Node(cloud_run, "Cloud Run service: cc-tunnel", "ingress = INTERNAL_LOAD_BALANCER\nDirect VPC Egress 有効\nrun_sa: cc-runtime-sa (iam.serviceAccountUser on vm_runtime_sa)\ninvoker: IAP P4SA のみ (allUsers は撤去済み, #63)") {
     Container(cctunnel, "cc-tunnel", "Go (Cloud Run)", "DockerGCEProvider 経由で VM lifecycle / cc-remote-agent 呼び出し\nGCE_VM_SUBNETWORK = projects/.../subnetworks/cc-remote-agent-vm\nGCE_VM_SERVICE_ACCOUNT = vm_runtime_sa")
   }
 
@@ -149,7 +149,9 @@ note as note_iap #C8E6C9
     両 Cloud Run service に roles/run.invoker を付与
   - 認可は backend service スコープの
     roles/iap.httpsResourceAccessor (var.iap_allowed_members)
-  - allUsers invoker 撤去は Issue #62 で別追跡
+  - allUsers invoker は撤去済み (#63, Issue #62 クローズ)。
+    invoker は IAP P4SA のみ + ingress=INTERNAL_LOAD_BALANCER で
+    defense-in-depth
 end note
 
 note as note_nat_rejected #FFB6C1

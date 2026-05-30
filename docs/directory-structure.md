@@ -63,11 +63,21 @@ cc-tunnel/
     │   │       ├── main.go           # エントリーポイント: DB 接続・ExecutionProvider 選択・HTTP サーバー起動
     │   │       └── main_test.go      # エントリーポイントテスト
     │   └── internal/
-    │       ├── api/
-    │       │   ├── handler.go        # HTTP ハンドラー (SendMessage: 202 即時返却 + goroutine 実行)
+    │       ├── api/                  # HTTP ハンドラー (concern 別に分割; commit 69de7c8)
+    │       │   ├── handler.go        # Server struct + コンストラクタ (ルーティング配線)
+    │       │   ├── app_auth_handler.go   # アプリ認証エンドポイント (/app-auth/*)
+    │       │   ├── auth_handler.go   # PTY 認証プロキシ (/auth/*)
+    │       │   ├── conversation_handler.go  # 会話 CRUD (/conversations*)
+    │       │   ├── credentials_handler.go   # credentials status / relogin
+    │       │   ├── message_handler.go    # SendMessage (202 即時返却) + credential gate (fetchCredentialOrRespond)
+    │       │   ├── message_service.go    # executeAndPersist / streamAggregator (goroutine 実行)
+    │       │   ├── app_session.go    # AppSession / bearerToken / requireAppAuthIfEnabled
+    │       │   ├── helpers.go        # writeJSON / writeError / LoggingMiddleware
+    │       │   ├── interfaces.go     # repository (3 分割: conversation/message/sessionEndpoint) + credentialService 等の抽象
     │       │   ├── mapping.go        # DB→API 変換コンストラクタ (newConversation / newMessage / newConversationDetail)
+    │       │   ├── title.go          # 会話タイトル自動生成
     │       │   ├── gen.go            # oapi-codegen 生成コード (ServerInterface / HandlerFromMux)
-    │       │   └── handler_test.go   # ハンドラーユニットテスト
+    │       │   └── *_test.go         # ハンドラー / サービスユニットテスト
     │       ├── db/
     │       │   ├── db.go             # pgx 接続プール・goose マイグレーション実行
     │       │   ├── repository.go     # 会話・メッセージ CRUD (Repository)
@@ -122,7 +132,7 @@ cc-tunnel/
     │   │   └── container-manager/
     │   │       └── main.go              # エントリーポイント (HTTP サーバー + self-reaper goroutine 起動)
     │   └── internal/
-    │       ├── api/                     # OpenAPI 生成サーバー (GET /v1/agents 等)
+    │       ├── api/                     # OpenAPI spec-first サーバー (apps/openapi/container-manager.yaml → oapi-codegen で gen.go 生成、StrictServerInterface 実装。GET /v1/agents 等; commit 21d4454)
     │       ├── docker/                  # Moby SDK ラッパー (Manager.ListAgents / RunAgent / StopAgent ...)
     │       ├── logging/                 # Cloud Logging 用 slog handler
     │       └── selfreaper/              # primary VM reap path (ADR vm_reap_dual_path)
@@ -141,7 +151,7 @@ cc-tunnel/
         ├── tsconfig.app.json
         └── src/
             ├── main.tsx              # React アプリエントリーポイント
-            ├── App.tsx               # ルートコンポーネント・URL ルーティング・会話一覧管理
+            ├── App.tsx               # ルートコンポーネント・URL ルーティング定義 (会話/サイドバー管理は ChatPage + store/conversations へ移動)
             ├── App.css               # CSS カスタムプロパティ (カラートークン)
             ├── index.css             # Tailwind CSS インポート (@import "tailwindcss")
             ├── env.d.ts              # 環境変数型定義
@@ -151,16 +161,18 @@ cc-tunnel/
             │   ├── credentials.ts    # credentials API クライアント (status / relogin/start / relogin/finalize)
             │   └── schema.d.ts       # openapi-typescript 生成型 (コミット済み)
             ├── components/
+            │   ├── AgentSelector.tsx # Agent 選択 UI (isLoading 時はセッション準備中スピナー表示)
             │   ├── AppAuthGuard.tsx  # アプリ認証ガード (/login へリダイレクト)
             │   ├── AuthGuard.tsx     # 認証状態に応じた Chat UI / AuthTerminal 切り替え
             │   ├── AuthTerminal.tsx  # @xterm/xterm ベース PTY 認証ターミナル
-            │   ├── ChatView.tsx      # 会話ビュー (メッセージ一覧・送信・ポーリングを自己完結)
+            │   ├── ChatView.tsx      # 会話ビュー (メッセージ一覧・送信・ポーリングを自己完結、読み込み/送信ステータス表示)
             │   ├── CredentialGuard.tsx  # credentials ガード (GET /credentials/status → /login/credentials へリダイレクト)
             │   ├── MessageBubble.tsx # メッセージ表示 (react-markdown / シンタックスハイライト)
             │   ├── MessageInput.tsx  # テキスト入力フォーム (Shift+Enter で改行)
             │   ├── Sidebar.tsx       # 会話リスト・新規作成・ログアウトボタン
             │   ├── ToolCallCard.tsx  # ツール使用状況表示カード
-            │   └── TypingIndicator.tsx  # 進行中インジケータ (typing-shimmer アニメーション)
+            │   ├── TypingIndicator.tsx  # 進行中インジケータ (typing-shimmer アニメーション)
+            │   └── UserMenu.tsx      # ユーザーアイコン + ドロップダウンメニュー
             ├── pages/
             │   ├── AccountSettingsPage.tsx  # ニックネーム設定
             │   ├── AgentSettingsPage.tsx    # Claude Code 認証 + Agent 一覧
@@ -168,9 +180,11 @@ cc-tunnel/
             │   ├── CredentialsLoginPage.tsx # credentials 再ログインフロー (PTY 認証 + dual-trigger)
             │   ├── HomePage.tsx             # ホーム。チャットボタン + UserMenu
             │   └── LoginPage.tsx            # アプリ認証フォーム
-            └── hooks/
-                ├── useAppAuth.ts                 # アプリ認証フック (token / user 管理)
-                ├── useAuth.ts                    # 認証状態管理フック (ポーリング・login / logout)
-                ├── useConversationPoller.ts      # 会話ポーリングフック (1秒間隔・completed で停止)
-                └── useConversationListPoller.ts  # 会話一覧ポーリングフック (running 中 3秒間隔)
+            ├── hooks/
+            │   ├── useAppAuth.ts                 # アプリ認証フック (token / user 管理)
+            │   ├── useAuth.ts                    # 認証状態管理フック (ポーリング・login / logout)
+            │   ├── useConversationPoller.ts      # 会話ポーリングフック (1秒間隔・completed で停止)
+            │   └── useConversationListPoller.ts  # 会話一覧ポーリングフック (running 中 3秒間隔)
+            └── store/
+                └── conversations.ts             # 会話リスト Zustand store (single source of truth; commit bc1dce3)
 ```
