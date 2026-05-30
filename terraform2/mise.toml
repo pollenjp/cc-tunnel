@@ -1,0 +1,89 @@
+[tools]
+gcloud = "565.0.0"
+"github:pollenjp/op_run" = "0.2.0"
+"github:pollenjp/oprun.sh" = "0.3.0"
+terraform = "1.14.9"
+terragrunt = "1.0.2"
+uv = "0.11.7"
+
+[env]
+# For 'op run' command (create terraform2/.env.template locally, same as the
+# classic terraform/.env.template; it is intentionally not committed).
+ENV_TEMPLATE_PATH = "{{ config_root }}/.env.template"
+
+# ---------------------------------------------------------------------------
+# Terragrunt Stacks workflow.
+#
+# Run the stack tasks from a directory that holds a terragrunt.stack.hcl, e.g.
+#   cd live/local && mise run tf:plan:all
+#   cd prepare/local && mise run tf:apply:all
+#
+# `terragrunt stack run` regenerates ./.terragrunt-stack from the local
+# terragrunt.stack.hcl and then runs the command across every unit, honouring
+# the dependency order declared inside each catalog unit.
+# ---------------------------------------------------------------------------
+
+[tasks."tf:stack:generate"]
+description = "Generate ./.terragrunt-stack from the local terragrunt.stack.hcl"
+dir = "{{ cwd }}"
+run = 'terragrunt stack generate'
+
+[tasks."tf:stack:clean"]
+description = "Remove the generated ./.terragrunt-stack directory"
+dir = "{{ cwd }}"
+run = 'terragrunt stack clean'
+
+[tasks."tf:init:all"]
+description = "Run init on all units in the current stack"
+dir = "{{ cwd }}"
+run = 'terragrunt --non-interactive stack run -- init "${@}"'
+
+[tasks."tf:plan:all"]
+description = "Run plan on all units in the current stack"
+dir = "{{ cwd }}"
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt stack run -- plan "${@}"'
+
+[tasks."tf:apply:all"]
+description = "Run apply on all units in the current stack"
+dir = "{{ cwd }}"
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt --non-interactive stack run -- apply "${@}"'
+
+[tasks."tf:destroy:all"]
+description = "Run destroy on all units in the current stack"
+dir = "{{ cwd }}"
+run = 'op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt stack run -- destroy "${@}"'
+
+[tasks."tf:save_cost"]
+description = "Save cost for local development (destroy the Cloud SQL instance)"
+dir = "./live/local"
+run = '''
+terragrunt stack generate
+op_run -e "${ENV_TEMPLATE_PATH}" -- terragrunt --non-interactive --working-dir ./.terragrunt-stack/cc-tunnel run -- destroy -target=google_sql_database_instance.cs_instance
+'''
+
+[tasks.clean]
+description = "Run all clean subtasks"
+depends = ["clean:*"]
+
+[tasks."clean:terragrunt"]
+description = "Remove all .terragrunt-cache and .terragrunt-stack directories"
+run = '''
+find . -type d -name ".terragrunt-cache" -prune -exec rm -rf {} +
+find . -type d -name ".terragrunt-stack" -prune -exec rm -rf {} +
+'''
+
+[tasks."tf:fmt"]
+description = "Format all terragrunt files"
+run = 'terragrunt hcl fmt'
+
+[tasks."tf:lint"]
+description = "Lint all terragrunt files"
+depends = ["tf:lint:*"]
+
+[tasks."tf:lint:validate"]
+description = "Validate all terragrunt files"
+run = 'terragrunt hcl validate'
+
+[tasks."tf:lint:format"]
+description = "Check formatting of all terragrunt files"
+run = 'terragrunt hcl fmt --check'
