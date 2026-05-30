@@ -18,8 +18,10 @@ System_Boundary(cctunnel_system, "cc-tunnel (Cloud Run)") {
   Container(dgce_provider, "DockerGCEProvider", "ExecutionProvider 実装 (Go)", "ExecutionProvider interface を実装。\n\ngetOrCreateEndpoint(conversationID):\n  session_endpoints テーブルを検索し\n  エンドポイントがなければ GCE VM を確保\n  (GetAvailableVMInstance or createGCEVM)\n  → startup script で cc-remote-agent 自動起動\n  → VM Ready 2段階確認\n    Stage1: GCE RUNNING + internalIP 取得\n    Stage2: HTTP /auth/status 応答確認\n  → DB に session_endpoint 登録\n\nIdleChecker goroutine (60秒間隔):\n  CleanupOrphans() でアイドルセッション・VMを削除")
 }
 
-System_Boundary(gce_vm, "GCE VM (Docker Host, Internal IP)") {
-  Container(docker, "Docker Daemon", "Docker Engine (COS プリインストール)", "startup script により cc-remote-agent\nコンテナを自動起動。\nTCP 2375 でも接続可能。")
+System_Boundary(gce_vm, "GCE VM (Packer Ubuntu+Docker, Internal IP)") {
+  Container(cm, "container-manager", "Go / Port: 9090", "VM 常駐の Docker 制御プレーン。\ncc-tunnel から HTTP API で\ncc-remote-agent コンテナを pull/run/stop/list。\nself-reaper goroutine も内蔵。\n(ADR 2026-05-06)")
+
+  Container(docker, "Docker Daemon (dockerd)", "Docker Engine", "Unix socket: /var/run/docker.sock。\ncontainer-manager のみが操作。\nTCP 2375 は廃止済み (ネットワーク到達不可)。")
 
   Container(session_abc, "cc-remote-agent (conv-abc)", "cc-remote-agent (Go)", "会話 abc 用コンテナ。\nClaude CLIをHTTP APIとしてラップ。\nPort: 9091")
 
@@ -32,6 +34,10 @@ Rel(api, cloudsql, "会話・メッセージの読み書き", "PostgreSQL (pgx/v
 Rel(api, dgce_provider, "Execute(ctx, req, onEvent)\n[ExecutionProvider interface]")
 Rel(dgce_provider, cloudsql, "session_endpoints / vm_instances CRUD", "PostgreSQL (pgx/v5)")
 Rel(dgce_provider, gceapi, "VM ライフサイクル管理 (create/delete)", "HTTPS (Compute Engine API)")
+Rel(dgce_provider, cm, "コンテナ lifecycle\n(RunAgent/Stop/List) + reap 観測", "HTTP (internal IP:9090)")
+Rel(cm, docker, "コンテナ pull/run/stop/list", "Unix socket")
+Rel(docker, session_abc, "コンテナ起動・停止")
+Rel(docker, session_def, "コンテナ起動・停止")
 Rel(dgce_provider, session_abc, "Claude CLI実行 (HTTP)", "HTTP (internal IP:9091)")
 Rel(dgce_provider, session_def, "Claude CLI実行 (HTTP)", "HTTP (internal IP:9091)")
 Rel(session_abc, anthropic, "LLM呼び出し", "HTTPS")

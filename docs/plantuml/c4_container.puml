@@ -6,14 +6,16 @@ title cc-tunnel Container Diagram
 
 Person(user, "User", "ブラウザユーザー")
 System_Ext(anthropic, "Anthropic API", "Claude AI (claude-sonnet等)")
-System_Ext(docker_daemon, "Docker Daemon", "ホストの Docker デーモン。\ncc-tunnel が docker.sock 経由で操作 (DooD)。")
+System_Ext(docker_daemon, "Docker Daemon (dockerd)", "container-manager のみが\n/var/run/docker.sock 経由で操作。\nTCP 2375 は使わない。")
 
 System_Boundary(cctunnel_system, "cc-tunnel") {
   Container(frontend, "Frontend", "React/Vite + nginx", "会話UIを提供。\nnginxがAPIリクエスト(/api/*)を\ncc-tunnel APIにリバースプロキシ。\nPort: 3000\n[compose profile: full]")
 
-  Container(api, "cc-tunnel API", "Go (net/http)", "会話・メッセージ管理REST API。\n202 Accepted後にgoroutineで\nClaude CLI実行・DB保存を行う。\nDooD: docker.sock マウント済み。\nPort: 8080\n[compose デフォルトサービス]")
+  Container(api, "cc-tunnel API", "Go (net/http)", "会話・メッセージ管理REST API。\n202 Accepted後にgoroutineで\nClaude CLI実行・DB保存を行う。\nExecutionProvider を選択\n(local / docker_gce / cloud_run_sandbox)。\nPort: 8080\n[compose デフォルトサービス]")
 
-  Container(session_agent, "cc-remote-agent-{conversationID}", "Go (cc-remote-agent)", "セッションごとの動的コンテナ。\nSessionManager.GetOrCreate で生成・破棄。\n各会話の Claude CLI 実行を担当。\nアイドル15分で自動停止。\nPort: ContainerPort (default: 9091)")
+  Container(cm, "container-manager", "Go", "Docker 制御プレーン。\ncc-tunnel から HTTP API (:9090) で\ncc-remote-agent コンテナを pull/run/stop/list。\nlocal は compose サービス、\ndocker_gce は各 GCE VM 上に常駐。")
+
+  Container(session_agent, "cc-remote-agent-{conversationID}", "Go (cc-remote-agent)", "セッションごとの動的コンテナ。\nSessionManager.GetOrCreate で生成・破棄。\n各会話の Claude CLI 実行を担当。\nアイドル15分で自動停止。\nPort: ContainerPort (default: 9090)")
 
   ContainerDb(db, "PostgreSQL", "PostgreSQL 18-alpine", "会話(conversations)・\nメッセージ(messages)を永続化。\nPort: 5432")
 }
@@ -21,9 +23,19 @@ System_Boundary(cctunnel_system, "cc-tunnel") {
 Rel(user, frontend, "Webブラウザでアクセス", "HTTP")
 Rel(frontend, api, "REST API呼び出し (/api/*)", "HTTP/JSON")
 Rel(api, db, "会話・メッセージの読み書き", "PostgreSQL (pgx/v5)")
-Rel(api, docker_daemon, "セッションコンテナ管理 (DooD)", "docker.sock")
+Rel(api, cm, "コンテナ lifecycle\n(RunAgent/Stop/List)", "HTTP :9090")
+Rel(cm, docker_daemon, "コンテナ pull/run/stop/list", "docker.sock")
 Rel(docker_daemon, session_agent, "コンテナ起動・停止・削除")
 Rel(api, session_agent, "Claude CLI実行 (Execute API)", "HTTP/NDJSON\n(DNS: containerName:port)")
 Rel(session_agent, anthropic, "LLM呼び出し (Claude CLI)", "HTTPS")
+
+note as n_provider
+  ExecutionProvider は EXECUTION_PROVIDER 環境変数で選択:
+  - local: SessionManager + container-manager (compose 既定)。
+    docker.sock 直叩き (SDKRunner) はフォールバック
+  - docker_gce: GCE VM プール上で多重化 (本図は単純化。
+    トポロジは docker_gce_architecture.puml 参照)
+  - cloud_run_sandbox: モック実装
+end note
 
 @enduml

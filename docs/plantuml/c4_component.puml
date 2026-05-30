@@ -8,7 +8,8 @@ Person(user, "User", "ブラウザユーザー")
 System_Ext(anthropic, "Anthropic API", "Claude AI")
 ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18-alpine", "会話・メッセージデータ\n+ credentials (暗号化)")
 Container_Ext(session_agent, "cc-remote-agent-{convID}", "Go", "動的セッションコンテナ（per-session）。\n/auth/* + Execute API 提供。\nclaude /auth PTY 管理。\n+ /init で credentials を受領。\ntmpfs: /home/user/.claude")
-System_Ext(docker_daemon, "Docker Daemon", "docker.sock 経由でコンテナ管理")
+Container_Ext(container_manager, "container-manager", "Go / HTTP :9090", "Docker 制御プレーン。\nRunAgent/Stop/List を HTTP で提供。\nlocal は compose サービス、\ndocker_gce は各 GCE VM 上に常駐。")
+System_Ext(docker_daemon, "Docker Daemon (dockerd)", "container-manager のみが\ndocker.sock 経由で操作 (TCP 2375 不使用)")
 
 ' --- cc-tunnel API コンポーネント ---
 Container_Boundary(api_boundary, "cc-tunnel API (Go)") {
@@ -18,15 +19,16 @@ Container_Boundary(api_boundary, "cc-tunnel API (Go)") {
   Component(remoteclient, "RemoteClient", "net/http", "per-session cc-remote-agent へのHTTPクライアント。\n/auth/* 認証操作 + Execute に使用。")
 
   Component(exec_provider, "ExecutionProvider", "interface\n(internal/provider/provider.go)", "Claude CLI実行を抽象化するインタフェース。\nExecute(ctx, req, onEvent) を定義。\nnewProviderFromEnv(EXECUTION_PROVIDER) で実装を選択。")
-  Component(local_provider, "LocalDockerProvider", "local/docker_provider.go", "ExecutionProvider 実装。\nSessionManager.GetOrCreate で\n会話ごとのセッションコンテナを取得し Execute。\nClose() でコンテナを全停止。")
+  Component(local_provider, "LocalDockerProvider", "local/docker_provider.go", "ExecutionProvider 実装 (EXECUTION_PROVIDER=local)。\nSessionManager.GetOrCreate で\n会話ごとのセッションコンテナを取得し Execute。\nClose() でコンテナを全停止。")
+  Component(gce_provider, "DockerGCEProvider", "dockergce/provider.go", "ExecutionProvider 実装 (EXECUTION_PROVIDER=docker_gce)。\nGCE VM プール上に container-manager 経由で\nセッションコンテナを多重化。\n詳細は docker_gce_architecture.puml 参照。")
   Component(session_manager, "SessionManager", "docker/session_manager.go", "会話IDごとのコンテナライフサイクル管理。\nGetOrCreate: 新規作成または既存再利用。\nStop/StopAll: 停止・削除。\nアイドル15分で自動停止。")
-  Component(docker_runner, "DockerRunner (SDKRunner)", "docker/runner.go", "Docker daemon 操作を抽象化するインタフェース。\nContainerCreate/Start/Stop/Remove/Inspect/List。\nSDKRunner が docker/client SDK で実装。")
+  Component(docker_runner, "DockerRunner (CMRunner / SDKRunner)", "docker/runner.go", "Docker 操作を抽象化するインタフェース。\nCMRunner: container-manager HTTP API を呼ぶ実装 (既定)。\nSDKRunner: docker.sock 直叩き (フォールバック)。")
 }
 
 ' --- Frontend コンポーネント ---
 Container_Boundary(frontend_boundary, "Frontend (React/Vite)") {
-  Component(app, "App", "React Router v6", "URLルーティング。\n/ と /conversation/:id を処理。")
-  Component(appcontent, "AppContent", "React", "会話選択・新規作成・削除のオーケストレーション。\nuseParams で URL から conversationId を取得。")
+  Component(app, "App", "React Router v7", "URLルーティング定義。\n/chat と /chat/:id 等を処理。")
+  Component(appcontent, "ChatPage", "React", "会話選択・新規作成・削除のオーケストレーション。\nuseParams で URL から conversationId を取得。\n会話一覧は Zustand store (useConversationsStore)。")
   Component(sidebar, "Sidebar", "React", "会話一覧表示。\nrunning会話にスピナー表示。")
   Component(chatview, "ChatView", "React", "メッセージ表示コンポーネント。\nconversationId のみ受取り、\n内部でポーリング・isRunning管理を自己完結。")
   Component(listpoller, "useConversationListPoller", "React Hook", "running会話がある間、\n3秒ごとに会話一覧をポーリング更新。\nサイドバーのスピナー維持に使用。")
@@ -57,10 +59,13 @@ Rel(handler, cred_service, "FetchAndDecrypt(username)\nMarkInvalid(username)")
 Rel(cred_service, db, "credentials テーブル CRUD", "PostgreSQL (pgx/v5)")
 Rel(handler, exec_provider, "Claude CLI実行 (Execute)\n+ credentials_json")
 Rel(exec_provider, local_provider, "local プロバイダ実装")
+Rel(exec_provider, gce_provider, "docker_gce プロバイダ実装")
 Rel(local_provider, session_manager, "GetOrCreate(conversationID)")
 Rel(session_manager, docker_runner, "ContainerCreate/Start/Stop/Remove")
 Rel(repository, db, "SQL", "PostgreSQL (pgx/v5)")
-Rel(docker_runner, docker_daemon, "コンテナ管理", "docker.sock")
+Rel(docker_runner, container_manager, "RunAgent/Stop/List (CMRunner)", "HTTP :9090")
+Rel(container_manager, docker_daemon, "コンテナ pull/run/stop/list", "docker.sock")
+Rel(gce_provider, container_manager, "GCE VM 上の container-manager を呼ぶ", "HTTP :9090")
 Rel(session_manager, session_agent, "Execute API + /init で\ncredentials_json 注入", "HTTP/NDJSON\n(DNS: containerName:port)")
 Rel(session_agent, anthropic, "LLM呼び出し", "HTTPS")
 
