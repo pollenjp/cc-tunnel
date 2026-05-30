@@ -36,6 +36,8 @@ sequenceDiagram
     D-->>T: ok
     T->>D: INSERT assistant message (status='streaming')
     D-->>T: assistant message row
+    T->>D: INSERT agent_dispatches (status='pending')
+    Note over T: shadow write (ADR 2026-05-16 段階 1-4)。<br/>失敗は warn log のみ。reader はまだ wire されていない。
     T-->>F: 202 Accepted {message_id}
 
     Note over T: goroutine で非同期実行
@@ -60,6 +62,7 @@ sequenceDiagram
     T->>D: UPDATE conversations SET title=<生成タイトル>
     T->>D: UPDATE conversations SET updated_at=NOW()
     T->>D: UPDATE conversations SET status='completed'
+    T->>D: UPDATE agent_dispatches SET status='consumed' (shadow write の最終遷移)
     Note over T: 実行完了後、POST /auth/finalize-credentials 経由で<br/>cc-remote-agent コンテナから credentials を取得し<br/>AES-256-GCM 暗号化後に credentials テーブルに UPSERT
 
     loop DB ポーリング（1秒間隔）
@@ -149,4 +152,62 @@ sequenceDiagram
     T-->>F: { registered: true, isValid: true }
 
     Note over F: /chat/<conversationId> にリダイレクト
+```
+
+## フロー 6: hook 駆動 agent 通信 (段階 5-6 で実装予定, ADR 2026-05-16)
+
+PTY 常駐 `claude` プロセスへ Claude Code hook 経由で I/O する将来構成。
+本 PR (段階 1-4) では `agent_dispatches` への shadow write のみ実装されており、
+**この sequence は段階 5-6 が wire された後に有効**。
+
+```mermaid
+sequenceDiagram
+    participant F as Frontend (Browser)
+    participant T as cc-tunnel (API Server)
+    participant A as cc-remote-agent<br/>(container, /agent/*)
+    participant H as cc-hook-bridge<br/>(in-container hook)
+    participant CL as claude<br/>(long-lived, PTY)
+    participant D as PostgreSQL
+
+    Note over A,CL: 起動時に claude を PTY で常駐させる。<br/>SessionStart hook がここで一度発火。
+
+    F->>T: POST /conversations/{id}/messages
+    T->>D: INSERT messages (status='streaming')
+    T->>D: INSERT agent_dispatches (status='pending')
+    T->>A: POST /agent/kick (idempotent)
+    T-->>F: 202 Accepted
+    A->>CL: PTY stdin: <prompt>
+    CL->>H: UserPromptSubmit hook 発火 (stdin: hook JSON)
+    H->>D: INSERT agent_outputs (event_type='user_prompt_submit')
+
+    loop ツール呼び出しの度に
+        CL->>H: PreToolUse hook
+        H->>D: INSERT agent_outputs (event_type='pre_tool_use')
+        CL->>H: PostToolUse hook
+        H->>D: INSERT agent_outputs (event_type='post_tool_use')
+    end
+
+    CL->>H: Stop hook (ターン完了)
+    H->>D: INSERT agent_outputs (event_type='stop', status='final')
+    H->>D: UPDATE agent_dispatches SET status='consumed'
+    H->>D: SELECT pending dispatch FOR UPDATE SKIP LOCKED
+    alt 新規 pending あり
+        D-->>H: next dispatch row
+        H->>D: UPDATE agent_dispatches SET status='delivered'
+        H-->>CL: stdout: {"decision":"block","reason":<次の prompt>}
+        Note over CL: claude が同一セッションで<br/>次ターンを実行
+    else 55秒待っても無し
+        H-->>CL: exit 0 (idle)
+        Note over CL: container は idle 検知後に停止
+    end
+
+    loop fold worker (cc-tunnel, 2 秒間隔)
+        T->>D: SELECT agent_outputs WHERE assistant_message_id = ?
+        T->>D: UPDATE messages SET message_data (content_blocks)
+    end
+
+    loop frontend DB ポーリング (1 秒間隔)
+        F->>T: GET /conversations/{id}
+        T-->>F: ConversationDetail
+    end
 ```

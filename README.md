@@ -27,10 +27,10 @@ claude CLI (`claude -p --output-format=stream-json --verbose`)
 
 | コンポーネント | 役割 |
 |---|---|
-| **cc-remote-agent** | Docker上でclaude CLIを実行。プロンプトを受け取り、stream-json形式でndjsonストリーミング返却 |
+| **cc-remote-agent** | Docker上でclaude CLIを実行。プロンプトを受け取り、stream-json形式でndjsonストリーミング返却。`cc-hook-bridge` バイナリも同梱（ADR 2026-05-16、段階 5-6 で hook 駆動経路に移行予定） |
 | **cc-tunnel** | 外部向けAPIサーバ。会話セッション管理、PostgreSQL永続化、cc-remote-agentへのプロキシ |
 | **frontend** | React製チャットUI。会話一覧・作成・メッセージ送受信。アシスタント応答はポーリングで逐次表示 |
-| **PostgreSQL** | 会話（conversations）とメッセージ（messages）を永続化 |
+| **PostgreSQL** | 会話（conversations / messages）+ VM 管理（vm_instances / session_endpoints）+ credentials + agent_dispatches / agent_outputs を永続化 |
 
 ## 会話継続メカニズム
 

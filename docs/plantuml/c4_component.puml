@@ -6,10 +6,16 @@ title cc-tunnel Component Diagram
 
 Person(user, "User", "ブラウザユーザー")
 System_Ext(anthropic, "Anthropic API", "Claude AI")
-ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18-alpine", "会話・メッセージデータ\n+ credentials (暗号化)")
-Container_Ext(session_agent, "cc-remote-agent-{convID}", "Go", "動的セッションコンテナ（per-session）。\n/auth/* + Execute API 提供。\nclaude /auth PTY 管理。\n+ /init で credentials を受領。\ntmpfs: /home/user/.claude")
+ContainerDb_Ext(db, "PostgreSQL", "PostgreSQL 18-alpine", "会話・メッセージデータ\n+ credentials (暗号化)\n+ agent_dispatches / agent_outputs\n  (hook 駆動 agent 通信, ADR 2026-05-16)")
 Container_Ext(container_manager, "container-manager", "Go / HTTP :9090", "Docker 制御プレーン。\nRunAgent/Stop/List を HTTP で提供。\nlocal は compose サービス、\ndocker_gce は各 GCE VM 上に常駐。")
 System_Ext(docker_daemon, "Docker Daemon (dockerd)", "container-manager のみが\ndocker.sock 経由で操作 (TCP 2375 不使用)")
+
+' --- cc-remote-agent コンポーネント (per-session container) ---
+Container_Boundary(agent_boundary, "cc-remote-agent (Go, per-session container)") {
+  Component(agent_api, "Handler", "net/http", "HTTP API。\n/auth/* (PTY login)、/execute (ndjson)、\n/init/finalize-credentials を提供。\n[段階 5-6 予定] /agent/start, /agent/kick を追加。")
+  Component(agent_claude, "claude (CLI)", "subprocess / PTY", "Anthropic Claude Code CLI。\n現状は /execute 受信ごとに claude -p を fork/exec。\n[段階 5-6 予定] container 起動時に PTY 常駐し、\nhook 経由で 1 ターン毎の応答を行う。")
+  Component(hook_bridge, "cc-hook-bridge", "Go (cmd/cc-hook-bridge)", "[ADR 2026-05-16 段階 2]\n~/.claude/settings.json から発火する Go バイナリ。\nsubcommand: session-start / user-prompt-submit /\npre-tool-use / post-tool-use / stop。\nstop は agent_dispatches を FOR UPDATE SKIP LOCKED で\nclaim し decision=block JSON を吐く loop driver。\nstate は /tmp/cc-hook-bridge-state.json (mode 0600)。")
+}
 
 ' --- cc-tunnel API コンポーネント ---
 Container_Boundary(api_boundary, "cc-tunnel API (Go)") {
@@ -66,8 +72,15 @@ Rel(repository, db, "SQL", "PostgreSQL (pgx/v5)")
 Rel(docker_runner, container_manager, "RunAgent/Stop/List (CMRunner)", "HTTP :9090")
 Rel(container_manager, docker_daemon, "コンテナ pull/run/stop/list", "docker.sock")
 Rel(gce_provider, container_manager, "GCE VM 上の container-manager を呼ぶ", "HTTP :9090")
-Rel(session_manager, session_agent, "Execute API + /init で\ncredentials_json 注入", "HTTP/NDJSON\n(DNS: containerName:port)")
-Rel(session_agent, anthropic, "LLM呼び出し", "HTTPS")
+Rel(session_manager, agent_api, "Execute API + /init で\ncredentials_json 注入", "HTTP/NDJSON\n(DNS: containerName:port)")
+Rel(agent_api, agent_claude, "claude -p subprocess / [段階 5-6: PTY stdin]")
+Rel(agent_claude, anthropic, "LLM呼び出し", "HTTPS")
+
+' --- hook 駆動経路 (ADR 2026-05-16) ---
+Rel(handler, db, "agent_dispatches に shadow INSERT\n(段階 3, 失敗は warn)", "pgx/v5")
+Rel(agent_claude, hook_bridge, "[段階 5-6] hook event JSON via stdin\n(SessionStart / Stop 等)")
+Rel(hook_bridge, db, "agent_outputs INSERT (append-only)\n+ agent_dispatches claim/consume", "pgx/v5\n(Cloud SQL Auth Proxy 経由)")
+Rel(hook_bridge, agent_claude, "stop hook: stdout に decision=block JSON\n(次 dispatch があるとき; 同一セッションで再応答)")
 
 
 @enduml

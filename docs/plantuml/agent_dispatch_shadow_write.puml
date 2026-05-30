@@ -1,0 +1,59 @@
+@startuml agent_dispatch_shadow_write
+' Shadow-write phase of ADR 2026-05-16 (段階 1-4). This is the state on
+' main as of PR #74: agent_dispatches gets written but never read; the
+' existing /execute ndjson path still drives the assistant message
+' lifecycle. The diagram is intentionally faithful to today's wire shape
+' so reviewers can see "safe by default" — failures on the new path do
+' not affect user-visible behavior.
+
+title cc-tunnel: agent_dispatches shadow write (ADR 2026-05-16 段階 1-3, 実装済)
+
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as F
+participant "cc-tunnel\n(SendMessage)" as T
+database "PostgreSQL" as D
+participant "ExecutionProvider\n(local / docker_gce)" as P
+participant "cc-remote-agent" as A
+participant "claude -p\n(subprocess)" as C
+
+User -> F: メッセージ入力
+F -> T: POST /conversations/{id}/messages
+
+T -> D: SELECT conversation, messages (history)
+T -> D: INSERT user message
+T -> D: INSERT assistant message\n(status='streaming')
+T -> D: INSERT agent_dispatches\n(status='pending')
+note right of T: shadow write\n失敗は warn log のみ\nreader はまだ存在しない
+T -> F: 202 Accepted {message_id}
+
+== goroutine 内 (既存経路, 主) ==
+T -> P: Execute(ctx, req, onEvent)
+P -> A: POST /execute (JSON)
+A -> C: fork/exec claude -p ...
+C --> A: ndjson stream
+A --> P: ndjson 転送
+
+loop 2 秒間隔
+  P --> T: onEvent(...) で集約
+  T -> D: UPDATE messages\nSET message_data (content_blocks)
+end
+
+C --> A: exit
+A --> P: stream 終了
+P --> T: newSessionID
+
+T -> D: UPDATE messages (final content_blocks,\n  session_id, cost_usd, ...)
+T -> D: UPDATE messages SET status='completed'
+T -> D: UPDATE conversations (title, status)
+T -> D: UPDATE agent_dispatches\nSET status='consumed'
+
+note over D
+  agent_outputs テーブルへの書き込みは無い。
+  cc-hook-bridge は image に同梱されているが、
+  まだ PTY 常駐 claude が wire されていないので、
+  /tmp/cc-hook-bridge-state.json も存在しない。
+end note
+
+@enduml

@@ -63,10 +63,35 @@ func (h *Server) SendMessage(w http.ResponseWriter, r *http.Request, conversatio
 		return
 	}
 
+	// Shadow write: also INSERT an agent_dispatches row for the new
+	// hook-driven path (ADR 2026-05-16). Nothing consumes this yet — the
+	// existing /execute streaming flow continues to drive content_blocks
+	// directly. Failures are logged but do not fail the request.
+	dispatchID := ""
+	var sysPromptPtr *string
+	if conv.SystemPrompt != nil && *conv.SystemPrompt != "" {
+		sp := *conv.SystemPrompt
+		sysPromptPtr = &sp
+	}
+	if dispatch, derr := h.repo.CreateAgentDispatch(execCtx, convIDStr, assistantMsg.ID, req.Content, sysPromptPtr); derr != nil {
+		slog.Warn("agent_dispatches shadow write failed", "err", derr, "conversation_id", convIDStr, "assistant_message_id", assistantMsg.ID)
+	} else {
+		dispatchID = dispatch.ID
+		slog.Info("agent_dispatches shadow write ok", "dispatch_id", dispatch.ID, "assistant_message_id", assistantMsg.ID)
+	}
+
 	msgUUID, _ := uuid.Parse(assistantMsg.ID)
 	writeJSON(w, http.StatusAccepted, SendMessageResponse{MessageId: msgUUID})
 
-	go h.executeAndPersist(execCtx, executeReq, convIDStr, assistantMsg.ID)
+	go func() {
+		h.executeAndPersist(execCtx, executeReq, convIDStr, assistantMsg.ID)
+		if dispatchID == "" {
+			return
+		}
+		if err := h.repo.MarkDispatchConsumed(execCtx, dispatchID); err != nil {
+			slog.Warn("dispatch shadow write: mark consumed failed", "err", err, "dispatch_id", dispatchID)
+		}
+	}()
 }
 
 // fetchCredentialOrRespond performs the SendMessage credential gate. Returns
